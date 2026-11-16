@@ -3840,8 +3840,11 @@ class CachingTests(AbstractQTestCase):
         # Ensure cache has been created
         self.assertTrue(os.path.exists(expected_cache_filename))
 
-        # Overwrite the original file
-        file_data2 = six.b("a,b,c\n10,20,30\n30,40,50\n50,60,70")
+        # Rewrite the original file in place. The replacement keeps the exact
+        # same byte length (so size alone cannot detect it) but changes an
+        # existing data value. This is not an append, so the cache must be
+        # rejected rather than extended.
+        file_data2 = six.b("a,b,c\n10,20,30\n30,40,99")
         self.write_file(tmpfile1.name,file_data2)
 
         cmd = Q_EXECUTABLE + ' -H -d , "select a from %s" -C read' % tmpfile1.name
@@ -4225,6 +4228,259 @@ class CachingTests(AbstractQTestCase):
 
         self.cleanup(tmpfile1)
         self.cleanup(tmpfile2)
+
+
+class IncrementalCachingTests(AbstractQTestCase):
+    # Tests for append-aware (incremental) caching. A cache may reuse a
+    # verifiable prefix of a growing file, continue from the exact next logical
+    # record, reject in-place rewrites (even with identical size/timestamp),
+    # reject stale parsing interpretations (e.g. a changed delimiter), and keep
+    # full-read and split-across-days results identical in order and count.
+
+    QCACHE_META_FIELDS = [
+        'cache_version', 'table_name', 'parse_options_key', 'prefix_end_offset',
+        'boundary_line_index', 'prefix_sha1', 'logical_record_count',
+        'data_record_count', 'trailing_line_count', 'trailing_sha1',
+        'source_size_at_write', 'source_mtime_ns_at_write',
+    ]
+
+    def _cache_path(self, tmpfile):
+        return '%s.qsql' % tmpfile.name
+
+    def _run(self, tmpfile, sql_tail=None, mode='readwrite', extra_options=''):
+        if sql_tail is None:
+            sql_tail = 'select * from %s' % tmpfile.name
+        cmd = '%s %s -H -d , -C %s "%s"' % (Q_EXECUTABLE, extra_options, mode, sql_tail)
+        return run_command(cmd)
+
+    def _read_meta(self, cache_path):
+        self.assertTrue(os.path.exists(cache_path))
+        db = sqlite3.connect(cache_path)
+        try:
+            names = [r[0] for r in db.execute("select name from sqlite_master where type='table'").fetchall()]
+            self.assertIn('_qcatalog', names)
+            self.assertIn('_qcache_meta', names)
+            rows = db.execute('select %s from _qcache_meta' % ','.join(self.QCACHE_META_FIELDS)).fetchall()
+            self.assertEqual(len(rows), 1)
+            meta = dict(zip(self.QCACHE_META_FIELDS, rows[0]))
+            table_name = db.execute('select temp_table_name from _qcatalog').fetchone()[0]
+            cached_row_count = db.execute('select count(*) from %s' % table_name).fetchone()[0]
+        finally:
+            db.close()
+        return meta, table_name, cached_row_count
+
+    def test_incremental_cache_metadata_is_written_on_first_readwrite(self):
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n2,y\n'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+
+        meta, table_name, cached_row_count = self._read_meta(self._cache_path(tmpfile))
+        self.assertEqual(meta['cache_version'], 'v2')
+        self.assertEqual(meta['table_name'], table_name)
+        self.assertEqual(int(meta['data_record_count']), 2)
+        self.assertEqual(int(meta['boundary_line_index']), 3)
+        self.assertEqual(int(meta['trailing_line_count']), 0)
+        self.assertEqual(cached_row_count, 2)
+        self.cleanup(tmpfile)
+
+    def test_append_extends_cache_without_rebuilding_and_keeps_order(self):
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n2,y\n'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+        self.assertEqual(o, [six.b('1,x'), six.b('2,y')])
+
+        with open(tmpfile.name, 'ab') as f:
+            f.write(six.b('3,z\n4,w\n'))
+        retcode, o, e = self._run(tmpfile, mode='readwrite')
+        self.assertEqual(retcode, 0, e)
+        self.assertEqual(o, [six.b('1,x'), six.b('2,y'), six.b('3,z'), six.b('4,w')])
+
+        meta, table_name, cached_row_count = self._read_meta(self._cache_path(tmpfile))
+        self.assertEqual(int(meta['data_record_count']), 4)
+        self.assertEqual(cached_row_count, 4)
+        self.cleanup(tmpfile)
+
+    def test_full_read_and_split_across_days_are_identical_in_order_and_count(self):
+        full_data = six.b('a,b\n') + six.b('').join(
+            [six.b('%d,v%d\n' % (i, i)) for i in range(1, 131)])
+
+        # Reference: one full read, no cache reuse.
+        full_tmpfile = self.create_file_with_data(full_data)
+        retcode, full_output, e = self._run(full_tmpfile, mode='none',
+                                            sql_tail='select a from %s' % full_tmpfile.name)
+        self.assertEqual(retcode, 0, e)
+        self.assertEqual(len(full_output), 130)
+
+        # Split: cache the first half on "day 1", append the rest on "day 2".
+        split_tmpfile = self.create_file_with_data(
+            six.b('a,b\n') + six.b('').join([six.b('%d,v%d\n' % (i, i)) for i in range(1, 66)]))
+        retcode, o, e = self._run(split_tmpfile)
+        self.assertEqual(retcode, 0, e)
+        with open(split_tmpfile.name, 'ab') as f:
+            f.write(six.b('').join([six.b('%d,v%d\n' % (i, i)) for i in range(66, 131)]))
+        retcode, split_output, e = self._run(split_tmpfile,
+                                             sql_tail='select a from %s' % split_tmpfile.name)
+        self.assertEqual(retcode, 0, e)
+
+        self.assertEqual(len(split_output), len(full_output))
+        self.assertEqual(split_output, full_output)
+        self.cleanup(full_tmpfile)
+        self.cleanup(split_tmpfile)
+
+    def test_dangling_unterminated_quote_is_excluded_and_completed_next_day(self):
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n5,"open quote\n'))
+        retcode, o, e = self._run(tmpfile, sql_tail='select a from %s' % tmpfile.name)
+        self.assertEqual(retcode, 0, e)
+        # The dangling logical record is not a trustworthy row yet.
+        self.assertEqual(o, [six.b('1'), six.b('5')])
+
+        meta, table_name, cached_row_count = self._read_meta(self._cache_path(tmpfile))
+        self.assertEqual(int(meta['data_record_count']), 1)
+        self.assertEqual(int(meta['trailing_line_count']), 1)
+        self.assertEqual(cached_row_count, 1)
+
+        # Complete the quoted record on the next "day" and add another row.
+        with open(tmpfile.name, 'ab') as f:
+            f.write(six.b('closed"\n6,v\n'))
+        retcode, o, e = self._run(tmpfile, sql_tail='select a from %s' % tmpfile.name)
+        self.assertEqual(retcode, 0, e)
+        self.assertEqual(o, [six.b('1'), six.b('5'), six.b('6')])
+
+        meta, table_name, cached_row_count = self._read_meta(self._cache_path(tmpfile))
+        self.assertEqual(int(meta['data_record_count']), 3)
+        self.assertEqual(cached_row_count, 3)
+        # No duplication: the previously dangling record now appears exactly once.
+        db = sqlite3.connect(self._cache_path(tmpfile))
+        try:
+            stored = db.execute('select * from %s order by rowid' % table_name).fetchall()
+        finally:
+            db.close()
+        self.assertEqual(stored, [(1, 'x'), (5, 'open quote\nclosed'), (6, 'v')])
+        self.cleanup(tmpfile)
+
+    def test_in_place_rewrite_with_same_size_and_timestamp_is_rejected(self):
+        # More than 100 data rows so the first-100-row analysis sample is
+        # unaffected; only the byte-level prefix hash can see the change.
+        full_data = six.b('a,b\n') + six.b('').join(
+            [six.b('%d,v%d\n' % (i, i)) for i in range(1, 131)])
+        tmpfile = self.create_file_with_data(full_data)
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+
+        original_mtime_ns = os.stat(tmpfile.name).st_mtime_ns
+        mutated = bytearray(full_data)
+        target_index = full_data.index(six.b('120,')) + 5
+        mutated[target_index] = ord('7')
+        self.assertEqual(len(bytes(mutated)), len(full_data))
+        self.write_file(tmpfile.name, bytes(mutated))
+        # Preserve both the size and the modification timestamp.
+        os.utime(tmpfile.name, ns=(original_mtime_ns, original_mtime_ns))
+        self.assertEqual(os.stat(tmpfile.name).st_size, len(full_data))
+        self.assertEqual(os.stat(tmpfile.name).st_mtime_ns, original_mtime_ns)
+
+        retcode, o, e = self._run(tmpfile, mode='read')
+        self.assertEqual(retcode, 92)
+        self.assertEqual(len(o), 0)
+        self.assertTrue(b'prefix' in e[0].lower())
+        self.cleanup(tmpfile)
+
+    def test_same_length_rewrite_inside_analysis_sample_still_rejected(self):
+        tmpfile = self.create_file_with_data(six.b('a,b,c\n10,20,30\n30,40,50'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+
+        # Same byte length, different value within the analysis sample.
+        self.write_file(tmpfile.name, six.b('a,b,c\n10,20,30\n30,40,99'))
+        retcode, o, e = self._run(tmpfile, mode='read')
+        self.assertEqual(retcode, 81)
+        self.assertEqual(len(o), 0)
+        self.cleanup(tmpfile)
+
+    def test_changing_delimiter_rejects_the_cached_interpretation(self):
+        tmpfile = self.create_file_with_data(six.b('a,b,c\n10,20,30\n30,40,50'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+
+        self.write_file(tmpfile.name, six.b('a\tb\tc\n10\t20\t30\n30\t40\t50'))
+        retcode, o, e = self._run(tmpfile, mode='read', extra_options='-t')
+        self.assertEqual(retcode, 80)
+        self.assertEqual(len(o), 0)
+        self.assertTrue(any(b'input_delimiter' in line for line in e))
+        self.cleanup(tmpfile)
+
+    def test_parse_option_not_in_legacy_signature_still_rejects_old_interpretation(self):
+        # The max column length limit affects parsing but is not part of the
+        # legacy whole-file content signature. The incremental interpretation
+        # key must still detect the change and refuse reuse (code 91).
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n2,y\n'))
+        retcode, o, e = self._run(tmpfile, extra_options='-M 1000')
+        self.assertEqual(retcode, 0, e)
+
+        retcode, o, e = self._run(tmpfile, mode='read', extra_options='-M 2000')
+        self.assertEqual(retcode, 91)
+        self.assertEqual(len(o), 0)
+        self.assertTrue(any(b'parsing options' in line for line in e))
+        self.cleanup(tmpfile)
+
+    def test_truncation_below_cached_prefix_is_rejected(self):
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n2,y\n3,z\n'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+
+        self.write_file(tmpfile.name, six.b('a,b\n1,x\n'))
+        retcode, o, e = self._run(tmpfile, mode='read')
+        self.assertIn(retcode, (80, 81, 92))
+        self.assertEqual(len(o), 0)
+        self.cleanup(tmpfile)
+
+    def test_read_only_mode_never_modifies_the_cache(self):
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n2,y\n'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+        cache_path = self._cache_path(tmpfile)
+
+        with open(tmpfile.name, 'ab') as f:
+            f.write(six.b('3,z\n'))
+
+        def cache_digest():
+            import hashlib
+            return hashlib.sha256(open(cache_path, 'rb').read()).hexdigest()
+
+        before = cache_digest()
+        retcode, o, e = self._run(tmpfile, mode='read')
+        self.assertEqual(retcode, 0, e)
+        # The query still returns all current rows...
+        self.assertEqual(o, [six.b('1,x'), six.b('2,y'), six.b('3,z')])
+        # ...but the cache file itself is untouched in read-only mode.
+        self.assertEqual(cache_digest(), before)
+
+        meta, table_name, cached_row_count = self._read_meta(cache_path)
+        self.assertEqual(int(meta['data_record_count']), 2)
+
+        # readwrite mode then extends the cache on disk.
+        retcode, o, e = self._run(tmpfile, mode='readwrite')
+        self.assertEqual(retcode, 0, e)
+        meta, table_name, cached_row_count = self._read_meta(cache_path)
+        self.assertEqual(int(meta['data_record_count']), 3)
+        self.assertEqual(cached_row_count, 3)
+        self.cleanup(tmpfile)
+
+    def test_gzipped_input_keeps_legacy_cache_without_incremental_metadata(self):
+        import gzip
+        tmpfile = self.create_file_with_data(six.b('a,b\n1,x\n2,y\n'), suffix='.csv.gz')
+        with gzip.open(tmpfile.name, 'wb') as f:
+            f.write(six.b('a,b\n1,x\n2,y\n'))
+        retcode, o, e = self._run(tmpfile)
+        self.assertEqual(retcode, 0, e)
+
+        db = sqlite3.connect(self._cache_path(tmpfile))
+        try:
+            names = [r[0] for r in db.execute("select name from sqlite_master where type='table'").fetchall()]
+        finally:
+            db.close()
+        self.assertIn('_qcatalog', names)
+        self.assertNotIn('_qcache_meta', names)
+        self.cleanup(tmpfile)
 
 
 class UserFunctionTests(AbstractQTestCase):

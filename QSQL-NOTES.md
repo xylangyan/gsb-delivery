@@ -31,6 +31,19 @@ Content signatures are being stored in the caches, allowing to detect a state wh
 
 Notice that when running with `-A`, the cache is not written, even when `-C` is set to `readwrite`. This is due to the fact that `-A` does not really read the entire content of the files. For now, if you'd like to just prepare the cache without running the actual query, you can run it with a `select 1` query or something, although in terms of speed it will mostly not matter. If there's demand for adding an explicit `prepare caches only` option, I'll consider adding it.
 
+### Incremental (append-aware) caching
+
+Large flow files are commonly appended to every day. Recreating the whole cache on each run is wasteful, so caches written by recent q versions store an additional `_qcache_meta` table which makes them append-aware:
+
+* **Verifiable prefix.** The cache remembers the byte offset and a `sha1` hash of the longest prefix of the source that consists entirely of *complete logical records*. On the next run, only that prefix is verified (without re-parsing it), so the already-cached rows are reused.
+* **Dangling trailing records.** A logical record whose closing quote is still missing (e.g. a quoted field whose end is written only on the next day) is never trusted. It is excluded from the cached prefix and re-parsed from its opening physical line once it becomes complete, so records are never duplicated or split incorrectly.
+* **Where reading continues.** The metadata stores the exact physical-line boundary and trustworthy data-row count, making it possible to tell which cache rows are trustworthy and from which logical record reading must continue.
+* **In-place rewrites are detected even with unchanged size and timestamp.** Verification is based on the actual prefix bytes, not only on file size and modification time. A rewrite that keeps the same size and `mtime` is still rejected.
+* **Parsing interpretation is locked.** A hash of all parsing options (delimiter, mode, quoting, encoding, column limit, etc.) is stored as well. Reusing a cache with different parsing options - including a changed delimiter - is refused rather than re-interpreted.
+* **Identical results.** Reading a file in one pass or split across several days yields the same row order and row count.
+
+Append-aware caches are written for regular (non-gzipped), single-file tables with `-C readwrite`. Gzipped input and multi-file (glob) tables keep the legacy whole-file cache format. With `-C read`, the cache is still verified and reused, but it is never modified; if new complete records exist, the query is served from an in-memory re-read until a later `-C readwrite` run extends the cache. Legacy `.qsql` files without `_qcache_meta` continue to use the original whole-file content-signature validation unchanged. When a prefix or interpretation check fails, delete the `.qsql` file to rebuild the cache.
+
 ## Revamped `.qrc` mechanism
 Adding `-C <mode>` for each query can be cumbersome at some point, so the `.qrc` file has been revamped for easy addition of default parameters. 
 

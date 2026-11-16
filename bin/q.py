@@ -536,6 +536,54 @@ class Sqlite3DB(object):
 
         return rr
 
+    def qcache_meta_table_exists(self):
+        return sqlite_table_exists(self.conn, QCACHE_META_TABLE_NAME)
+
+    def create_qcache_meta_table(self):
+        if not self.qcache_meta_table_exists():
+            xprint("qcache meta table does not exist. Creating it")
+            column_defs = ", ".join(["%s text" % field for field in QCacheMetadata.FIELDS])
+            self.conn.execute(
+                "CREATE TABLE %s (%s, primary key (table_name))" %
+                (QCACHE_META_TABLE_NAME, column_defs)).fetchall()
+            self.conn.commit()
+
+    def write_qcache_metadata(self, metadata):
+        assert metadata.is_complete()
+        self.create_qcache_meta_table()
+        fields = QCacheMetadata.FIELDS
+        placeholders = ",".join(["?" for _ in fields])
+        self.conn.execute(
+            "INSERT OR REPLACE INTO %s (%s) VALUES (%s)" %
+            (QCACHE_META_TABLE_NAME, ",".join(fields), placeholders),
+            tuple(metadata.get(field) for field in fields))
+        self.conn.commit()
+
+    def read_qcache_metadata(self, table_name):
+        if not self.qcache_meta_table_exists():
+            return None
+        fields = QCacheMetadata.FIELDS
+        q = "SELECT %s FROM %s where table_name = ?" % (",".join(fields), QCACHE_META_TABLE_NAME)
+        results = self.conn.execute(q, (table_name,)).fetchall()
+        if len(results) == 0:
+            return None
+        if len(results) > 1:
+            raise IncrementalCacheStateException('Bug - multiple qcache meta entries for table %s' % table_name)
+        return QCacheMetadata(OrderedDict(zip(fields, results[0])))
+
+    def get_table_row_count(self, table_name):
+        return self.execute_and_fetch('SELECT count(*) FROM %s' % table_name).results[0][0]
+
+    def delete_last_table_rows(self, table_name, row_count):
+        # Remove the newest physical rows of the cached table, used when a
+        # dangling logical record had been (partially) cached previously.
+        if row_count <= 0:
+            return
+        self.conn.execute(
+            'DELETE FROM %s WHERE rowid IN (SELECT rowid FROM %s ORDER BY rowid DESC LIMIT %s)' %
+            (table_name, table_name, int(row_count)))
+        self.conn.commit()
+
     def done(self):
         xprint("Closing database %s" % self.db_id)
         try:
@@ -828,6 +876,21 @@ class ContentSignatureDiffersException(Exception):
 
 class ContentSignatureDataDiffersException(Exception):
 
+    def __init__(self,msg):
+        self.msg = msg
+
+
+class CachePrefixVerificationException(Exception):
+    # Raised when the verifiable prefix of a source file does not match the
+    # bytes which were used to create the incremental cache. Covers in-place
+    # rewrites even when the file size and modification time are unchanged.
+    def __init__(self,msg):
+        self.msg = msg
+
+
+class IncrementalCacheStateException(Exception):
+    # Raised when the incremental cache metadata is internally inconsistent
+    # (e.g. the stored row count does not match the actual table contents).
     def __init__(self,msg):
         self.msg = msg
 
@@ -1280,6 +1343,7 @@ class MaterializedStateType(object):
     QSQL_FILE = 'qsql-file'
     SQLITE_FILE = 'sqlite-file'
     DATA_STREAM = 'data-stream'
+    INCREMENTAL_CACHED_FILE = 'incremental-cached-file'
 
 class TableSourceType(object):
     DELIMITED_FILE = 'file'
@@ -1327,6 +1391,9 @@ def detect_qtable_name_source_info(qtable_name,data_streams,read_caching_enabled
         table_source_type = TableSourceType.DELIMITED_FILE
         if is_qsql_file(matching_qsql_file_candidate):
             if read_caching_enabled:
+                if is_incremental_qsql_file(matching_qsql_file_candidate):
+                    xprint("Found an incremental qsql file for original file %s (matching file %s) and read caching is enabled. Using the incremental cache" % (qtable_name,matching_qsql_file_candidate))
+                    return MaterializedStateType.INCREMENTAL_CACHED_FILE, TableSourceType.QSQL_FILE_WITH_ORIGINAL, (qtable_name, matching_qsql_file_candidate)
                 xprint("Found matching qsql file for original file %s (matching file %s) and read caching is enabled. Using it" % (qtable_name,matching_qsql_file_candidate))
                 return MaterializedStateType.QSQL_FILE, TableSourceType.QSQL_FILE_WITH_ORIGINAL, (matching_qsql_file_candidate, None)
             else:
@@ -1359,6 +1426,19 @@ def is_qsql_file(filename):
     db.done()
     return qcatalog_exists
 
+def is_incremental_qsql_file(filename):
+    # An incremental qsql is a normal qsql which additionally contains the
+    # append-aware metadata table. Legacy qsql files return False and keep the
+    # original whole-file content-signature validation behaviour.
+    if not is_qsql_file(filename):
+        return False
+
+    db = Sqlite3DB('check_incremental_qsql_db', filename, filename, create_qcatalog=False)
+    try:
+        return db.qcache_meta_table_exists()
+    finally:
+        db.done()
+
 def normalize_filename_to_table_name(filename):
     xprint("Normalizing filename %s" % filename)
     if filename[0].isdigit():
@@ -1390,6 +1470,327 @@ def validate_content_signature(original_filename, source_signature,other_filenam
                     raise ContentSignatureDataDiffersException("%s Content Signatures differ at %s.%s (actual analysis data differs)" % (s,".".join(scope),k))
                 else:
                     raise ContentSignatureDiffersException(original_filename, other_filename, original_filename,".".join(scope + [k]),source_signature[k],content_signature[k])
+
+
+# ---------------------------------------------------------------------------
+# Incremental (append-aware) caching
+#
+# A normal qsql cache is only usable when the whole source file is identical to
+# the bytes which were originally parsed. The structures below allow reusing a
+# verifiable prefix of the source file instead:
+#
+#   * The source is split into physical lines (byte offsets are retained).
+#   * A csv scan determines which physical lines already form *complete*
+#     logical records. A dangling fragment (e.g. a quoted field whose closing
+#     quote has not been written yet) is excluded from the trusted prefix and
+#     may be completed by a later run.
+#   * The trusted prefix is protected by a sha1 over its exact bytes, so an
+#     in-place rewrite which preserves size and modification time is detected.
+#   * The parsing interpretation is protected by a hash of all parsing flags,
+#     so an existing cache is rejected when the delimiter or any other parsing
+#     option changes.
+#
+# The metadata is stored alongside the table in an additive `_qcache_meta`
+# table inside the qsql file. Caches without that table keep their original
+# whole-file validation behaviour.
+# ---------------------------------------------------------------------------
+
+INCREMENTAL_CACHE_VERSION = 'v2'
+QCACHE_META_TABLE_NAME = '_qcache_meta'
+
+
+class CacheInterpretationMismatchException(Exception):
+    # Raised when the parsing options of an existing cache (delimiter, mode,
+    # quoting, etc.) do not match the current invocation. The cached
+    # interpretation must never be reused in that case.
+    def __init__(self,msg):
+        self.msg = msg
+
+
+def sha1_hex(data):
+    return hashlib.sha1(data).hexdigest()
+
+
+def build_parse_options_key(input_params):
+    parsing_options = OrderedDict({
+        'cache_version': INCREMENTAL_CACHE_VERSION,
+        'delimiter': input_params.delimiter,
+        'parsing_mode': input_params.parsing_mode,
+        'skip_header': input_params.skip_header,
+        'input_encoding': input_params.input_encoding,
+        'gzipped_input': input_params.gzipped_input,
+        'with_universal_newlines': input_params.with_universal_newlines,
+        'expected_column_count': input_params.expected_column_count,
+        'keep_leading_whitespace_in_values': input_params.keep_leading_whitespace_in_values,
+        'disable_double_double_quoting': input_params.disable_double_double_quoting,
+        'disable_escaped_double_quoting': input_params.disable_escaped_double_quoting,
+        'input_quoting_mode': input_params.input_quoting_mode,
+        'disable_column_type_detection': input_params.disable_column_type_detection,
+        'max_column_length_limit': input_params.max_column_length_limit,
+    })
+    return sha1_hex(six.b(json.dumps(parsing_options, sort_keys=True)))
+
+
+class _CountingLineIterator(object):
+    # Counts how many physical lines the csv reader has consumed, allowing the
+    # physical-line span of every emitted logical record to be recorded.
+    def __init__(self, lines):
+        self.iterator = iter(lines)
+        self.consumed = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        value = next(self.iterator)
+        self.consumed += 1
+        return value
+
+
+def _decode_source_bytes(raw, input_params):
+    if input_params.input_encoding == 'utf-8-sig' and raw.startswith(six.b('\xef\xbb\xbf')):
+        raw = raw[3:]
+    text = raw.decode('utf-8' if input_params.input_encoding == 'utf-8-sig' else input_params.input_encoding)
+    # io.open(..., newline=None) always applies universal-newline translation.
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    return text
+
+
+def scan_delimited_source(filename, input_params, dialect_id, verify_prefix_end_offset=None):
+    # Single binary read of the whole file. Returns the byte boundary at which
+    # complete logical records end, the dangling trailing fragment (if any),
+    # and hashes which allow later verification without re-parsing.
+    #
+    # When verify_prefix_end_offset is provided, the scan additionally returns
+    # the sha1 of exactly that byte prefix, reusing the bytes already loaded so
+    # cache verification needs no second pass over the file.
+    with open(filename, 'rb') as f:
+        raw = f.read()
+
+    verified_prefix_sha1 = None
+    if verify_prefix_end_offset is not None:
+        if len(raw) < verify_prefix_end_offset:
+            raise CachePrefixVerificationException(
+                'Source file %s is shorter than the cached prefix (%s current bytes, %s cached prefix bytes). '
+                'The cached prefix can no longer be trusted.' %
+                (filename, len(raw), verify_prefix_end_offset))
+        verified_prefix_sha1 = sha1_hex(raw[:verify_prefix_end_offset])
+
+    raw_physical_lines = raw.splitlines(keepends=True)
+
+    byte_end_offsets = []
+    cumulative = 0
+    for line in raw_physical_lines:
+        cumulative += len(line)
+        byte_end_offsets.append(cumulative)
+
+    text = _decode_source_bytes(raw, input_params)
+    text_physical_lines = text.splitlines(keepends=True)
+
+    if len(text_physical_lines) != len(raw_physical_lines):
+        # Defensive guard - physical line counts must stay aligned so byte
+        # offsets and parsed records refer to the same lines.
+        raise IncrementalCacheStateException(
+            'Physical line count mismatch while scanning %s (raw lines %s text lines %s)' %
+            (filename, len(raw_physical_lines), len(text_physical_lines)))
+
+    counting_iterator = _CountingLineIterator(text_physical_lines)
+    reader = csv.reader(counting_iterator, dialect_id)
+
+    records = []
+    record_line_spans = []
+    span_start = 0
+    for record in reader:
+        span_end = counting_iterator.consumed
+        records.append(record)
+        record_line_spans.append((span_start, span_end))
+        span_start = span_end
+
+    probe_line = 'qcache_probe_%s"\n' % uuid.uuid4().hex
+    probed_records = list(csv.reader(iter(text_physical_lines + [probe_line]), dialect_id))
+
+    # If the probe creates a brand new record, the file ends on a record
+    # boundary. Otherwise it is absorbed into the last record, meaning the
+    # final logical record is a dangling fragment whose closing quote (or
+    # final newline) is still missing.
+    ends_on_boundary = len(probed_records) == len(records) + 1 and probed_records[:len(records)] == records
+
+    if ends_on_boundary:
+        boundary_line_index = len(raw_physical_lines)
+        complete_records = records
+        trailing_raw_lines = []
+    else:
+        if len(record_line_spans) == 0:
+            raise IncrementalCacheStateException('Cannot locate dangling fragment in %s' % filename)
+        boundary_line_index = record_line_spans[-1][0]
+        complete_records = records[:-1]
+        trailing_raw_lines = raw_physical_lines[boundary_line_index:]
+
+    prefix_end_offset = byte_end_offsets[boundary_line_index - 1] if boundary_line_index > 0 else 0
+    prefix_bytes = raw[:prefix_end_offset]
+    trailing_bytes = six.b('').join(trailing_raw_lines)
+
+    data_record_count = len(complete_records) - (1 if input_params.skip_header else 0)
+    if data_record_count < 0:
+        data_record_count = 0
+
+    return {
+        'file_size': len(raw),
+        'prefix_end_offset': prefix_end_offset,
+        'prefix_sha1': sha1_hex(prefix_bytes),
+        'verified_prefix_sha1': verified_prefix_sha1,
+        'trailing_line_count': len(trailing_raw_lines),
+        'trailing_sha1': sha1_hex(trailing_bytes),
+        'logical_record_count': len(complete_records),
+        'data_record_count': data_record_count,
+        'boundary_line_index': boundary_line_index,
+        'parse_options_key': build_parse_options_key(input_params),
+    }
+
+
+class QCacheMetadata(object):
+    # Serializable contents of the `_qcache_meta` table.
+    FIELDS = [
+        'cache_version', 'table_name', 'parse_options_key', 'prefix_end_offset',
+        'boundary_line_index', 'prefix_sha1', 'logical_record_count',
+        'data_record_count', 'trailing_line_count', 'trailing_sha1',
+        'source_size_at_write', 'source_mtime_ns_at_write',
+    ]
+
+    def __init__(self, values=None):
+        self.values = OrderedDict((field, None) for field in self.FIELDS)
+        if values is not None:
+            for field in self.FIELDS:
+                if field in values:
+                    self.values[field] = values[field]
+
+    def get(self, field):
+        return self.values[field]
+
+    def as_mapping(self):
+        return OrderedDict(self.values)
+
+    def is_complete(self):
+        return all(self.values[field] is not None for field in self.FIELDS)
+
+    @classmethod
+    def from_scan(cls, scan, table_name, source_stat):
+        values = OrderedDict({
+            'cache_version': INCREMENTAL_CACHE_VERSION,
+            'table_name': table_name,
+            'parse_options_key': scan['parse_options_key'],
+            'prefix_end_offset': str(scan['prefix_end_offset']),
+            'boundary_line_index': str(scan['boundary_line_index']),
+            'prefix_sha1': scan['prefix_sha1'],
+            'logical_record_count': str(scan['logical_record_count']),
+            'data_record_count': str(scan['data_record_count']),
+            'trailing_line_count': str(scan['trailing_line_count']),
+            'trailing_sha1': scan['trailing_sha1'],
+            'source_size_at_write': str(source_stat.st_size),
+            'source_mtime_ns_at_write': str(source_stat.st_mtime_ns),
+        })
+        return cls(values)
+
+
+def read_file_prefix_hash(filename, prefix_end_offset):
+    # Stream the prefix in bounded-size blocks so verification of very large
+    # files does not require holding the whole prefix in memory.
+    digest = hashlib.sha1()
+    remaining = prefix_end_offset
+    block_size = 1024 * 1024
+    with open(filename, 'rb') as f:
+        while remaining > 0:
+            chunk = f.read(min(block_size, remaining))
+            if not chunk:
+                raise CachePrefixVerificationException(
+                    'Source file %s is shorter than the cached prefix (%s bytes expected). '
+                    'The cached prefix can no longer be trusted.' % (filename, prefix_end_offset))
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest()
+
+
+class IncrementalCachePlan(object):
+    # Describes how an existing cache can be extended, after the trusted prefix
+    # and the parsing interpretation have been verified.
+    def __init__(self, window_start_line, window_end_line, added_data_record_count,
+                 skip_initial_header_row, current_scan):
+        self.window_start_line = window_start_line
+        self.window_end_line = window_end_line
+        self.added_data_record_count = added_data_record_count
+        self.skip_initial_header_row = skip_initial_header_row
+        self.current_scan = current_scan
+
+
+def plan_incremental_continuation(filename, input_params, current_scan, metadata):
+    # Returns an IncrementalCachePlan when the cache prefix is trustworthy, or
+    # raises a specific exception explaining why the cache must not be reused.
+    if metadata.get('cache_version') != INCREMENTAL_CACHE_VERSION:
+        raise IncrementalCacheStateException(
+            'Unsupported incremental cache version %s in cache of %s' %
+            (metadata.get('cache_version'), filename))
+
+    current_options_key = build_parse_options_key(input_params)
+    if metadata.get('parse_options_key') != current_options_key:
+        raise CacheInterpretationMismatchException(
+            'The cache of %s was created with different parsing options (e.g. another delimiter). '
+            'Refusing to reuse the cached interpretation. Delete the .qsql file to rebuild it.' % filename)
+
+    prefix_end_offset = int(metadata.get('prefix_end_offset'))
+    if current_scan['file_size'] < prefix_end_offset:
+        raise CachePrefixVerificationException(
+            'Source file %s is shorter than the cached prefix (%s current bytes, %s cached prefix bytes). '
+            'The cached prefix can no longer be trusted.' %
+            (filename, current_scan['file_size'], prefix_end_offset))
+
+    # The scan computed this hash over the exact stored prefix length, reusing
+    # the bytes it already read. A mismatch means the prefix was rewritten in
+    # place, even if size and modification time were preserved.
+    current_prefix_hash = current_scan.get('verified_prefix_sha1')
+    if current_prefix_hash is None:
+        current_prefix_hash = read_file_prefix_hash(filename, prefix_end_offset)
+    if current_prefix_hash != metadata.get('prefix_sha1'):
+        raise CachePrefixVerificationException(
+            'The verifiable prefix of %s (first %s bytes) does not match the bytes from which the cache was built. '
+            'The source file appears to have been rewritten in place. Refusing to reuse the cache. '
+            'Delete the .qsql file to rebuild it.' % (filename, prefix_end_offset))
+
+    stored_boundary = int(metadata.get('boundary_line_index'))
+    current_boundary = current_scan['boundary_line_index']
+
+    if current_boundary < stored_boundary:
+        raise CachePrefixVerificationException(
+            'The complete-record boundary of %s moved backwards (cached physical line %s, current %s). '
+            'The cached prefix can no longer be trusted.' % (filename, stored_boundary, current_boundary))
+
+    stored_logical_records = int(metadata.get('logical_record_count'))
+    # The hash-verified prefix must parse into exactly the same logical records
+    # that were originally cached. This is deterministic given the identical
+    # bytes and identical parsing options, and acts as a defensive cross-check.
+    if current_scan['logical_record_count'] < stored_logical_records:
+        raise IncrementalCacheStateException(
+            'Logical record count in the verified prefix of %s is lower than the cached count (%s vs %s)' %
+            (filename, current_scan['logical_record_count'], stored_logical_records))
+
+    stored_data_records = int(metadata.get('data_record_count'))
+    added_data_record_count = current_scan['data_record_count'] - stored_data_records
+    if added_data_record_count < 0:
+        raise IncrementalCacheStateException(
+            'Data record count of %s is lower than the cached count (%s vs %s)' %
+            (filename, current_scan['data_record_count'], stored_data_records))
+
+    # The continuation window begins exactly at the first physical line which
+    # was not part of the trusted prefix (a previously dangling fragment is
+    # re-parsed from its opening line once it becomes complete).
+    skip_initial_header_row = input_params.skip_header and stored_boundary == 0
+
+    return IncrementalCachePlan(
+        window_start_line=stored_boundary,
+        window_end_line=current_boundary,
+        added_data_record_count=added_data_record_count,
+        skip_initial_header_row=skip_initial_header_row,
+        current_scan=current_scan)
+
 
 class DelimitedFileReader(object):
     def __init__(self,atomic_fns, input_params, dialect, f = None,external_f_name = None):
@@ -1496,6 +1897,65 @@ class DelimitedFileReader(object):
         except UniversalNewlinesExistException as e2:
             # No need to translate the exception, but we want it to be explicitly defined here for clarity
             raise UniversalNewlinesExistException()
+
+
+class WindowedDelimitedFileReader(object):
+    # Reads a specific physical-line window of one file. Used for incremental
+    # caching so that only the not-yet-cached part of a file has to be parsed,
+    # while reusing the exact same row insertion path as a full read.
+    def __init__(self, filename, input_params, dialect_id, line_window_start, line_window_end,
+                 skip_initial_header_row=False):
+        assert line_window_end >= line_window_start
+        self.atomic_fns = [filename]
+        self.input_params = input_params
+        self.dialect = dialect_id
+        self.line_window_start = line_window_start
+        self.line_window_end = line_window_end
+        # When the window starts at the very first physical line and headers
+        # are used, the header line is part of the window and must not be
+        # inserted as data.
+        self.skip_initial_header_row = skip_initial_header_row
+        self.lines_read = 0
+
+    def get_lines_read(self):
+        return self.lines_read
+
+    def open_file(self):
+        with open(self.atomic_fns[0], 'rb') as f:
+            raw = f.read()
+        text = _decode_source_bytes(raw, self.input_params)
+        self.physical_lines = text.splitlines(keepends=True)[self.line_window_start:self.line_window_end]
+        return self
+
+    def close_file(self):
+        self.physical_lines = []
+
+    def generate_rows(self):
+        reader = encoded_csv_reader(
+            self.input_params.input_encoding, self, dialect=self.dialect, row_data_only=True)
+        try:
+            for index, col_vals in enumerate(reader):
+                if self.skip_initial_header_row and index == 0:
+                    continue
+                self.lines_read += 1
+                yield self.atomic_fns[0], 0, False, col_vals
+        except ColumnMaxLengthLimitExceededException as e:
+            msg = "Column length is larger than the maximum. Offending file is '%s' (encoding %s)." % (
+                ",".join(self.atomic_fns), self.input_params.input_encoding)
+            raise ColumnMaxLengthLimitExceededException(msg)
+        except UniversalNewlinesExistException:
+            raise UniversalNewlinesExistException()
+
+    # Minimal file-like interface expected by py3_encoded_csv_reader
+    def filename(self):
+        return self.atomic_fns[0]
+
+    def isfirstline(self):
+        return False
+
+    def __iter__(self):
+        return iter(self.physical_lines)
+
 
 class MaterializedState(object):
     def __init__(self, table_source_type,qtable_name, engine_id):
@@ -1734,6 +2194,19 @@ class MaterializedDelimitedFileState(MaterializedState):
 
         return database_info, relevant_table
 
+    def _incremental_caching_applicable(self):
+        # Append-aware prefix verification relies on raw byte offsets and
+        # hashes of the (single) source file. Compressed streams do not map
+        # decompressed text back to stable byte positions, so gzipped input
+        # keeps the legacy whole-file caching behaviour.
+        if self.input_params.gzipped_input:
+            return False
+        if len(self.atomic_fns) != 1:
+            return False
+        if self.atomic_fns[0].endswith('.gz'):
+            return False
+        return True
+
     def save_cache_to_disk_if_needed(self, disk_db_filename, table_creator):
         if len(self.atomic_fns) > 1:
             xprint("Cannot save cache for multi-files for now, deciding auto-naming for cache is challenging. Will be added in the future.")
@@ -1745,8 +2218,54 @@ class MaterializedDelimitedFileState(MaterializedState):
                 assert self.table_source_type != TableSourceType.DELIMITED_FILE_WITH_UNUSED_QSQL
                 xprint("Going to write file cache for %s. Disk filename is %s" % (",".join(self.atomic_fns), disk_db_filename))
                 self._store_qsql(table_creator.sqlite_db, disk_db_filename)
+                if self._incremental_caching_applicable():
+                    self._store_incremental_cache_metadata(disk_db_filename, table_creator)
+                else:
+                    xprint("Incremental cache metadata is not applicable for %s; writing a legacy cache" % ",".join(self.atomic_fns))
             else:
                 xprint("Database has been provided externally. Skipping storing a cached version of the data")
+
+    def _store_incremental_cache_metadata(self, disk_db_filename, table_creator):
+        # Persist the append-aware metadata next to the cached table, enabling
+        # later runs to verify the source prefix and continue from the exact
+        # logical record at which this cache ends.
+        source_filename = self.atomic_fns[0]
+        source_stat = os.stat(source_filename)
+        scan = scan_delimited_source(source_filename, self.input_params, self.dialect_id)
+
+        cached_table_name = table_creator.target_sqlite_table_name
+        actual_rows = table_creator.sqlite_db.get_table_row_count(cached_table_name)
+        trustworthy_rows = scan['data_record_count']
+        if actual_rows < trustworthy_rows:
+            raise IncrementalCacheStateException(
+                'Refusing to write incremental metadata for %s: cached row count %s is lower than the trustworthy data record count %s' %
+                (source_filename, actual_rows, trustworthy_rows))
+
+        disk_db = Sqlite3DB(
+            'qcache_meta_writer', 'file:%s' % disk_db_filename, disk_db_filename, create_qcatalog=False)
+        try:
+            # A trailing dangling fragment (e.g. an unterminated quoted field)
+            # is parsed by csv as a provisional row on a full read, but it is
+            # not a complete logical record and must not be trusted across
+            # runs. Remove it from the persisted cache only - the in-memory
+            # table used by the current query is left untouched.
+            untrustworthy_row_count = actual_rows - trustworthy_rows
+            if untrustworthy_row_count > 0:
+                disk_db.delete_last_table_rows(cached_table_name, untrustworthy_row_count)
+                xprint("Excluded %s untrustworthy trailing row(s) from persisted cache of %s" %
+                       (untrustworthy_row_count, source_filename))
+
+            persisted_rows = disk_db.get_table_row_count(cached_table_name)
+            if persisted_rows != trustworthy_rows:
+                raise IncrementalCacheStateException(
+                    'Persisted cache row count %s does not match trustworthy data record count %s for %s' %
+                    (persisted_rows, trustworthy_rows, source_filename))
+
+            metadata = QCacheMetadata.from_scan(scan, cached_table_name, source_stat)
+            disk_db.write_qcache_metadata(metadata)
+        finally:
+            disk_db.done()
+        xprint("Written incremental cache metadata for %s" % source_filename)
 
     def _store_qsql(self, source_sqlite_db, disk_db_filename):
         xprint("Storing data as disk db")
@@ -2079,6 +2598,246 @@ class MaterializedQsqlState(MaterializedState):
         return DatabaseInfo(self.db_id,self.db_to_use, needs_closing=True), self.table_name
 
 
+class MaterializedIncrementalCachedFileState(MaterializedState):
+    # Bridges an append-aware qsql cache with its original delimited file.
+    # The trusted prefix is hash-verified on every run; only newly completed
+    # logical records are parsed and appended to the cached table. The on-disk
+    # qsql is updated in place, so repeated runs on growing files avoid a full
+    # rebuild while remaining byte-level verifiable.
+    def __init__(self, table_source_type, source_qtable_name, qsql_filename, input_params, dialect_id, engine_id):
+        super(MaterializedIncrementalCachedFileState, self).__init__(table_source_type, source_qtable_name, engine_id)
+        self.original_filename = os.path.abspath(source_qtable_name)
+        self.qsql_filename = qsql_filename
+        self.input_params = input_params
+        self.dialect_id = dialect_id
+        self.qsql_db = None
+        self.qsql_metadata = None
+        self.content_signature = None
+        self.atomic_fns = [self.original_filename]
+        self.incremental_extension = None
+
+    def get_materialized_state_type(self):
+        return MaterializedStateType.INCREMENTAL_CACHED_FILE
+
+    def get_planned_table_name(self):
+        return normalize_filename_to_table_name(os.path.basename(self.original_filename))
+
+    def initialize(self):
+        super(MaterializedIncrementalCachedFileState, self).initialize()
+        if not os.path.exists(self.original_filename):
+            raise FileNotFoundException("No files matching '%s' have been found" % self.original_filename)
+        self.source_type = self.table_source_type
+        self.source = self.qsql_filename
+
+    def _open_qsql_db(self):
+        # Opened writable only when the cache may be extended (readwrite). In
+        # read-only mode the file is opened read-only so it cannot be modified
+        # and does not require write permission.
+        if self.input_params.write_caching:
+            url = 'file:%s' % self.qsql_filename
+        else:
+            url = 'file:%s?mode=ro' % self.qsql_filename
+        return Sqlite3DB(
+            self._generate_qsql_only_db_name__temp(self.qsql_filename),
+            url, self.qsql_filename, create_qcatalog=False)
+
+    def _resolve_single_table_name(self, db):
+        qcatalog_entries = db.get_all_from_qcatalog()
+        if len(qcatalog_entries) == 0:
+            raise NoTableInQsqlExcption(self.qsql_filename)
+        if len(qcatalog_entries) > 1:
+            table_names = list(sorted([x['temp_table_name'] for x in qcatalog_entries]))
+            raise TooManyTablesInQsqlException(self.qsql_filename, table_names)
+        return qcatalog_entries[0]['temp_table_name']
+
+    def choose_db_to_use(self, forced_db_to_use=None, stop_after_analysis=False):
+        self.db_id = '%s' % self._generate_qsql_only_db_name__temp(self.qsql_filename)
+        self.qsql_db = self._open_qsql_db()
+        self.db_to_use = self.qsql_db
+
+        self.table_name = self._resolve_single_table_name(self.qsql_db)
+        self.qsql_metadata = self.qsql_db.read_qcache_metadata(self.table_name)
+        if self.qsql_metadata is None or not self.qsql_metadata.is_complete():
+            raise IncrementalCacheStateException(
+                'The qsql file %s is marked as incremental but lacks valid cache metadata for table %s' %
+                (self.qsql_filename, self.table_name))
+
+        if forced_db_to_use is not None:
+            xprint("Forced incremental qsql to use forced_db: %s" % forced_db_to_use)
+            d = self.qsql_db.get_from_qcatalog_using_table_name(self.table_name)
+            new_table_name = forced_db_to_use.attach_and_copy_table(self.qsql_db, self.table_name, stop_after_analysis)
+            cs = OrderedDict(json.loads(d['content_signature']))
+            forced_db_to_use.add_to_qcatalog_table(new_table_name, cs, d['creation_time'], d['source_type'], d['source'])
+            self.table_name = new_table_name
+            self.db_id = forced_db_to_use.db_id
+            self.db_to_use = forced_db_to_use
+
+    def make_data_available(self, stop_after_analysis):
+        xprint("Validating incremental cache %s against source %s" % (self.qsql_filename, self.original_filename))
+
+        # When the table had to be copied into another database (attach limit),
+        # the copy is detached from the on-disk cache and cannot be extended in
+        # place. Serve the query from a full, correct re-read instead; the cache
+        # file itself is left untouched and will be extended on a normal run.
+        if self.db_to_use is not self.qsql_db and not stop_after_analysis:
+            return self._serve_via_full_reread()
+
+        stored_prefix_end_offset = int(self.qsql_metadata.get('prefix_end_offset'))
+        current_scan = scan_delimited_source(
+            self.original_filename, self.input_params, self.dialect_id,
+            verify_prefix_end_offset=stored_prefix_end_offset)
+        try:
+            plan = plan_incremental_continuation(
+                self.original_filename, self.input_params, current_scan, self.qsql_metadata)
+        except (CacheInterpretationMismatchException, CachePrefixVerificationException) as gate_error:
+            # Preserve the established whole-file content-signature error
+            # contract (codes 80/81) whenever it detects the change. If the
+            # legacy checks pass despite the incremental gate failing, the
+            # change is a subtle in-place rewrite that only the prefix hash can
+            # see, so the gate error remains authoritative.
+            try:
+                self._validate_via_legacy_content_signature()
+            except (ContentSignatureDiffersException, ContentSignatureDataDiffersException):
+                raise
+            raise gate_error
+        self.incremental_extension = plan
+
+        stored_data_records = int(self.qsql_metadata.get('data_record_count'))
+        actual_cached_rows = self.qsql_db.get_table_row_count(
+            self.qsql_metadata.get('table_name'))
+        if actual_cached_rows != stored_data_records:
+            raise IncrementalCacheStateException(
+                'The cached table in %s contains %s rows but its metadata claims %s trustworthy data rows' %
+                (self.qsql_filename, actual_cached_rows, stored_data_records))
+
+        if not stop_after_analysis and plan.added_data_record_count > 0:
+            if self.input_params.write_caching:
+                self._append_new_records(plan, current_scan)
+            else:
+                # Read-only caching must never modify the cache. The trusted
+                # prefix was still verified above, so when new complete records
+                # exist we serve the query from a full in-memory re-read while
+                # leaving the on-disk qsql untouched.
+                xprint("Read-only caching: %s has new complete records; re-reading fully without modifying the cache" % self.original_filename)
+                return self._serve_via_full_reread()
+
+        column_names, column_types, sqlite_column_types = self._extract_information()
+
+        self.mfs_structure = MaterializedStateTableStructure(
+            self.original_filename, [self.original_filename], self.db_id,
+            column_names, column_types, sqlite_column_types,
+            self.table_name, self.source_type, self.source,
+            self.get_planned_table_name())
+
+        return DatabaseInfo(self.db_id, self.db_to_use, needs_closing=True), self.table_name
+
+    def _validate_via_legacy_content_signature(self):
+        # Mirrors the original qsql validation: re-analyze the source file and
+        # compare its full content signature against the one stored in qsql.
+        mdfs = MaterializedDelimitedFileState(
+            TableSourceType.DELIMITED_FILE, self.original_filename, self.input_params,
+            self.dialect_id, self.engine_id, target_table_name=None)
+        mdfs.initialize()
+        mdfs.choose_db_to_use(forced_db_to_use=None, stop_after_analysis=True)
+        mdfs.make_data_available(stop_after_analysis=True)
+        original_content_signature = mdfs.content_signature
+
+        qcatalog_entry = self.qsql_db.get_from_qcatalog_using_table_name(self.table_name)
+        if qcatalog_entry is None:
+            raise IncrementalCacheStateException('Missing content signature in %s' % self.qsql_filename)
+        actual_content_signature = json.loads(qcatalog_entry['content_signature'])
+        validate_content_signature(
+            self.original_filename, original_content_signature, self.qsql_filename,
+            actual_content_signature, dump=False)
+        mdfs.finalize()
+
+    def _serve_via_full_reread(self):
+        # Re-read the whole source file into a fresh in-memory database. This is
+        # used when the on-disk qsql cannot serve the query as-is (read-only
+        # mode with new records, or an attached/copied database). The qsql file
+        # is never written here; the engine attaches the in-memory database.
+        xprint("Performing a full in-memory re-read of %s instead of extending %s" %
+               (self.original_filename, self.qsql_filename))
+        mdfs = MaterializedDelimitedFileState(
+            TableSourceType.DELIMITED_FILE, self.original_filename, self.input_params,
+            self.dialect_id, self.engine_id, target_table_name=None)
+        mdfs.initialize()
+        mdfs.choose_db_to_use(forced_db_to_use=None, stop_after_analysis=False)
+        # This in-memory re-read must never overwrite the existing on-disk qsql,
+        # which remains the authoritative incremental cache.
+        mdfs.can_store_as_cached = False
+        database_info, relevant_table = mdfs.make_data_available(stop_after_analysis=False)
+        self.mfs_structure = mdfs.mfs_structure
+        self.table_name = relevant_table
+        self.db_id = mdfs.db_id
+        self.db_to_use = mdfs.db_to_use
+        mdfs.finalize()
+        return database_info, relevant_table
+
+    def _append_new_records(self, plan, current_scan):
+        cached_table_name = self.qsql_metadata.get('table_name')
+        table_info = self.qsql_db.get_sqlite_table_info(cached_table_name)
+        column_names = [x[1] for x in table_info]
+        python_column_types = [sqlite_type_to_python_type(x[2]) for x in table_info]
+
+        windowed_reader = WindowedDelimitedFileReader(
+            self.original_filename, self.input_params, self.dialect_id,
+            plan.window_start_line, plan.window_end_line,
+            skip_initial_header_row=plan.skip_initial_header_row)
+        windowed_reader.open_file()
+        try:
+            table_creator = TableCreator(
+                self.original_filename, windowed_reader, self.input_params,
+                sqlite_db=self.qsql_db, target_sqlite_table_name=cached_table_name)
+            table_creator.configure_for_append(column_names, python_column_types)
+            try:
+                table_creator.perform_append(self.dialect_id)
+            except Exception:
+                # A parse failure (e.g. strict column-count mismatch) must not
+                # leave partially inserted rows behind, since the metadata is
+                # only updated after a successful append.
+                self.qsql_db.conn.rollback()
+                raise
+            inserted_rows = windowed_reader.get_lines_read()
+        finally:
+            windowed_reader.close_file()
+
+        if inserted_rows != plan.added_data_record_count:
+            raise IncrementalCacheStateException(
+                'Incremental extension of %s inserted %s rows but %s new trustworthy data records were expected' %
+                (self.qsql_filename, inserted_rows, plan.added_data_record_count))
+
+        source_stat = os.stat(self.original_filename)
+        new_metadata = QCacheMetadata.from_scan(current_scan, cached_table_name, source_stat)
+        self.qsql_db.write_qcache_metadata(new_metadata)
+        self.qsql_metadata = new_metadata
+        xprint("Extended incremental cache %s with %s data rows from physical lines %s-%s" %
+               (self.qsql_filename, inserted_rows, plan.window_start_line, plan.window_end_line))
+
+    def _extract_information(self):
+        table_info = self.db_to_use.get_sqlite_table_info(self.table_name)
+        column_names = [x[1] for x in table_info]
+        sqlite_column_types = [x[2].lower() for x in table_info]
+        column_types = [sqlite_type_to_python_type(x[2]) for x in table_info]
+        qcatalog_entry = self.db_to_use.get_from_qcatalog_using_table_name(self.table_name)
+        if qcatalog_entry is not None:
+            self.content_signature = OrderedDict(**json.loads(qcatalog_entry['content_signature']))
+        return column_names, column_types, sqlite_column_types
+
+    def finalize(self):
+        super(MaterializedIncrementalCachedFileState, self).finalize()
+        # When the table was copied into another database (analyze-only or the
+        # attach limit), the on-disk qsql connection is not part of the engine
+        # database list and must be closed here. Otherwise it is still owned by
+        # the engine and will be closed during engine shutdown.
+        if self.qsql_db is not None and self.qsql_db is not self.db_to_use:
+            self.qsql_db.done()
+            self.qsql_db = None
+
+    def _generate_qsql_only_db_name__temp(self, filenames_str):
+        return 'e_%s_fn_%s' % (self.engine_id, hashlib.sha1(six.b(filenames_str)).hexdigest())
+
+
 class MaterializedStateTableStructure(object):
     def __init__(self,qtable_name, atomic_fns, db_id, column_names, python_column_types, sqlite_column_types, table_name_for_querying,source_type,source,planned_table_name):
         self.qtable_name = qtable_name
@@ -2247,6 +3006,28 @@ class TableCreator(object):
         else:
             # TODO Convert to assertion
             raise Exception('Bug - Wrong state %s' % self.state)
+
+    def configure_for_append(self, column_names, python_column_types):
+        # Reuse an already-created table. The column structure is taken from
+        # the existing cache rather than inferred again, guaranteeing that the
+        # appended rows are interpreted identically to the cached prefix.
+        inferer = self.column_inferer
+        inferer.column_names = list(column_names)
+        inferer.column_types = list(python_column_types)
+        inferer.column_count = len(column_names)
+        inferer.inferred = True
+        if self.skip_header:
+            inferer.header_row = list(column_names)
+
+        self.table_created = True
+        self.effective_column_names = inferer.column_names[:]
+        self.state = TableCreatorState.ANALYZED
+
+    def perform_append(self, dialect):
+        if not self.table_created:
+            raise Exception('Bug - Table must be configured for append before reading rows')
+        self._populate(dialect, stop_after_analysis=False)
+        self.state = TableCreatorState.FULLY_READ
 
     def _flush_pre_creation_rows(self, filename):
         for i, col_vals in enumerate(self.pre_creation_rows):
@@ -2631,6 +3412,11 @@ class QTextAsData(object):
             (source_qtable_name,_) = source_info
             ms = MaterializedDelimitedFileState(table_source_type,source_qtable_name, input_params, dialect, self.engine_id)
             effective_qtable_name = source_qtable_name
+        elif materialized_state_type == MaterializedStateType.INCREMENTAL_CACHED_FILE:
+            (source_qtable_name, qsql_filename) = source_info
+            ms = MaterializedIncrementalCachedFileState(
+                table_source_type, source_qtable_name, qsql_filename, input_params, dialect, self.engine_id)
+            effective_qtable_name = source_qtable_name
         else:
             assert False, "Unknown file type for qtable %s should have exited with an exception" % (qtable_name)
 
@@ -2955,6 +3741,12 @@ class QTextAsData(object):
             error = QError(e,e.msg,82)
         except ContentSignatureNotFoundException as e:
             error = QError(e,e.msg,83)
+        except CacheInterpretationMismatchException as e:
+            error = QError(e,e.msg,91)
+        except CachePrefixVerificationException as e:
+            error = QError(e,e.msg,92)
+        except IncrementalCacheStateException as e:
+            error = QError(e,e.msg,93)
         except NonExistentTableNameInQsql as e:
             msg = "Table %s could not be found in qsql file %s . Existing table names: %s" % (e.table_name,e.qsql_filename,",".join(e.existing_table_names))
             error = QError(e,msg,84)
