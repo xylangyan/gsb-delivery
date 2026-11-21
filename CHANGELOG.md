@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- Prevent `NamedParameter` and `PyformatParameter` from generating placeholder names
+  that collide with caller-supplied explicit placeholders. Explicit placeholders are
+  reserved across the whole statement (including CTEs, UNION branches and subqueries)
+  before rendering, and their values remain the caller's responsibility rather than
+  being collected by `get_parameters()`. SQL-script rendering without a parameter
+  collector is unchanged.
+
 ## v0.50.0 (2025-01-14)
 
 ### New Features

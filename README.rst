@@ -1295,6 +1295,39 @@ This works with all parameter types. For dict-based parameters like ``NamedParam
     # sql: SELECT * FROM "customers" WHERE "status"=:param1
     # params: {'param1': 'active'}
 
+Mixing explicit and generated placeholders
+"""""""""""""""""""""""""""""""""""""""""""
+
+A ``Parameter`` placed in the query explicitly is treated as a placeholder whose value
+is supplied externally: it is always rendered as written and its value is never added to
+``get_parameters()``. When a dict-based collector (``NamedParameter`` or
+``PyformatParameter``) also generates names for collected values, it reserves every
+explicit placeholder name before rendering, so generated names cannot collide with the
+explicit ones even when an explicit placeholder appears after the collected values.
+
+.. code-block:: python
+
+    from pypika import NamedParameter, Parameter, Query, Table
+
+    customers = Table('customers')
+    q = (
+        Query.from_(customers)
+        .select('*')
+        .where(customers.foo == Parameter(':param2'))  # value bound externally
+        .where(customers.bar == 'buz')                 # collected automatically
+        .where(customers.baz == 'fiz')                 # collected automatically
+    )
+
+    parameter = NamedParameter()
+    sql = q.get_sql(parameter=parameter)
+
+    # sql: SELECT * FROM "customers"
+    #      WHERE "foo"=:param2 AND "bar"=:param1 AND "baz"=:param3
+    # params: {'param1': 'buz', 'param3': 'fiz'}
+
+Calls that only need the SQL script and pass no collector keep getting the literal
+placeholder text unchanged.
+
 Temporal support
 ^^^^^^^^^^^^^^^^
 

@@ -380,8 +380,23 @@ class Parameter(Term):
     def placeholder(self):
         return self._placeholder
 
+    def register_token(self, placeholder_sql: str) -> None:
+        """Record a placeholder token rendered during this collector run.
+
+        Collectors that generate placeholder names override this so that a
+        caller-supplied placeholder keeps an automatically generated name from
+        colliding with it. The base collector has no names to track.
+        """
+
     def get_sql(self, **kwargs: Any) -> str:
-        return str(self.placeholder)
+        placeholder_sql = str(self.placeholder)
+        collector = kwargs.get("parameter")
+        if collector is not None:
+            # The placeholder is supplied explicitly by the caller, so its value
+            # must be bound externally. Register the rendered token with the active
+            # collector to keep automatically generated names from colliding with it.
+            collector.register_token(placeholder_sql)
+        return placeholder_sql
 
     def update_parameters(self, param_key: Any, param_value: Any, **kwargs) -> None:
         pass
@@ -413,19 +428,33 @@ class DictParameter(Parameter):
     def __init__(self, placeholder: str | int | Callable[[int], str] = named_placeholder_gen) -> None:
         super().__init__(placeholder=placeholder)
         self._parameters = dict()
+        self._registered_keys = set()
 
     @property
     def placeholder(self) -> str:
-        if callable(self._placeholder):
-            return self._placeholder(len(self._parameters))
+        if not callable(self._placeholder):
+            return str(self._placeholder)
 
-        return str(self._placeholder)
+        # Skip names already taken by caller-supplied placeholders or by values
+        # collected earlier in this run, so generated names stay unique.
+        used_keys = self._registered_keys | self._parameters.keys()
+        index = len(self._parameters)
+        candidate = self._placeholder(index)
+        while candidate in used_keys:
+            index += 1
+            candidate = self._placeholder(index)
+
+        return candidate
 
     def get_parameters(self, **kwargs) -> dict:
         return self._parameters
 
     def get_param_key(self, placeholder: T, **kwargs) -> T:
         return placeholder[1:]
+
+    def register_token(self, placeholder_sql: str) -> None:
+        super().register_token(placeholder_sql)
+        self._registered_keys.add(self.get_param_key(placeholder_sql))
 
     def update_parameters(self, param_key: Any, value: Any, **kwargs) -> None:
         self._parameters[param_key] = value
@@ -559,6 +588,7 @@ class ValueWrapper(Term):
             # is skipped; the bound value must be the original value.
             value_sql = self.get_value_sql(quote_char=quote_char, within_parameter=True, **kwargs)
         param_sql, param_key = self._get_param_data(parameter, **kwargs)
+        parameter.register_token(param_sql)
         parameter.update_parameters(param_key=param_key, value=value_sql, **kwargs)
 
         return format_alias_sql(param_sql, self.alias, quote_char=quote_char, **kwargs)

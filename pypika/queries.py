@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from copy import copy
 from functools import reduce
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
@@ -15,6 +15,8 @@ from pypika.terms import (
     Function,
     Index,
     Node,
+    Parameter,
+    ParameterValueWrapper,
     PeriodCriterion,
     Rollup,
     Star,
@@ -673,6 +675,11 @@ class _SetOperation(Selectable, Term):
         # This might be overridden if quote_char is set explicitly in kwargs
         kwargs.setdefault("quote_char", self.base_query.QUOTE_CHAR)
 
+        parameter = kwargs.get("parameter")
+        if parameter is not None and not kwargs.get("_placeholders_reserved"):
+            kwargs["_placeholders_reserved"] = True
+            _reserve_embedded_placeholders(parameter, self)
+
         base_querystring = self.base_query.get_sql(subquery=self.base_query.wrap_set_operation_queries, **kwargs)
 
         querystring = base_querystring
@@ -746,6 +753,85 @@ class _SetOperation(Selectable, Term):
 
     def _limit_sql(self) -> str:
         return " LIMIT {limit}".format(limit=self._limit)
+
+
+def _iter_embedded_parameters(node: Node) -> Iterator[Parameter]:
+    """Yield every caller-supplied ``Parameter`` reachable from a query or term.
+
+    This walk descends into the query builder's own clause containers (CTEs, FROM
+    subqueries, joins and set operations) as well as terms, but it does not rely on
+    ``Node.nodes_`` for queries, so the semantics that ``tables_`` and ``fields_``
+    depend on are left untouched.
+    """
+    if isinstance(node, Parameter):
+        yield node
+        return
+
+    if isinstance(node, ParameterValueWrapper):
+        yield from _iter_embedded_parameters(node._parameter)
+        if isinstance(node.value, Node):
+            yield from _iter_embedded_parameters(node.value)
+        return
+
+    if isinstance(node, QueryBuilder):
+        for clause in node._with:
+            yield from _iter_embedded_parameters(clause)
+        for term in node._selects:
+            yield from _iter_embedded_parameters(term)
+        for selectable in node._from:
+            yield from _iter_embedded_parameters(selectable)
+        for join in node._joins:
+            yield from _iter_embedded_parameters(join.item)
+            if isinstance(join, JoinOn):
+                yield from _iter_embedded_parameters(join.criterion)
+            elif isinstance(join, JoinUsing):
+                for field in join.fields:
+                    yield from _iter_embedded_parameters(field)
+        if node._wheres is not None:
+            yield from _iter_embedded_parameters(node._wheres)
+        if node._prewheres is not None:
+            yield from _iter_embedded_parameters(node._prewheres)
+        for groupby in node._groupbys:
+            yield from _iter_embedded_parameters(groupby)
+        if node._havings is not None:
+            yield from _iter_embedded_parameters(node._havings)
+        if node._qualifys is not None:
+            yield from _iter_embedded_parameters(node._qualifys)
+        for field, _ in node._orderbys:
+            yield from _iter_embedded_parameters(field)
+        for field, value in node._updates:
+            yield from _iter_embedded_parameters(field)
+            yield from _iter_embedded_parameters(value)
+        for row in node._values:
+            for value in row:
+                yield from _iter_embedded_parameters(value)
+        for table in (node._insert_table, node._update_table):
+            if table is not None:
+                yield from _iter_embedded_parameters(table)
+        return
+
+    if isinstance(node, _SetOperation):
+        yield from _iter_embedded_parameters(node.base_query)
+        for _, set_operation_query in node._set_operation:
+            yield from _iter_embedded_parameters(set_operation_query)
+        for field, _ in node._orderbys:
+            yield from _iter_embedded_parameters(field)
+        return
+
+    if isinstance(node, AliasedQuery):
+        if node.query is not None:
+            yield from _iter_embedded_parameters(node.query)
+        return
+
+    if isinstance(node, Node):
+        for child in node.nodes_():
+            if child is not node:
+                yield from _iter_embedded_parameters(child)
+
+
+def _reserve_embedded_placeholders(parameter: Parameter, root: Node) -> None:
+    for explicit_parameter in _iter_embedded_parameters(root):
+        parameter.register_token(explicit_parameter.get_sql())
 
 
 class QueryBuilder(Selectable, Term):
@@ -1311,6 +1397,12 @@ class QueryBuilder(Selectable, Term):
 
     def get_sql(self, with_alias: bool = False, subquery: bool = False, **kwargs: Any) -> str:
         self._set_kwargs_defaults(kwargs)
+        parameter = kwargs.get("parameter")
+        if parameter is not None and not kwargs.get("_placeholders_reserved"):
+            # Reserve every caller-supplied placeholder once, before rendering, so
+            # that names generated for collected values cannot collide with them.
+            kwargs["_placeholders_reserved"] = True
+            _reserve_embedded_placeholders(parameter, self)
         if not (self._selects or self._insert_table or self._delete_from or self._update_table):
             return ""
         if self._insert_table and not (self._selects or self._values):
