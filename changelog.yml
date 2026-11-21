@@ -2,6 +2,15 @@ name: pyexcel
 organisation: pyexcel
 releases:
 - changes:
+  - action: added
+    details:
+    - Sheet.track_changes() and Sheet.get_changes() record cell edits and report them as Change entries located by the row and column names and positions of the initial sheet orientation, so that edits made after projections and transposes can be backfilled into the original format
+  - action: fixed
+    details:
+    - Sheet.project() keeps the row names of the source sheet instead of dropping them
+  version: 0.7.8
+  date: tbd
+- changes:
   - action: Fixed
     details:
     - "`#310`: fix broken indentation in iget_records memory-reduction patch"

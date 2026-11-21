@@ -9,7 +9,7 @@ Building on top of matrix, adding named columns and rows support
 """
 
 import copy
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 from pyexcel import _compact as compact
 from pyexcel import constants
@@ -17,6 +17,16 @@ from pyexcel._compact import OrderedDict
 from pyexcel.internal.sheets.row import Row as NamedRow
 from pyexcel.internal.sheets.column import Column as NamedColumn
 from pyexcel.internal.sheets.matrix import Matrix
+
+Change = namedtuple(
+    "Change", ["row", "column", "row_name", "column_name", "value"]
+)
+Change.__doc__ = (
+    "A changed cell located in the sheet's initial orientation. "
+    "`row` and `column` are zero based positions, `row_name` and "
+    "`column_name` are the axis names at tracking start, and `value` "
+    "is the new cell value."
+)
 
 
 class Sheet(Matrix):
@@ -140,6 +150,12 @@ class Sheet(Matrix):
         # this get rid of phatom data by not specifying sheet
         if sheet is None:
             sheet = []
+        self._tracking = False
+        self._origin_coords = []
+        self._original_values = {}
+        self._baseline_colnames = []
+        self._baseline_rownames = []
+        self._changes = {}
         Matrix.__init__(self, sheet)
         self.name = name
         self.__column_names = []
@@ -182,6 +198,147 @@ class Sheet(Matrix):
             self.__column_names,
         )
         Matrix.transpose(self)
+        if self._tracking:
+            self._sync_tracking_map()
+            self._origin_coords = [
+                list(row) for row in zip(*self._origin_coords)
+            ]
+
+    def track_changes(self):
+        """Start tracking cell changes for a later backfill
+
+        The current content, orientation and axis names become the
+        baseline. From then on, cell updates through item access, e.g.
+        ``sheet["row name", "column name"] = value`` or
+        ``sheet[0, 1] = value``, are remembered together with the
+        position each cell had at this moment. Projections, transposes
+        and deletions keep the book keeping up to date, so that
+        :meth:`get_changes` can report every surviving change located
+        in the initial orientation.
+
+        Example::
+
+            >>> from pyexcel.sheet import Sheet
+            >>> sheet = Sheet(
+            ...     [["id", "c1", "c2"], ["r1", 1, 2], ["r2", 3, 4]],
+            ...     name_columns_by_row=0,
+            ...     name_rows_by_column=0)
+            >>> sheet.track_changes()
+            >>> projected = sheet.project(["c2", "c1"])
+            >>> projected.transpose()
+            >>> projected["c2", "r2"] = 40
+            >>> projected.get_changes()  # doctest: +NORMALIZE_WHITESPACE
+            [Change(row=1, column=1, row_name='r2', column_name='c2',
+            value=40)]
+        """
+        self._tracking = True
+        self._baseline_colnames = list(self.colnames)
+        self._baseline_rownames = list(self.rownames)
+        self._origin_coords = [
+            [(row, column) for column in self.column_range()]
+            for row in self.row_range()
+        ]
+        self._original_values = {
+            (row, column): Matrix.cell_value(self, row, column)
+            for row in self.row_range()
+            for column in self.column_range()
+        }
+        self._changes = {}
+
+    def get_changes(self):
+        """Collect the tracked changes for backfill
+
+        Only cells which still exist in the current sheet and whose
+        value differs from the tracking baseline are reported. Each
+        change is located by its row and column in the initial
+        orientation, no matter how the sheet was projected, transposed
+        or filtered meanwhile. Changes to cells that were deleted
+        afterwards, or whose value was set back to the original one,
+        are not reported.
+
+        :returns: a list of :class:`Change`, sorted by initial row
+                  then column
+        """
+        if not self._tracking:
+            raise ValueError(
+                "Please call track_changes() before get_changes()"
+            )
+        live_origins = set()
+        for row in self._origin_coords:
+            live_origins.update(cell for cell in row if cell is not None)
+        changes = []
+        for origin in sorted(self._changes):
+            if origin not in live_origins:
+                continue
+            row, column = origin
+            row_name = None
+            if row < len(self._baseline_rownames):
+                row_name = self._baseline_rownames[row]
+            column_name = None
+            if column < len(self._baseline_colnames):
+                column_name = self._baseline_colnames[column]
+            changes.append(
+                Change(
+                    row=row,
+                    column=column,
+                    row_name=row_name,
+                    column_name=column_name,
+                    value=self._changes[origin],
+                )
+            )
+        return changes
+
+    def cell_value(self, row, column, new_value=None):
+        """Random access to table cells
+
+        A set with a new value is recorded when change tracking was
+        started via :meth:`track_changes`.
+
+        :param int row: row index which starts from 0
+        :param int column: column index which starts from 0
+        :param any new_value: new value if this is to set the value
+        """
+        if new_value is None:
+            return Matrix.cell_value(self, row, column)
+        Matrix.cell_value(self, row, column, new_value)
+        if self._tracking:
+            self._sync_tracking_map()
+            origin = self._origin_coords[row][column]
+            if origin is None:
+                return
+            if new_value == self._original_values[origin]:
+                self._changes.pop(origin, None)
+            else:
+                self._changes[origin] = new_value
+
+    def _sync_tracking_map(self):
+        """Pad or trim the origin map to the current data extent"""
+        nrows = self.number_of_rows()
+        ncols = self.number_of_columns()
+        del self._origin_coords[nrows:]
+        for row in self._origin_coords:
+            del row[ncols:]
+            row.extend([None] * (ncols - len(row)))
+        for _ in range(len(self._origin_coords), nrows):
+            self._origin_coords.append([None] * ncols)
+
+    def _inherit_tracking(self, source, column_names):
+        """Take over the tracking state of a source sheet
+
+        :param source: the sheet this one was projected from
+        :param column_names: the source column names kept, in order
+        """
+        self._tracking = True
+        self._baseline_colnames = list(source._baseline_colnames)
+        self._baseline_rownames = list(source._baseline_rownames)
+        self._original_values = dict(source._original_values)
+        self._changes = dict(source._changes)
+        source._sync_tracking_map()
+        indices = [source.colnames.index(name) for name in column_names]
+        self._origin_coords = [
+            [origin_row[index] for index in indices]
+            for origin_row in source._origin_coords
+        ]
 
     def name_columns_by_row(self, row_index):
         """Use the elements of a specified row to represent individual columns
@@ -331,6 +488,15 @@ class Sheet(Matrix):
                 if i not in column_indices
             ]
             self.__column_names = new_series
+        if self._tracking:
+            self._origin_coords = [
+                [
+                    cell
+                    for j, cell in enumerate(row)
+                    if j not in column_indices
+                ]
+                for row in self._origin_coords
+            ]
 
     def delete_rows(self, row_indices):
         """Delete one or more rows
@@ -351,6 +517,12 @@ class Sheet(Matrix):
                 if i not in row_indices
             ]
             self.__row_names = new_series
+        if self._tracking:
+            self._origin_coords = [
+                row
+                for i, row in enumerate(self._origin_coords)
+                if i not in row_indices
+            ]
 
     def delete_named_column_at(self, name):
         """Works only after you named columns by a row
@@ -367,6 +539,11 @@ class Sheet(Matrix):
             index = self.colnames.index(name)
             self.colnames.pop(index)
             Matrix.delete_columns(self, [index])
+            if self._tracking:
+                self._origin_coords = [
+                    [cell for j, cell in enumerate(row) if j != index]
+                    for row in self._origin_coords
+                ]
 
     def named_row_at(self, name):
         """Get a row by its name"""
@@ -401,6 +578,8 @@ class Sheet(Matrix):
             index = self.rownames.index(name)
             self.rownames.pop(index)
             Matrix.delete_rows(self, [index])
+            if self._tracking and index < len(self._origin_coords):
+                del self._origin_coords[index]
 
     def extend_rows(self, rows):
         """Take ordereddict to extend named rows
@@ -494,6 +673,8 @@ class Sheet(Matrix):
         """
         Rearrange the sheet.
 
+        Row names, if any, are carried over to the new sheet.
+
         :ivar new_ordered_columns: new columns
         :ivar exclusion: to exclude named column or not. defaults to False
 
@@ -550,7 +731,12 @@ class Sheet(Matrix):
                 new_dict[column] = the_dict[column]
 
         array = get_array(adict=new_dict)
-        return Sheet(array, name=self.name, name_columns_by_row=0)
+        new_sheet = Sheet(array, name=self.name, name_columns_by_row=0)
+        if len(self.rownames) > 0:
+            new_sheet.rownames = self.rownames
+        if self._tracking:
+            new_sheet._inherit_tracking(self, list(new_dict.keys()))
+        return new_sheet
 
     def to_dict(self, row=False):
         """Returns a dictionary"""
