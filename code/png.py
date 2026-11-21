@@ -177,9 +177,12 @@ import itertools
 import math
 # http://www.python.org/doc/2.4.4/lib/module-operator.html
 import operator
+import os
 import re
+import stat
 import struct
 import sys
+import tempfile
 # http://www.python.org/doc/2.4.4/lib/module-warnings.html
 import warnings
 import zlib
@@ -187,7 +190,8 @@ import zlib
 from array import array
 
 
-__all__ = ['Image', 'Reader', 'Writer', 'write_chunks', 'from_array']
+__all__ = ['Image', 'Reader', 'Writer', 'write_chunks', 'from_array',
+           'write_greyscale_png', 'write_png']
 
 
 # The PNG signature.
@@ -347,6 +351,367 @@ class ChunkError(FormatError):
 
 class Default:
     """The default for the greyscale parameter."""
+
+
+def _iter_row_values(rows, width=None):
+    """
+    Yield each row as a sequence of exactly `width` integer values.
+
+    The rows are consumed once.  A row may be any iterable; it is
+    materialised one row at a time so that one-shot row iterators work.
+    If `width` is None the first row determines the width.
+    """
+
+    for index, row in enumerate(rows):
+        values = list(row)
+        if width is not None and len(values) != width:
+            raise ProtocolError(
+                "Expected %d values but got %d values, in row %d" %
+                (width, len(values), index))
+        for value in values:
+            if not is_natural(value):
+                raise ProtocolError(
+                    "Row %d contains a non-integer or negative value: %r" %
+                    (index, value))
+        yield [int(value) for value in values]
+
+
+def _minimum_bitdepth(max_value):
+    """
+    Smallest PNG greyscale bit depth that holds `max_value`.
+
+    Counts up to 1, 3, and 15 use 1, 2, and 4 bits respectively.
+    Larger counts use 8 or 16 bits.
+    """
+    if max_value < 2:
+        return 1
+    if max_value < 4:
+        return 2
+    if max_value < 16:
+        return 4
+    if max_value < 256:
+        return 8
+    return 16
+
+
+class _GreyscaleStage:
+    """
+    Store greyscale counts one row at a time on disk.
+
+    Values are stored as unsigned 16-bit integers so that the stage
+    does not depend on the final bit depth, which is only known after
+    every row has been seen.
+    """
+
+    def __init__(self, directory):
+        self._file = tempfile.TemporaryFile(
+            mode="w+b", dir=directory, prefix=".pypng-stage-")
+        self.width = None
+        self.height = 0
+        self.max_value = 0
+
+    def append(self, values):
+        if self.width is None:
+            self.width = len(values)
+            self._row_struct = struct.Struct("!%dH" % self.width)
+        elif len(values) != self.width:
+            raise ProtocolError(
+                "Expected %d values but got %d values, in row %d" %
+                (self.width, len(values), self.height))
+        if values:
+            lo = min(values)
+            hi = max(values)
+            if lo < 0 or hi > 0xffff:
+                raise ProtocolError(
+                    "Greyscale counts must be in the range 0 to 65535")
+            if hi > self.max_value:
+                self.max_value = hi
+        self._file.write(self._row_struct.pack(*values))
+        self.height += 1
+
+    def rows(self):
+        """Yield each row as a list of values, from the start."""
+        self._file.seek(0)
+        for _ in range(self.height):
+            yield self._read_row()
+
+    def row(self, index):
+        """Read one row by index."""
+        if not 0 <= index < self.height:
+            raise ProtocolError("Staged image row is out of range")
+        self._file.seek(index * self._row_struct.size)
+        return self._read_row()
+
+    def _read_row(self):
+        data = self._file.read(self._row_struct.size)
+        if len(data) != self._row_struct.size:
+            raise ProtocolError("Staged image data is incomplete")
+        return list(self._row_struct.unpack(data))
+
+    def close(self):
+        self._file.close()
+
+
+def write_greyscale_png(path, width=None, height=None, rows=None,
+                        interlace=False, size=None, directory=None):
+    """
+    Write a greyscale PNG to `path` as one complete publication.
+
+    `rows` is a one-shot iterable yielding `height` rows, each row
+    containing `width` non-negative integer counts.  The rows are
+    consumed exactly once.  Values are written unchanged; the smallest
+    PNG bit depth that can represent every value (1, 2, or 4 bits,
+    extending to 8 or 16 if necessary) is selected after all rows have
+    been read.
+
+    Dimensions may be supplied as separate `width` and `height`
+    arguments, as a (`width`, `height`) `size` pair, or inferred from
+    the rows.  The common call form is
+    ``write_greyscale_png(path, width, height, rows)``; a one-shot row
+    iterable may also be passed as the second argument.
+
+    The image is first written and checked in a temporary file next to
+    `path`; only when it is complete and readable is it moved onto `path`
+    with an atomic rename.  If any check fails, an existing `path` is
+    left untouched.  For interlaced output the complete image is staged
+    on temporary disk, but it is never held uncompressed in memory as a
+    whole, and Adam7 output is not downgraded to straight output.
+
+    `directory` may name the directory used for temporary files; by
+    default the directory of `path` is used.
+
+    Returns the number of rows written.
+    """
+
+    path = os.fspath(path)
+    if rows is None and width is not None and not is_natural(width):
+        # Called as write_greyscale_png(path, rows, ...): the second
+        # positional argument is the row iterator, not a width.
+        rows = width
+        width = None
+    width, height = check_sizes(size, width, height)
+    if rows is None:
+        raise TypeError("write_greyscale_png() requires rows")
+    if directory is None:
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+    directory = os.fspath(directory)
+
+    if width is not None:
+        if not is_natural(width):
+            raise ProtocolError("width must be an integer")
+        if width <= 0:
+            raise ProtocolError("width must be greater than zero")
+    if height is not None:
+        if not is_natural(height):
+            raise ProtocolError("height must be an integer")
+        if height <= 0:
+            raise ProtocolError("height must be greater than zero")
+
+    stage = _GreyscaleStage(directory)
+    try:
+        for values in _iter_row_values(rows, width):
+            stage.append(values)
+            if height is not None and stage.height > height:
+                raise ProtocolError(
+                    "rows supplied (%d) does not match height (%d)" %
+                    (stage.height, height))
+        if height is None:
+            height = stage.height
+        if height != stage.height:
+            raise ProtocolError(
+                "rows supplied (%d) does not match height (%d)" %
+                (stage.height, height))
+        if height == 0:
+            raise ProtocolError("an image must have at least one row")
+        width = stage.width
+        bitdepth = _minimum_bitdepth(stage.max_value)
+
+        writer = Writer(
+            width, height,
+            greyscale=True,
+            bitdepth=bitdepth,
+            interlace=interlace)
+
+        target_dir = os.path.dirname(os.path.abspath(path)) or "."
+        prefix = "." + os.path.basename(path) + ".tmp-"
+        fd, temp_name = tempfile.mkstemp(
+            prefix=prefix, suffix=".png", dir=target_dir)
+        try:
+            with os.fdopen(fd, "w+b") as temp:
+                if interlace:
+                    # Write the reduced passes directly.  Writer.write
+                    # would first collect the whole image in memory.
+                    writer.write_passes(
+                        temp, _interlaced_rows(stage, width, height))
+                else:
+                    nrows = writer.write(temp, stage.rows())
+                    if nrows != height:
+                        raise ProtocolError(
+                            "rows supplied (%d) does not match height (%d)" %
+                            (nrows, height))
+                temp.flush()
+                _verify_greyscale_png(
+                    temp, stage, width, height, bitdepth, interlace)
+                os.fsync(temp.fileno())
+            os.chmod(temp_name, _publication_mode(path))
+            os.replace(temp_name, path)
+            _sync_directory(target_dir)
+        except BaseException:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            raise
+    finally:
+        stage.close()
+    return height
+
+
+# A shorter, descriptive name for publishing a greyscale PNG by path.
+write_png = write_greyscale_png
+
+
+def _publication_mode(path):
+    """Mode for the new file, preserving an existing file's permissions."""
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        current_umask = os.umask(0)
+        os.umask(current_umask)
+        return 0o666 & ~current_umask
+
+
+def _sync_directory(directory):
+    """Best-effort fsync of a directory after an atomic rename."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _interlaced_rows(stage, width, height):
+    """
+    Yield Adam7 reduced scanlines, read from the staged image.
+
+    Each reduced scanline is built from a single staged row; rows are
+    located by index, so no complete pass or image is held in memory.
+    """
+
+    for xstart, ystart, xstep, ystep in adam7:
+        if xstart >= width:
+            continue
+        for y in range(ystart, height, ystep):
+            yield stage.row(y)[xstart::xstep]
+
+
+def _idat_chunks(reader):
+    """
+    Yield each IDAT payload, checking every chunk's CRC.
+
+    Non-IDAT chunks are skipped; the stream ends at IEND.
+    """
+    while True:
+        chunk_type, data = reader.chunk()
+        if chunk_type == b'IEND':
+            return
+        if chunk_type == b'IDAT' and data:
+            yield data
+
+
+def _output_scanline_specs(reader, width, height, interlace):
+    """
+    Yield (y, xstart, xstep, pass_start, row_bytes) for each output scanline.
+    """
+
+    if interlace:
+        for xstart, ystart, xstep, ystep in adam7:
+            if xstart >= width:
+                continue
+            pass_start = True
+            for y in range(ystart, height, ystep):
+                ppr = int(math.ceil((width - xstart) / float(xstep)))
+                row_bytes = int(math.ceil(reader.psize * ppr))
+                yield y, xstart, xstep, pass_start, row_bytes
+                pass_start = False
+    else:
+        for y in range(height):
+            yield y, 0, 1, y == 0, reader.row_bytes
+
+
+def _verify_greyscale_png(temp, stage, width, height, bitdepth, interlace):
+    """
+    Stream the temporary PNG back and compare every pixel to the stage.
+
+    The compressed data is decompressed in bounded blocks.  Only one
+    reconstructed scanline and one expected stage row are kept, so the
+    complete uncompressed image is never materialised in memory.
+    """
+
+    temp.seek(0)
+    reader = Reader(file=temp)
+    reader.preamble()
+    expected_interlace = 1 if interlace else 0
+    if (reader.width != width or reader.height != height or
+            reader.bitdepth != bitdepth or not reader.greyscale or
+            reader.alpha or reader.color_type != 0 or
+            reader.interlace != expected_interlace):
+        raise ProtocolError("Written PNG does not match the requested format")
+
+    specs = iter(_output_scanline_specs(reader, width, height, interlace))
+    pending = next(specs, None)
+    previous = None
+    decompressor = zlib.decompressobj()
+    data = bytearray()
+
+    def consume():
+        nonlocal pending, previous
+        while pending is not None:
+            y, xstart, xstep, pass_start, row_bytes = pending
+            if len(data) < row_bytes + 1:
+                return
+            filter_type = data[0]
+            scanline = data[1:row_bytes + 1]
+            del data[:row_bytes + 1]
+            if pass_start:
+                previous = None
+            previous = reader.undo_filter(filter_type, scanline, previous)
+            ppr = int(math.ceil((width - xstart) / float(xstep)))
+            actual = reader._bytes_to_values(previous, width=ppr)
+            expected = stage.row(y)[xstart::xstep]
+            if list(actual) != expected:
+                raise ProtocolError(
+                    "Written PNG does not match staged row %d" % y)
+            pending = next(specs, None)
+
+    for block in _idat_chunks(reader):
+        if decompressor.eof:
+            raise ProtocolError("Written PNG has trailing compressed data")
+        while block:
+            piece = decompressor.decompress(block, 64 * 1024)
+            if piece:
+                data.extend(piece)
+                consume()
+            if decompressor.unused_data:
+                raise ProtocolError("Written PNG has trailing compressed data")
+            block = decompressor.unconsumed_tail
+            if not block:
+                break
+    if not decompressor.eof:
+        data.extend(decompressor.flush())
+        consume()
+        if not decompressor.eof:
+            raise ProtocolError(
+                "Written PNG has an incomplete compressed stream")
+    if pending is not None:
+        raise ProtocolError("Written PNG is missing image data")
+    if data:
+        raise ProtocolError("Written PNG has extra image data")
 
 
 class Writer:
@@ -671,6 +1036,29 @@ class Writer:
                 "rows supplied (%d) does not match height (%d)" %
                 (nrows, self.height))
         return nrows
+
+    def write_to_path(self, path, rows, interlace=None):
+        """
+        Publish a greyscale image to `path` as one complete file.
+
+        This is a convenience wrapper around
+        :func:`write_greyscale_png` for a writer that already describes
+        the image dimensions.  The smallest bit depth that holds every
+        supplied count is selected, so the writer's `bitdepth` setting
+        does not force a larger file.  `interlace` defaults to this
+        writer's setting.
+
+        The target is only replaced after the new file has been written
+        and read back successfully.
+        """
+
+        if not self.greyscale or self.alpha or self.colormap:
+            raise ProtocolError(
+                "write_to_path supports greyscale images without alpha")
+        if interlace is None:
+            interlace = self.interlace
+        return write_greyscale_png(
+            path, self.width, self.height, rows, interlace=interlace)
 
     def write_passes(self, outfile, rows):
         """

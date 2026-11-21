@@ -84,6 +84,31 @@ wanted transparency then we can use RGBA 4‑tuples for each palette
 entry.
 
 
+Publishing Counts by Path
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When the rows are produced once, by an iterator, and the archive must
+never show a half-written image, publish to a path instead of opening
+the file yourself::
+
+  import png
+
+  def counts():
+      for y in range(9):
+          yield [ (x + y) % 4 for x in range(13) ]
+
+  png.write_greyscale_png("counts.png", 13, 9, counts(),
+                          interlace=True)
+
+`write_greyscale_png` reads the rows once, chooses the smallest bit
+depth that holds every value (1, 2, or 4 bits for counts), and supports
+both straight and Adam7 output.  The data is staged on temporary disk,
+the finished PNG is read back and checked, and only then is it renamed
+onto the target path.  A failed or short row stream leaves any previous
+file at that path untouched.  `png.write_png` is an alias; an existing
+`Writer` also has a `.write_to_path()` method.
+
+
 Colour
 ^^^^^^
 

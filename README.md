@@ -126,6 +126,17 @@ written.
 
 Better error messages when you write the wrong number of rows.
 
+New `png.write_greyscale_png()` (also available as `png.write_png`)
+publishes a greyscale image to a path in one step.  It accepts a
+one-shot iterator of rows, chooses the smallest PNG bit depth (1, 2, or
+4 bits for count data, extending to 8 or 16 bits when needed), supports
+straight or Adam7 output, and stages the data on temporary disk instead
+of holding the whole uncompressed image in memory.  The target path is
+only replaced after the temporary PNG has been written and read back
+successfully; a failure leaves any previous version in place.
+`Writer.write_to_path()` is the equivalent entry point on an existing
+`Writer`.  Existing `Writer.write()` behaviour is unchanged.
+
 (Slightly experimentally) running the `png` module as a command
 line tool, with `python -m png`, will report the version and
 file location of the `png` module.

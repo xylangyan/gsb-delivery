@@ -19,7 +19,9 @@ import glob
 import io
 import itertools
 import os
+import shutil
 import sys
+import tempfile
 
 # http://www.python.org/doc/2.4.4/lib/module-unittest.html
 import unittest
@@ -1237,6 +1239,214 @@ class Test(unittest.TestCase):
     def test_writer_height_big(self):
         """Invoking Writer with big height should raise error."""
         self.assertRaises(png.ProtocolError, png.Writer, 4, 2 ** 31)
+
+    # Publishing greyscale counts by path.
+
+    def _count_samples(self):
+        """Two 13x9 count samples: one with a late 9, one without."""
+        width, height = 13, 9
+        late9 = [
+            [(x * 3 + y * 5) % 4 for x in range(width)]
+            for y in range(height)
+        ]
+        late9[-1][-1] = 9
+        # A pixel that only exists in the last row of the small Adam7
+        # pass; it must not leak into another pass or position.
+        late9[-1][-3] = 2
+        no9 = [
+            [(x + y * 2) % 4 for x in range(width)]
+            for y in range(height)
+        ]
+        return width, height, late9, no9
+
+    def _read_path(self, path):
+        r = png.Reader(filename=path)
+        try:
+            return list(r.read()[2])
+        finally:
+            r.file.close()
+
+    def _publish_and_check(self, path, width, height, rows, interlace):
+        source = iter(list(row) for row in rows)
+        n = png.write_greyscale_png(
+            path, width, height, source, interlace=interlace)
+        self.assertEqual(n, height)
+
+        got = self._read_path(path)
+        self.assertEqual([list(row) for row in got], rows)
+
+        r = png.Reader(filename=path)
+        try:
+            r.preamble()
+        finally:
+            r.file.close()
+        maximum = max(max(row) for row in rows)
+        expected_depth = 1 if maximum < 2 else 2 if maximum < 4 else 4
+        self.assertEqual(r.bitdepth, expected_depth)
+        self.assertEqual(r.greyscale, True)
+        self.assertEqual(r.alpha, False)
+        self.assertEqual(r.interlace, 1 if interlace else 0)
+        self.assertEqual(r.width, width)
+        self.assertEqual(r.height, height)
+        return got
+
+    def test_write_greyscale_png_samples(self):
+        """Both samples, straight and Adam7, keep pixels and depth."""
+        width, height, late9, no9 = self._count_samples()
+        for rows in (late9, no9):
+            for interlace in (False, True):
+                directory = tempfile.mkdtemp()
+                try:
+                    path = os.path.join(directory, "counts.png")
+                    self._publish_and_check(
+                        path, width, height, rows, interlace)
+                finally:
+                    shutil.rmtree(directory)
+
+    def test_write_greyscale_png_late9_bitdepth(self):
+        """A late 9 selects 4 bits; without it 2 bits is enough."""
+        width, height, late9, no9 = self._count_samples()
+        directory = tempfile.mkdtemp()
+        try:
+            path = os.path.join(directory, "counts.png")
+            png.write_greyscale_png(path, width, height, iter(late9))
+            r = png.Reader(filename=path)
+            try:
+                r.preamble()
+                self.assertEqual(r.bitdepth, 4)
+            finally:
+                r.file.close()
+            png.write_greyscale_png(path, width, height, iter(no9))
+            r = png.Reader(filename=path)
+            try:
+                r.preamble()
+                self.assertEqual(r.bitdepth, 2)
+            finally:
+                r.file.close()
+        finally:
+            shutil.rmtree(directory)
+
+    def test_write_greyscale_png_failure_is_not_published(self):
+        """Bad row counts never replace a published image."""
+        width, height, late9, no9 = self._count_samples()
+
+        # At 2-bit depth, 4 values and 3 values both occupy one byte;
+        # a short last row must still be rejected.  Also test one row
+        # short in the wider samples, and one row too many.
+        width2, height2 = 4, 5
+        narrow = [[(x + y) % 4 for x in range(width2)]
+                  for y in range(height2)]
+        narrow_short = [list(row) for row in narrow]
+        narrow_short[-1] = narrow_short[-1][:3]
+        self.assertEqual(
+            (len(narrow_short[-1]) * 2 + 7) // 8,
+            (len(narrow[-1]) * 2 + 7) // 8)
+        short_same_bytes = [list(row) for row in no9]
+        short_same_bytes[-1] = short_same_bytes[-1][:4]
+        extra_row = [list(row) for row in no9]
+        extra_row.append(list(no9[0]))
+
+        cases = [(width, height, bad) for bad in (short_same_bytes,
+                                                  extra_row)]
+        cases.append((width2, height2, narrow_short))
+        for case_width, case_height, bad in cases:
+            for interlace in (False, True):
+                directory = tempfile.mkdtemp()
+                try:
+                    path = os.path.join(directory, "counts.png")
+                    png.write_greyscale_png(
+                        path, case_width, case_height,
+                        iter(no9 if case_width == width else narrow),
+                        interlace=interlace)
+                    with open(path, "rb") as f:
+                        before = f.read()
+                    with self.assertRaises(png.ProtocolError):
+                        png.write_greyscale_png(
+                            path, case_width, case_height, iter(bad),
+                            interlace=interlace)
+                    with open(path, "rb") as f:
+                        self.assertEqual(f.read(), before)
+                    self.assertEqual(
+                        [list(row) for row in self._read_path(path)],
+                        no9 if case_width == width else narrow)
+                    # Correct input on the original path succeeds.
+                    good = late9 if case_width == width else narrow
+                    png.write_greyscale_png(
+                        path, case_width, case_height, iter(good),
+                        interlace=interlace)
+                    self.assertEqual(
+                        [list(row) for row in self._read_path(path)], good)
+                    self.assertEqual(
+                        [name for name in os.listdir(directory)
+                         if name.startswith(".")], [])
+                finally:
+                    shutil.rmtree(directory)
+
+    def test_write_greyscale_png_one_shot_tall(self):
+        """A tall one-shot iterator is consumed once and not held in memory."""
+        width, height = 11, 4000
+        calls = []
+
+        def source():
+            for y in range(height):
+                calls.append(y)
+                yield [(y + x) % 16 for x in range(width)]
+
+        directory = tempfile.mkdtemp()
+        try:
+            path = os.path.join(directory, "tall.png")
+            for interlace in (False, True):
+                del calls[:]
+                png.write_greyscale_png(
+                    path, width, height, source(), interlace=interlace)
+                self.assertEqual(calls, list(range(height)))
+                r = png.Reader(filename=path)
+                try:
+                    r.preamble()
+                    self.assertEqual(r.interlace, 1 if interlace else 0)
+                    self.assertEqual(r.bitdepth, 4)
+                finally:
+                    r.file.close()
+                rows = self._read_path(path)
+                self.assertEqual(len(rows), height)
+                for y in (0, 1, 2, height // 2, height - 2, height - 1):
+                    self.assertEqual(
+                        list(rows[y]),
+                        [(y + x) % 16 for x in range(width)])
+        finally:
+            shutil.rmtree(directory)
+
+    def test_write_greyscale_png_keeps_writer_write(self):
+        """Writer.write keeps its previous in-memory Adam7 behaviour."""
+        w = png.Writer(3, 2, interlace=True, greyscale=True)
+        o = BytesIO()
+        n = w.write(o, [[0x55, 0xAA, 0xFF], [0xAA, 0x55, 0x00]])
+        # Adam7 of a 3x2 image has four reduced scanlines; Writer.write
+        # has always reported that count rather than the image height.
+        self.assertEqual(n, 4)
+        self.assertEqual(
+            [list(row) for row in png.Reader(bytes=o.getvalue()).read()[2]],
+            [[0x55, 0xAA, 0xFF], [0xAA, 0x55, 0x00]])
+
+    def test_writer_write_to_path(self):
+        """Writer.write_to_path publishes by path without changing write."""
+        width, height, late9, no9 = self._count_samples()
+        directory = tempfile.mkdtemp()
+        try:
+            path = os.path.join(directory, "counts.png")
+            w = png.Writer(width, height, interlace=True, bitdepth=8)
+            self.assertEqual(w.write_to_path(path, iter(late9)), height)
+            self.assertEqual(
+                [list(row) for row in self._read_path(path)], late9)
+            r = png.Reader(filename=path)
+            try:
+                r.preamble()
+                self.assertEqual(r.bitdepth, 4)
+                self.assertEqual(r.interlace, 1)
+            finally:
+                r.file.close()
+        finally:
+            shutil.rmtree(directory)
 
     # scripts in test directory
 
