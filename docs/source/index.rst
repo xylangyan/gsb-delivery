@@ -366,6 +366,7 @@ New tutorial
    sheet
    book
    database
+   date_cleaning
 
 Old tutorial
 --------------
