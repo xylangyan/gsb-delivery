@@ -27,6 +27,25 @@ from .core import (
     isave_book_as,
 )
 from .sheet import Sheet
+from .incremental import (
+    CSVProjection,
+    FieldUpdate,
+    ProjectedRecord,
+    ProjectionSpec,
+    Progress,
+    SourcePosition,
+    UpdateIntent,
+    ProjectionError,
+    ProjectionConfigurationError,
+    ProgressError,
+    StaleProgressError,
+    CSVFormatError,
+    MalformedCSVError,
+    RecordTooWideError,
+    UnterminatedFieldError,
+    project_csv,
+    resume_csv,
+)
 
 # flake8: noqa
 from .cookbook import (

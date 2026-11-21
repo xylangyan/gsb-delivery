@@ -34,6 +34,25 @@ Obtaining data from excel file
    iget_records
    free_resources
 
+.. _incremental-projection:
+
+Resumable CSV projection
+--------------------------
+
+.. autosummary::
+   :toctree: generated/
+
+   CSVProjection
+   CSVProjection.ack
+   ProjectedRecord
+   SourcePosition
+   FieldUpdate
+   UpdateIntent
+   ProjectionSpec
+   Progress
+   project_csv
+   resume_csv
+
 .. _conversion-to:
 
 Saving data to excel file
