@@ -364,6 +364,7 @@ New tutorial
    webdev
    renderers
    sheet
+   sections
    book
    database
 

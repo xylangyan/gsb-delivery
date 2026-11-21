@@ -27,6 +27,22 @@ from .core import (
     isave_book_as,
 )
 from .sheet import Sheet
+from .sections import (
+    Section,
+    FieldPatch,
+    FieldSource,
+    SectionRecord,
+    AmbiguousField,
+    SectionError,
+    AmbiguousFieldError,
+    FieldNotFoundError,
+    InvalidSelectionError,
+    SectionSpecError,
+    SectionRecordStream,
+    get_section_records,
+    iget_section_records,
+    save_unmerged_control,
+)
 
 # flake8: noqa
 from .cookbook import (

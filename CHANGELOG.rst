@@ -4,6 +4,12 @@ Change log
 0.7.7 - 01.07.2026
 --------------------------------------------------------------------------------
 
+**Added**
+
+#. read multiple composite-header sections from one worksheet with
+   ``get_section_records``, ``iget_section_records``, section-scoped
+   candidate selection and physical row/column provenance
+
 **Fixed**
 
 #. `#310 <https://github.com/pyexcel/pyexcel/issues/310>`_: fix broken

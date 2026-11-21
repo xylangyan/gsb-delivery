@@ -2,6 +2,9 @@ name: pyexcel
 organisation: pyexcel
 releases:
 - changes:
+  - action: Added
+    details:
+    - read multiple composite-header sections from one worksheet with `get_section_records`, `iget_section_records`, section-scoped candidate selection and physical row/column provenance
   - action: Fixed
     details:
     - "`#310`: fix broken indentation in iget_records memory-reduction patch"

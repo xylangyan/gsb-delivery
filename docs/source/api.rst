@@ -36,6 +36,17 @@ Obtaining data from excel file
 
 .. _conversion-to:
 
+Composite-header sections
+--------------------------
+
+.. autosummary::
+   :toctree: generated/
+
+   Section
+   get_section_records
+   iget_section_records
+   save_unmerged_control
+
 Saving data to excel file
 --------------------------
 
