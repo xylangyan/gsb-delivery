@@ -794,6 +794,167 @@ database instance.
       Remove all items from the key-value table.
 
 
+.. _source-sync:
+
+Source-Aware Snapshot Reconciliation
+------------------------------------
+
+.. module:: playhouse.source_sync
+
+``playhouse.source_sync`` reconciles per-source *complete snapshots* onto a
+single shared many-to-many relationship. It models the case where several
+suppliers (plus a human curator) each publish the full list of goods a
+warehouse may stock, every file carrying that source's own monotonically
+increasing revision number.
+
+A warehouse/good pair has exactly one shared relationship row. Each source
+that currently maintains the pair gets a *claim* row holding its quote (the
+curator may also store a free-text note). A relationship is created when the
+first source claims a pair and is deleted only when its last claim disappears.
+
+Three ordinary models are generated, so the usual
+:class:`ManyToManyField` ``add()`` / ``remove()`` / ``clear()`` queries keep
+working against the relationship table:
+
+* ``SourceRevision`` -- the last accepted revision and a fingerprint of its
+  payload, keyed by ``(warehouse, source)``.
+* ``WarehouseGood`` -- the shared relationship with a stable surrogate ``id``
+  and a unique ``(warehouse, good)`` index.
+* ``GoodSource`` -- one source's claim with ``quote``, optional ``note`` and
+  the revision it came from, keyed by ``(relationship, source)``.
+
+Message-queue semantics
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Each source's revisions are tracked independently.
+
+* **Out-of-order delivery** -- an older revision is rejected with
+  :class:`StaleRevisionError`; rolling back never resurrects goods that a
+  newer revision removed.
+* **Redelivery** -- an identical redelivery of the accepted revision is an
+  idempotent no-op (``apply_snapshot()`` returns ``False``).
+* **Revision reuse with different content** -- rejected with
+  :class:`RevisionConflictError`, carrying both fingerprints so the conflict
+  is explainable.
+* **Missing source block** -- not sending a source is *not* the same as
+  sending an empty list: only an explicit empty snapshot clears that source's
+  claims.
+* **In-payload conflicts** -- a snapshot listing one good with two different
+  quotes raises :class:`DuplicateQuoteError`.
+
+Every import is validated first and run in one transaction, so a failure
+never leaves partial adds or removals behind. An accepted empty snapshot is
+stored like any other revision and keeps serving as the reference that makes
+a late older file rejectable.
+
+.. code-block:: python
+
+   from peewee import *
+   from playhouse.source_sync import SourceSync
+
+   db = SqliteDatabase(':memory:')
+
+   class Warehouse(Model):
+       code = CharField(primary_key=True)
+       class Meta:
+           database = db
+
+   class Good(Model):
+       sku = CharField(primary_key=True)
+       class Meta:
+           database = db
+
+   sync = SourceSync(Warehouse, Good,
+                     source_field='code', good_field='sku')
+   db.create_tables([Warehouse, Good])
+   sync.create_tables()
+   warehouse = Warehouse.create(code='W')
+
+   # Complete snapshots: a list of (good, quote) entries.
+   sync.apply_snapshot(warehouse, 'jia', 8,
+                       [('A', '1.50'), ('E', '5.00')])
+   sync.apply_snapshot(warehouse, 'yi', 8, [('C', '3.30')])
+
+   # The human curator is just another source, with an optional note.
+   sync.manual_upsert(warehouse, 'D', quote='9.00', note='curated')
+
+   # Explicit empty list clears jia; a missing block would not.
+   sync.apply_snapshot(warehouse, 'jia', 9, [])
+
+   sync.get_quotes(warehouse, 'A')          # {'yi': '3.30'}-style mapping
+   sync.accepted_revision(warehouse, 'jia')  # 9
+
+The relationship table can be used directly as a custom through model:
+
+.. code-block:: python
+
+   field = ManyToManyField(Warehouse, backref='goods',
+                           through_model=sync.relationship_model)
+   field.bind(Good, 'warehouses')
+   warehouse.goods.add(some_good)  # Generic M2M queries still work.
+
+.. class:: SourceSync(warehouse_model, good_model, source_field='id', good_field='id', manual_source='manual', fingerprint_func=None, database=None)
+
+   :param Model warehouse_model: the "left" model.
+   :param Model good_model: the "right" model.
+   :param str source_field: key field on the warehouse model.
+   :param str good_field: key field on the good model.
+   :param str manual_source: name reserved for the human curator.
+   :param callable fingerprint_func: maps a normalized payload dict to a
+       stable fingerprint string. Defaults to a SHA-256 content hash.
+   :param Database database: database the generated tables bind to.
+
+   .. attribute:: revision_model
+                  relationship_model
+                  claim_model
+
+      The generated :class:`Model` classes.
+
+   .. method:: create_tables(safe=True)
+               drop_tables(safe=True)
+
+      Create or drop the three managed tables.
+
+   .. method:: apply_snapshot(warehouse, source, revision, items)
+
+      Reconcile one complete snapshot. Each item is a ``(good, quote)``
+      tuple, a ``{'good': ..., 'quote': ...}`` dict, or an object carrying
+      the good key field and a ``quote`` attribute. Returns ``True`` when
+      applied, ``False`` for an identical redelivery. Raises
+      :class:`StaleRevisionError`, :class:`RevisionConflictError` or
+      :class:`DuplicateQuoteError` without writing anything.
+
+   .. method:: manual_upsert(warehouse, good, quote=None, note=None)
+
+      Create or update the curator's claim, preserving relationship identity.
+
+   .. method:: manual_remove(warehouse, good)
+
+      Drop the curator's claim, pruning the relationship if it was the last
+      one. Returns whether a claim was removed.
+
+   .. method:: get_quotes(warehouse, good)
+
+      Return ``{source: quote}`` for every claim on a pair.
+
+   .. method:: get_claim(warehouse, good, source)
+
+      Return one claim row, or ``None``.
+
+   .. method:: accepted_revision(warehouse, source)
+
+      Return the accepted revision number, or ``None`` if never seen.
+
+   .. method:: get_revision(warehouse, source)
+
+      Return the full accepted revision row (including ``fingerprint`` and
+      ``is_empty``), or ``None``.
+
+   .. method:: relationships(warehouse=None)
+
+      Select shared relationships, optionally restricted to one warehouse.
+
+
 .. _signals:
 
 Signals

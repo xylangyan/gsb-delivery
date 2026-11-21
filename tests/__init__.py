@@ -94,6 +94,8 @@ from . import shortcuts
 MODULES.append(shortcuts)
 from . import signals
 MODULES.append(signals)
+from . import source_sync
+MODULES.append(source_sync)
 try:
     from . import sqlcipher_ext
     MODULES.append(sqlcipher_ext)
