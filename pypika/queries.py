@@ -46,6 +46,79 @@ __email__ = "theys@kayak.com"
 
 QB = TypeVar("QB", bound="QueryBuilder")
 
+_PAGINATION_STYLE_BY_DIALECT = {
+    Dialects.MSSQL: "mssql",
+    Dialects.ORACLE: "fetch_next",
+    Dialects.SQLLITE: "sqlite",
+}
+
+_FETCH_NEXT_PAGINATION_STYLES = frozenset(("mssql", "fetch_next"))
+
+
+def _resolve_pagination_style(builder: Any, **kwargs: Any) -> str:
+    """
+    Resolve the pagination syntax from the dialect the query is being rendered for.
+
+    A query nested inside another query is rendered with the parent's ``dialect``
+    keyword, so a subquery built with a different dialect still follows the report
+    it is embedded in. When no dialect is being propagated, the builder's own
+    dialect (and finally its historical class style) is used.
+    """
+    builder_dialect = getattr(builder, "dialect", None)
+    dialect = kwargs.get("dialect") or builder_dialect
+    style = _PAGINATION_STYLE_BY_DIALECT.get(dialect)
+    if style is not None:
+        return style
+    if dialect == builder_dialect:
+        return getattr(builder, "PAGINATION_STYLE", "limit_offset")
+    return "limit_offset"
+
+
+def _limit_sql_for(limit: int, style: str) -> str:
+    if style in _FETCH_NEXT_PAGINATION_STYLES:
+        return " FETCH NEXT {limit} ROWS ONLY".format(limit=limit)
+    return " LIMIT {limit}".format(limit=limit)
+
+
+def _offset_sql_for(offset: int | None, style: str) -> str:
+    if style in _FETCH_NEXT_PAGINATION_STYLES:
+        return " OFFSET {offset} ROWS".format(offset=offset or 0)
+    return " OFFSET {offset}".format(offset=offset)
+
+
+def _apply_pagination_clauses(
+    querystring: str,
+    limit: int | None,
+    offset: int | None,
+    style: str,
+) -> str:
+    if style == "mssql":
+        # MSSQL requires OFFSET before FETCH NEXT and requires OFFSET whenever
+        # FETCH NEXT is present.
+        if limit is not None or offset:
+            querystring += _offset_sql_for(offset, style)
+        if limit is not None:
+            querystring += _limit_sql_for(limit, style)
+        return querystring
+
+    if style == "fetch_next":
+        # OFFSET/FETCH NEXT dialects put OFFSET first, but only when one is supplied.
+        if offset:
+            querystring += _offset_sql_for(offset, style)
+        if limit is not None:
+            querystring += _limit_sql_for(limit, style)
+        return querystring
+
+    if style == "sqlite" and limit is None and offset:
+        # SQLite needs a LIMIT before an OFFSET, even when no upper bound exists.
+        querystring += " LIMIT -1"
+
+    if limit is not None:
+        querystring += _limit_sql_for(limit, style)
+    if offset:
+        querystring += _offset_sql_for(offset, style)
+    return querystring
+
 
 class Selectable(Node):
     def __init__(self, alias: str) -> None:
@@ -759,6 +832,7 @@ class QueryBuilder(Selectable, Term):
     ALIAS_QUOTE_CHAR = None
     QUERY_ALIAS_QUOTE_CHAR = None
     QUERY_CLS = Query
+    PAGINATION_STYLE = "limit_offset"
 
     def __init__(
         self,
@@ -1437,13 +1511,17 @@ class QueryBuilder(Selectable, Term):
         return querystring
 
     def _apply_pagination(self, querystring: str, **kwargs) -> str:
-        if self._limit is not None:
-            querystring += self._limit_sql()
+        style = _resolve_pagination_style(self, **kwargs)
+        if style == "limit_offset":
+            # Preserve the historical extension point for custom builders which
+            # override the clause renderers directly.
+            if self._limit is not None:
+                querystring += self._limit_sql()
+            if self._offset:
+                querystring += self._offset_sql()
+            return querystring
 
-        if self._offset:
-            querystring += self._offset_sql()
-
-        return querystring
+        return _apply_pagination_clauses(querystring, self._limit, self._offset, style)
 
     def _with_sql(self, **kwargs: Any) -> str:
         return "WITH " + ",".join(

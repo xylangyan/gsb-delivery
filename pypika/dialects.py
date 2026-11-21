@@ -359,6 +359,8 @@ class VerticaCopyQueryBuilder:
 
 
 class FetchNextAndOffsetRowsQueryBuilder(QueryBuilder):
+    PAGINATION_STYLE = "fetch_next"
+
     def _limit_sql(self) -> str:
         return " FETCH NEXT {limit} ROWS ONLY".format(limit=self._limit)
 
@@ -384,6 +386,7 @@ class OracleQuery(Query):
 class OracleQueryBuilder(FetchNextAndOffsetRowsQueryBuilder):
     QUOTE_CHAR = None
     QUERY_CLS = OracleQuery
+    PAGINATION_STYLE = "fetch_next"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(dialect=Dialects.ORACLE, **kwargs)
@@ -393,16 +396,6 @@ class OracleQueryBuilder(FetchNextAndOffsetRowsQueryBuilder):
         # Note: set directly in kwargs as they are re-used down the tree in the case of subqueries!
         kwargs['groupby_alias'] = False
         return super().get_sql(*args, **kwargs)
-
-    def _apply_pagination(self, querystring: str, **kwargs) -> str:
-        # Note: Overridden as Oracle specifies offset before the fetch next limit
-        if self._offset:
-            querystring += self._offset_sql()
-
-        if self._limit is not None:
-            querystring += self._limit_sql()
-
-        return querystring
 
 
 class PostgreSQLQuery(Query):
@@ -706,6 +699,7 @@ class MSSQLQuery(Query):
 
 class MSSQLQueryBuilder(FetchNextAndOffsetRowsQueryBuilder):
     QUERY_CLS = MSSQLQuery
+    PAGINATION_STYLE = "mssql"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(dialect=Dialects.MSSQL, **kwargs)
@@ -728,17 +722,6 @@ class MSSQLQueryBuilder(FetchNextAndOffsetRowsQueryBuilder):
             raise QueryException("TOP value must be between 0 and 100 when `percent`" " is specified")
         self._top_percent: bool = percent
         self._top_with_ties: bool = with_ties
-
-    def _apply_pagination(self, querystring: str, **kwargs) -> str:
-        # Note: Overridden as MSSQL specifies offset before the fetch next limit
-        if self._limit is not None or self._offset:
-            # Offset has to be present if fetch next is specified in a MSSQL query
-            querystring += self._offset_sql()
-
-        if self._limit is not None:
-            querystring += self._limit_sql()
-
-        return querystring
 
     def get_sql(self, *args: Any, **kwargs: Any) -> str:
         # MSSQL does not support group by a field alias.
@@ -958,6 +941,7 @@ class SQLLiteQuery(Query):
 
 class SQLLiteQueryBuilder(QueryBuilder):
     QUERY_CLS = SQLLiteQuery
+    PAGINATION_STYLE = "sqlite"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(dialect=Dialects.SQLLITE, wrapper_cls=SQLLiteValueWrapper, **kwargs)
@@ -968,11 +952,6 @@ class SQLLiteQueryBuilder(QueryBuilder):
         self._apply_terms(*terms)
         self._replace = True
         self._insert_or_replace = True
-
-    def _apply_pagination(self, querystring: str, **kwargs) -> str:
-        if self._limit is None and self._offset:
-            querystring += " LIMIT -1"
-        return super()._apply_pagination(querystring, **kwargs)
 
     def _replace_sql(self, **kwargs: Any) -> str:
         prefix = "INSERT OR " if self._insert_or_replace else ""
