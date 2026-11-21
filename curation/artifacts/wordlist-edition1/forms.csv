@@ -1,0 +1,5 @@
+ID,Language_ID,Parameter_ID,Form,Segments,Comment,Witness_Ref,Batch_ID
+alpha-a-f1,east1,water,lum,,decoy string X1 in a non-citation field,X1[3-5];X1[12];X1[18],alpha
+alpha-a-f2,east1,hand,kha,,,X2[7],alpha
+beta-b-f1,west2,water,lom,,,X1[3-5];X1[40],beta
+beta-b-f2,west2,hand,khae,,raw X1 appears here as prose too,X2[22],beta

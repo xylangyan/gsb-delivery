@@ -1,0 +1,9 @@
+{
+  "package_id": "beta-supplement-2026-09",
+  "batch_id": "beta",
+  "mapping_file": "mapping.tsv",
+  "forms_file": "forms.tsv",
+  "examples_file": "examples.tsv",
+  "form_ref_column": "citation_refs",
+  "example_ref_column": "example_citation_refs"
+}

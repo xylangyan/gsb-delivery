@@ -1,0 +1,7 @@
+{
+  "batch_id": "bad-missing",
+  "forms_file": "forms.tsv",
+  "examples_file": "examples.tsv",
+  "form_ref_column": "Witness_Ref",
+  "example_ref_column": "Example_Ref"
+}

@@ -1,0 +1,3 @@
+ID,Language_ID,Primary_Text,Analyzed_Word,Gloss,Translated_Text,Meta_Language_ID,LGR_Conformance,Comment,Example_Ref,Batch_ID
+alpha-a-e1,east1,lum tshi,lum	tshi,water	cold,cold water,,,,X1[Appendix A],alpha
+beta-b-e1,west2,lom nau,lom	nau,water	new,new water,,,,X1[Appendix A],beta

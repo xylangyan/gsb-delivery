@@ -1,0 +1,60 @@
+{
+  "archive_version": "edition-1",
+  "artifact": "holding-wordlist",
+  "batches": [
+    {
+      "batch_id": "alpha",
+      "example_ref_column": "Example_Ref_Alpha",
+      "examples_file": "examples.tsv",
+      "form_ref_column": "Witness_Ref_Alpha",
+      "forms_file": "forms.tsv",
+      "mapping_file": "alpha/mapping.tsv"
+    },
+    {
+      "batch_id": "beta",
+      "example_ref_column": "Example_Ref_Beta",
+      "examples_file": "examples.tsv",
+      "form_ref_column": "Witness_Ref_Beta",
+      "forms_file": "forms.tsv",
+      "mapping_file": "beta/mapping.tsv"
+    }
+  ],
+  "bibtex": {
+    "entries_per_holding": 1,
+    "file": "sources.bib",
+    "keyed_by": "catalogue_edition_1_official_code"
+  },
+  "citation_columns": [
+    {
+      "column": "Witness_Ref",
+      "role": "word-form citations",
+      "table": "FormTable",
+      "url": "forms.csv"
+    },
+    {
+      "column": "Example_Ref",
+      "role": "example-sentence citations",
+      "table": "ExampleTable",
+      "url": "examples.csv"
+    }
+  ],
+  "created_at": "2026-11-21T17:33:53Z",
+  "holdings": {
+    "R37": {
+      "edition-1_official": "X1"
+    },
+    "R88": {
+      "edition-1_official": "X2"
+    }
+  },
+  "numbering_context": {
+    "bibtex_key_space": "catalogue edition 1 official holding codes",
+    "catalogue_edition": "edition-1",
+    "catalogue_id": "CATALOG-V1",
+    "catalogue_table_file": "holdings.tsv",
+    "rule": "BibTeX keys and citation keys are edition-1 official codes. Never infer this from key shape; always read this manifest."
+  },
+  "prior_artifact": null,
+  "resolution_chain": "supplier local code -> per-batch mapping table -> stable holding id -> catalogue edition 1 official code",
+  "supplements": []
+}

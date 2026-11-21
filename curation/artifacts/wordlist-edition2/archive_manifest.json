@@ -1,0 +1,86 @@
+{
+  "archive_version": "edition-2",
+  "artifact": "holding-wordlist",
+  "batches": [
+    {
+      "batch_id": "alpha",
+      "example_ref_column": "Example_Ref_Alpha",
+      "examples_file": "examples.tsv",
+      "form_ref_column": "Witness_Ref_Alpha",
+      "forms_file": "forms.tsv",
+      "mapping_file": "alpha/mapping.tsv"
+    },
+    {
+      "batch_id": "beta",
+      "example_ref_column": "Example_Ref_Beta",
+      "examples_file": "examples.tsv",
+      "form_ref_column": "Witness_Ref_Beta",
+      "forms_file": "forms.tsv",
+      "mapping_file": "beta/mapping.tsv"
+    }
+  ],
+  "bibtex": {
+    "entries_per_holding": 1,
+    "file": "sources.bib",
+    "keyed_by": "catalogue_edition_2_official_code"
+  },
+  "citation_columns": [
+    {
+      "column": "Witness_Ref",
+      "role": "word-form citations",
+      "table": "FormTable",
+      "url": "forms.csv"
+    },
+    {
+      "column": "Example_Ref",
+      "role": "example-sentence citations",
+      "table": "ExampleTable",
+      "url": "examples.csv"
+    }
+  ],
+  "created_at": "2026-11-21T17:33:53Z",
+  "holdings": {
+    "R37": {
+      "edition-2_official": "CAT37"
+    },
+    "R88": {
+      "edition-2_official": "CAT88"
+    }
+  },
+  "numbering_context": {
+    "bibtex_key_space": "catalogue edition 2 official holding codes",
+    "catalogue_edition": "edition-2",
+    "catalogue_id": "CATALOG-V2",
+    "catalogue_table_file": "holdings.tsv",
+    "rule": "BibTeX keys and citation keys are edition-2 official codes. Never infer this from key shape; always read this manifest."
+  },
+  "official_code_migration": {
+    "X1": {
+      "edition_2_official": "CAT37",
+      "holding_id": "R37"
+    },
+    "X2": {
+      "edition_2_official": "CAT88",
+      "holding_id": "R88"
+    }
+  },
+  "prior_artifact": {
+    "archive_version": "edition-1",
+    "bibtex_key_space": "catalogue edition 1 official holding codes",
+    "catalogue_edition": "edition-1",
+    "path": "curation/artifacts/wordlist-edition1"
+  },
+  "resolution_chain": "edition-1 artifact keys -> stable holding id -> catalogue edition 2 official code; supplement local codes -> per-batch mapping -> stable holding id -> catalogue edition 2 official code",
+  "supplements": [
+    {
+      "batch_id": "beta",
+      "example_ref_column": "example_citation_refs",
+      "examples_file": "examples.tsv",
+      "form_ref_column": "citation_refs",
+      "forms_file": "forms.tsv",
+      "mapping_file": "mapping.tsv",
+      "numbering_context": "supplier-local codes of the declared batch",
+      "package_id": "beta-supplement-2026-09"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+ID,Language_ID,Primary_Text,Analyzed_Word,Gloss,Translated_Text,Meta_Language_ID,LGR_Conformance,Comment,Example_Ref,Batch_ID
+alpha-a-e1,east1,lum tshi,lum	tshi,water	cold,cold water,,,,CAT37[Appendix A],alpha
+beta-b-e1,west2,lom nau,lom	nau,water	new,new water,,,,CAT37[Appendix A],beta
+beta-supplement-2026-09-s-e1,west2,pheu lon,pheu	lon,fire	big,big fire,,,,CAT37[Appendix A],beta-supplement-2026-09
