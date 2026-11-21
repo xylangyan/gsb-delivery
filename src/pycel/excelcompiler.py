@@ -8,6 +8,7 @@
 #   https://www.gnu.org/licenses/gpl-3.0.en.html
 
 import collections
+import contextlib
 import hashlib
 import itertools as it
 import json
@@ -25,7 +26,11 @@ from pycel.excelformula import ExcelFormula
 from pycel.excelutil import (
     AddressCell,
     AddressRange,
+    BatchCheckError,
+    BatchValidationError,
     ERROR_CODES,
+    PyCelException,
+    excel_value_equals,
     flatten,
     is_address,
     iterative_eval_tracker,
@@ -93,6 +98,11 @@ class ExcelCompiler:
         self._formula_cells_dict = {}
         self._plugin_modules = plugins
 
+        # non-circular input ranges accepted by batch_update(), and the
+        # active batch while a batch_update() context is open
+        self._batch_inputs = frozenset()
+        self._batch = None
+
         # Setup to be able to evaluate circular references
         self.cycles = cycles
         if hasattr(self.excel, 'workbook'):
@@ -124,7 +134,7 @@ class ExcelCompiler:
         # code objects are not serializable
         state = dict(self.__dict__)
         to_removes = '_eval excel log graph_todos range_todos ' \
-                     'conditional_formats'.split()
+                     'conditional_formats _batch'.split()
         for to_remove in to_removes:
             if to_remove in state:    # pragma: no branch
                 state[to_remove] = None
@@ -196,6 +206,7 @@ class ExcelCompiler:
         extra_data.update(dict(
             cycles=self.cycles,
             excel_hash=self._excel_file_md5_digest,
+            batch_inputs=list(self._batch_inputs),
             cell_map=dict(sorted(
                 ((addr, cell_value(cell))
                  for addr, cell in self.cell_map.items() if cell.serialize),
@@ -273,6 +284,7 @@ class ExcelCompiler:
         # process the rest of the data from the file
         excel_compiler._excel_file_md5_digest = data['excel_hash']
         del data['excel_hash']
+        excel_compiler._batch_inputs = frozenset(data.pop('batch_inputs', ()))
         excel_compiler.extra_data = data
 
         # remove "excel" file references for GC
@@ -423,6 +435,10 @@ class ExcelCompiler:
             which matches the shapes needed for the given address/addresses
         :param set_as_range: With a single range address and a list like value,
             set to true to set the entire range to the inserted list.
+
+        Inside a `batch_update()` context the assignment is staged into the
+        active batch, validated against the registered non-circular input
+        ranges, and only kept if every check cell accepts the batch.
         """
 
         if list_like(value) and not set_as_range:
@@ -439,6 +455,10 @@ class ExcelCompiler:
 
         elif address not in self.cell_map:
             address = AddressRange.create(address).address
+            if self._batch is not None:
+                # let the batch report an unknown input as a validation error
+                self._batch.assign(address, value)
+                return
             assert address in self.cell_map, (
                 f'Address "{address}" not found in the cell map. Evaluate the '
                 'address, or an address that references it, to place it in the cell map.')
@@ -447,22 +467,160 @@ class ExcelCompiler:
                 value and list_like(value[0])):
             value = (value, )
 
-        cell_or_range = self.cell_map[address]
+        if self._batch is not None:
+            self._batch.assign(address, value)
+        else:
+            self._apply_value(address, value)
 
-        if cell_or_range.value != value:  # pragma: no branch
-            # need to be able to 'set' an empty cell, set to not None
+    def _apply_value(self, address, value):
+        """Set a single validated cell or range node, invalidating dependents
+
+        Dependents are only reset when the final value really changes, judged
+        with Excel semantics so 0, FALSE and a blank cell stay distinct.
+        """
+        cell_or_range = self.cell_map[address]
+        if not excel_value_equals(cell_or_range.value, value):
+            # install first so even a previously blank cell propagates its
+            # reset to the dependents, then reset and install again
             cell_or_range.value = value
 
-            # reset the node + its dependencies
             if not self.cycles:
                 self._reset(cell_or_range)
 
-            # set the value
             cell_or_range.value = value
+
+    def register_inputs(self, input_ranges):
+        """Register non-circular input ranges that batch updates may write
+
+        :param input_ranges: an address, or an iterable of addresses, naming
+            the static input cells and rectangular input ranges. Cells inside
+            a registered range are accepted inputs as well.
+
+        Formula cells cannot be registered. The registration stays in effect
+        for the life of the workbook and is used by every `batch_update()`.
+        """
+        addresses = tuple(self._flatten_batch_addresses(input_ranges))
+        validated = set()
+        for address in addresses:
+            if address not in self.cell_map:
+                self._gen_graph(address)
+            target = self.cell_map[address]
+            if isinstance(target, _CellRange):
+                for member in flatten(target.addresses):
+                    if getattr(self.cell_map[member.address], 'formula', None):
+                        raise BatchValidationError(
+                            f'Input range "{address}" contains formula cell '
+                            f'"{member.address}", not a writable input')
+                    validated.add(member.address)
+            elif getattr(target, 'formula', None):
+                raise BatchValidationError(
+                    f'Input "{address}" is a formula cell, not a writable input')
+            validated.add(address)
+        self._batch_inputs = frozenset(self._batch_inputs | validated)
+
+    @contextlib.contextmanager
+    def batch_update(self, check_cells=(), input_ranges=()):
+        """Stage a batch of input updates, accepting it only via check cells
+
+        Updates made with `set_value()` inside the context are buffered and
+        validated. A later single-cell assignment overrides an earlier
+        rectangular assignment where they overlap. On exit, each check cell
+        is evaluated in order: if any returns an Excel error the whole batch
+        is rejected, the touched state is rolled back to its pre-batch value,
+        and `BatchCheckError` names the failing cell(s). Otherwise the batch
+        is committed.
+
+        :param check_cells: cell address or iterable of cell addresses that
+            must not evaluate to an Excel error for the batch to be accepted
+        :param input_ranges: optional non-circular input ranges registered for
+            this and future batches, as in `register_inputs()`
+        """
+        if self.cycles:
+            raise PyCelException(
+                'batch_update() is only supported on non-circular workbooks')
+        if self._batch is not None:
+            raise PyCelException('batch_update() contexts cannot be nested')
+
+        if input_ranges:
+            self.register_inputs(input_ranges)
+
+        check_addrs = tuple(self._flatten_batch_addresses(check_cells))
+        # compile check cells up front, as evaluate() would on first read
+        for address in check_addrs:
+            if AddressRange(address).is_range:
+                raise BatchValidationError(
+                    f'Check cell "{address}" must be a single cell, not a range')
+            if address not in self.cell_map:
+                self._gen_graph(address)
+
+        batch = _BatchUpdate(self, check_addrs)
+        self._batch = batch
+        try:
+            yield self
+        except BaseException:
+            self._rollback_batch(batch)
+            self._batch = None
+            raise
+        else:
+            try:
+                batch.apply()
+                self._accept_batch(batch)
+            except BaseException:
+                self._rollback_batch(batch)
+                raise
+            finally:
+                self._batch = None
+
+    @staticmethod
+    def _flatten_batch_addresses(addresses):
+        if not list_like(addresses):
+            addresses = (addresses, )
+        for address in flatten(addresses):
+            yield AddressRange.create(address).address
+
+    def _is_registered_input(self, address):
+        if address in self._batch_inputs:
+            return True
+        target = AddressRange.create(address)
+        for registered in self._batch_inputs:
+            registered_range = AddressRange(registered)
+            if registered_range.is_range and target in registered_range:
+                return True
+        return False
+
+    def _accept_batch(self, batch):
+        # check cells were compiled and validated when the batch opened, so
+        # they are evaluated in their declared order here
+        failures = []
+        for address in batch.check_addrs:
+            value = self.evaluate(address)
+            if value in ERROR_CODES:
+                failures.append((address, value))
+        if failures:
+            raise BatchCheckError(failures)
+
+    def _rollback_batch(self, batch):
+        # restore the input nodes this batch assigned to their pre-batch values
+        for address in reversed(tuple(batch.saved)):
+            self.cell_map[address].value = batch.saved[address]
+
+        # cells invalidated while applying, or first cached while previewing the
+        # checks, must recompute once from the restored (old) inputs. Cached
+        # results that the batch never touched are left intact, and nothing in
+        # unrelated worksheets or the compiled graph itself is rebuilt.
+        touched = set(batch.invalidated) | set(batch.evaluated)
+        for address in touched:
+            if address in batch.saved:
+                continue
+            cell = self.cell_map.get(address)
+            if cell is not None:
+                cell.value = None
 
     def _reset(self, cell):
         if cell.needs_calc:
             return
+        if self._batch is not None:
+            self._batch.note_invalidated(cell.address.address)
         self.log.info(f"Resetting {cell.address}")
         cell.value = None
 
@@ -794,6 +952,8 @@ class ExcelCompiler:
             self.log.info(f"Range {cell_range.address} evaluated to '{data}'")
 
             cell_range.value = data
+            if self._batch is not None:
+                self._batch.note_evaluated(address)
 
         return cell_range.value
 
@@ -805,6 +965,7 @@ class ExcelCompiler:
         cell = self.cell_map[address]
 
         # calculate the cell value for formulas and ranges
+        needs_calc = cell.needs_calc
         if cell.needs_calc:
             if isinstance(cell, _CellRange) or cell.address.is_unbounded_range:
                 self._evaluate_range(cell.address.address)
@@ -834,6 +995,8 @@ class ExcelCompiler:
                         f"Cell {cell.address} evaluated to '{value}' ({type(value).__name__})")
                 cell.value = (value[0][0] if list_like(value[0]) else value[0]
                               ) if list_like(value) else value
+                if needs_calc and self._batch is not None:
+                    self._batch.note_evaluated(address)
 
         return cell.value
 
@@ -1011,6 +1174,83 @@ class ExcelCompiler:
             self._gen_graph(a_cell.formula.needed_addresses)
 
         return self.eval(self.cell_map[cf_addr])
+
+
+class _BatchUpdate:
+    """Staged input assignments for a single `ExcelCompiler.batch_update()`
+
+    Assignments are validated as they are staged but are not applied to the
+    cell map until `apply()`. A rectangular assignment records every covered
+    cell, so a later single-cell assignment within that rectangle overrides
+    it. Only nodes whose final value really changes are invalidated.
+    """
+
+    def __init__(self, compiler, check_addrs):
+        self.compiler = compiler
+        self.check_addrs = check_addrs
+        # address -> final staged value, in assignment order
+        self.assignments = collections.OrderedDict()
+        # assigned node address -> its pre-batch value; first snapshot wins
+        self.saved = collections.OrderedDict()
+        # downstream addresses invalidated when applying the staged inputs
+        self.invalidated = set()
+        # formula/range addresses first evaluated while previewing the checks
+        self.evaluated = set()
+
+    def note_invalidated(self, address):
+        self.invalidated.add(address)
+
+    def note_evaluated(self, address):
+        self.evaluated.add(address)
+
+    def _snapshot(self, address):
+        if address not in self.saved:
+            self.saved[address] = self.compiler.cell_map[address].value
+
+    def assign(self, address, value):
+        cell_map = self.compiler.cell_map
+        if address not in cell_map:
+            raise BatchValidationError(
+                f'Batch address "{address}" not found in the cell map. '
+                'Evaluate the address or register it as an input first.')
+        if not self.compiler._is_registered_input(address):
+            raise BatchValidationError(
+                f'Batch address "{address}" is not within a registered '
+                'non-circular input range')
+
+        target = cell_map[address]
+        if isinstance(target, _CellRange):
+            self._assign_range(address, value)
+        else:
+            self._snapshot(address)
+            self.assignments[address] = value
+
+    def _assign_range(self, address, value):
+        cell_range = self.compiler.cell_map[address]
+        if not list_like(value) or not (
+                value and list_like(value[0])):
+            raise BatchValidationError(
+                f'Batch range "{address}" needs a rectangular value with '
+                f'{cell_range.size.height} row(s) and '
+                f'{cell_range.size.width} column(s)')
+        if len(value) != cell_range.size.height or any(
+                len(row) != cell_range.size.width for row in value):
+            raise BatchValidationError(
+                f'Batch range "{address}" value shape '
+                f'{(len(value), len(value[0]))} does not match range shape '
+                f'{cell_range.size}')
+
+        self._snapshot(address)
+        self.assignments[address] = tuple(tuple(row) for row in value)
+        for row_addr, row_value in zip(cell_range.addresses, value):
+            for cell_addr, cell_value in zip(row_addr, row_value):
+                self._snapshot(cell_addr.address)
+                # later single-cell (or overlapping) assignments override
+                self.assignments[cell_addr.address] = cell_value
+
+    def apply(self):
+        for address, value in self.assignments.items():
+            self.compiler._apply_value(address, value)
 
 
 class _CellBase:

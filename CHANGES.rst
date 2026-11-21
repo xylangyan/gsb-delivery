@@ -31,6 +31,10 @@ Added
 -----
 
 * Added SWITCH() function
+* Added ``ExcelCompiler.batch_update()`` transactional context manager and
+  ``register_inputs()`` for validated batches of input updates, with check-cell
+  acceptance, Excel-semantics change detection (0 vs FALSE vs blank), and
+  touch-only rollback that leaves unrelated caches intact
 
 Changed
 -------

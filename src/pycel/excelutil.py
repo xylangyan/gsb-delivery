@@ -114,6 +114,46 @@ class PyCelException(Exception):
     """Base class for PyCel errors"""
 
 
+class BatchValidationError(PyCelException):
+    """A batch update used an unknown input address or a mismatched shape"""
+
+
+class BatchCheckError(PyCelException):
+    """A check cell evaluated to an Excel error while accepting a batch
+
+    :attr failures: tuple of ``(address, error_value)`` pairs naming every
+        check cell that evaluated to an Excel error code
+    """
+
+    def __init__(self, failures):
+        self.failures = tuple(failures)
+        addresses = ', '.join(address for address, value in self.failures)
+        super().__init__(f'Batch rejected due to error cell(s): {addresses}')
+
+
+def excel_value_equals(left, right):
+    """Compare two cell values using Excel rather than Python semantics.
+
+    Excel keeps the number 0, the logical value FALSE and a blank cell as
+    distinct inputs, while Python considers ``0 == False`` and treats blank
+    cells as falsy. A boolean therefore only equals another boolean, and a
+    blank (``None``) only equals another blank. Nested tuples are compared
+    element by element, as used for rectangular range values.
+    """
+    left_is_array = isinstance(left, tuple) and not is_address(left)
+    right_is_array = isinstance(right, tuple) and not is_address(right)
+    if left_is_array or right_is_array:
+        if not (left_is_array and right_is_array and
+                len(left) == len(right)):
+            return False
+        return all(excel_value_equals(l, r) for l, r in zip(left, right))
+    if left is None or right is None:
+        return left is None and right is None
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    return left == right
+
+
 class AddressMixin:
 
     def __str__(self):
