@@ -48,4 +48,6 @@ from .deprecated import (
     load_book_from_memory,
 )
 from .__version__ import __author__, __version__
+from .exceptions import SheetNotFound
 from .internal.garbagecollector import free_resources
+from .internal.rowstream import RowBookStream, open_row_book_stream

@@ -2,6 +2,12 @@ name: pyexcel
 organisation: pyexcel
 releases:
 - changes:
+  - action: added
+    details:
+    - "add open_row_book_stream for row by row xlsx reading without loading the whole workbook: select sheets by name or index, receive them in workbook order, read rows on demand, and release the reader on early stop or read failure while leaving caller owned streams open"
+  version: 0.7.8
+  date: tbd
+- changes:
   - action: Fixed
     details:
     - "`#310`: fix broken indentation in iget_records memory-reduction patch"

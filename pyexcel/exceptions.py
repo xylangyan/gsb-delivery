@@ -25,3 +25,9 @@ class UpgradePlugin(Exception):
     """Please upgrade your plugin"""
 
     pass
+
+
+class SheetNotFound(Exception):
+    """Requested sheet name or index does not exist in the workbook"""
+
+    pass
