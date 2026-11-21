@@ -3,6 +3,14 @@
 The `pycldf` package adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+- Added `pycldf.streaming.BatchExporter`, a single-pass, batch-oriented reader
+  that resolves CLDF foreign keys (CLDF id and local primary-key domains)
+  without loading whole target tables into memory, reporting duplicate and
+  missing keys with the affected source records and reference paths.
+
+
 ## [2.2.0] - 2026-11-11
 
 - Fixed bug where missing words in glossed examples would lead to downstream
