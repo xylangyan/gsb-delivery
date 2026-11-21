@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" Version="1.0">
+  <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" m:DataServiceVersion="2.0">
+    <Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm" Namespace="Shop">
+      <EntityContainer Name="ShopContainer" m:IsDefaultEntityContainer="true">
+        <EntitySet Name="Products" EntityType="Shop.Product"/>
+        <EntitySet Name="Categories" EntityType="Shop.Category"/>
+        <AssociationSet Name="ProductCategorySet" Association="Shop.ProductCategory">
+          <End Role="Product" EntitySet="Products"/>
+          <End Role="Category" EntitySet="Categories"/>
+        </AssociationSet>
+      </EntityContainer>
+      <EntityType Name="Product">
+        <Key>
+          <PropertyRef Name="ProductID"/>
+        </Key>
+        <Property Name="ProductID" Type="Edm.String" Nullable="false"/>
+        <Property Name="Name" Type="Edm.String"/>
+        <NavigationProperty Name="Category" FromRole="Product" ToRole="Category"
+            Relationship="Shop.ProductCategory"/>
+      </EntityType>
+      <EntityType Name="Category">
+        <Key>
+          <PropertyRef Name="CatID"/>
+          <PropertyRef Name="Tenant"/>
+        </Key>
+        <Property Name="CatID" Type="Edm.String" Nullable="false"/>
+        <Property Name="Tenant" Type="Edm.String" Nullable="false"/>
+        <Property Name="DisplayName" Type="Edm.String"/>
+        <NavigationProperty Name="Products" FromRole="Category" ToRole="Product"
+            Relationship="Shop.ProductCategory"/>
+      </EntityType>
+      <Association Name="ProductCategory">
+        <End Role="Product" Type="Shop.Product" Multiplicity="*"/>
+        <End Role="Category" Type="Shop.Category" Multiplicity="1"/>
+      </Association>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>

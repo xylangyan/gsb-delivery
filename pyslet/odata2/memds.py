@@ -297,6 +297,10 @@ class InMemoryAssociationIndex(object):
         from_store.add_association(self, reverse=False)
         self.to_store = to_store
         to_store.add_association(self, reverse=True)
+        #: the :py:class:`AssociationSetEnd` bound to :py:attr:`from_store`
+        self.from_end = None
+        #: the :py:class:`AssociationSetEnd` bound to :py:attr:`to_store`
+        self.to_end = None
         if property_name is not None:
             self.bind(property_name, reverse_name)
 
@@ -307,6 +311,10 @@ class InMemoryAssociationIndex(object):
         If the association is reversible *reverse_name* can also be used
         to bind that property in the entity set bound to
         :py:attr:`to_store`"""
+        from_end = self.from_store.entity_set.navigation[property_name]
+        if self.from_end is None:
+            self.from_end = from_end
+            self.to_end = from_end.otherEnd
         self.from_store.entity_set.bind_navigation(
             property_name,
             NavigationCollection,
@@ -780,6 +788,434 @@ class NavigationCollection(odata.NavigationCollection):
                         self.aindex.remove_link(oldKey, self.key)
                     else:
                         self.aindex.remove_link(self.key, oldKey)
+
+
+class BatchImportError(edm.ConstraintError):
+
+    """Raised when a batch import cannot be committed.
+
+    The :py:attr:`line` attribute identifies the input line (counting
+    from 1) of the offending entity or link when the batch was parsed
+    from an ordered input, it is None when no line information is
+    available."""
+
+    def __init__(self, msg, line=None):
+        super(BatchImportError, self).__init__(msg)
+        #: the 1-based input line of the offending row, or None
+        self.line = line
+
+
+class BatchImport(object):
+
+    """Stages a whole file's worth of entities for a single commit.
+
+    Entities and the links between them are held in private staging
+    storage until :py:meth:`commit` is called, so an observer reading
+    the container through an ordinary collection never sees a partially
+    imported file.  Entities may be supplied in any order: an entity can
+    be bound (by key) to another entity that appears later in the same
+    input and the forward reference is resolved when the batch commits.
+
+    Bindings must use the relationship multiplicity already declared in
+    the model; the batch does not invent or relax any associations.
+
+    A batch is used once.  If a commit fails nothing is published and the
+    batch's staging storage is discarded automatically, so a later retry
+    with a corrected input is not obstructed by keys held by the failed
+    attempt."""
+
+    #: attribute used to mark stub entities created to hold the place of
+    #: a link target that has not been staged yet
+    stub_attr = '_pyslet_batch_stub'
+
+    def __init__(self, container):
+        #: the :py:class:`InMemoryEntityContainer` the batch targets
+        self.container = container
+        #: mapping of entity set name to a dict of staged entities, keyed
+        #: by entity key and holding (entity, line) tuples
+        self.entities = {}
+        for es_name in dict_keys(container.entityStorage):
+            self.entities[es_name] = {}
+        #: mapping of association set name to a list of staged links,
+        #: each a (from_key, to_key, line) tuple
+        self.links = {}
+        for as_name in dict_keys(container.associationStorage):
+            self.links[as_name] = []
+        #: False once the batch has committed or been rolled back
+        self.active = True
+
+    def _require_active(self):
+        if not self.active:
+            raise BatchImportError(
+                "This batch import has already been committed or closed")
+
+    def add_entity(self, entity, line=None):
+        """Stages a new *entity* in the batch.
+
+        The entity must not already exist in the container and its key
+        must not already be present in the batch.  Any navigation
+        bindings attached to the entity (via
+        :py:meth:`~pyslet.odata2.csdl.DeferredValue.bind_entity`) are
+        staged along with it.  Returns the entity's key.
+
+        *line* is an optional 1-based index into the input file, used to
+        pinpoint the offending row in any error report."""
+        self._require_active()
+        es_name = entity.entity_set.name
+        if es_name not in self.entities:
+            raise BatchImportError(
+                "Entity set %s is not part of this container" % es_name,
+                line)
+        if entity.exists:
+            raise BatchImportError(
+                "Entity %s already exists and cannot be imported" %
+                str(entity.get_location()), line)
+        try:
+            key = entity.key()
+        except KeyError:
+            raise BatchImportError(
+                "Entity in %s has a NULL key" % es_name, line)
+        store = self.container.entityStorage[es_name]
+        key_text = odata.ODataURI.format_key_dict(
+            entity.entity_set.get_key_dict(key))
+        if key in self.entities[es_name]:
+            raise BatchImportError(
+                "Duplicate key in input: %s%s" % (es_name, key_text),
+                line)
+        if store.test_key(key):
+            raise BatchImportError(
+                "Duplicate key: %s%s already exists in %s" % (
+                    es_name, key_text, es_name),
+                line)
+        self.entities[es_name][key] = (entity, line)
+        for nav_name, dv in entity.navigation_items():
+            self._stage_bindings(entity, nav_name, dv, line)
+        return key
+
+    def add_link(self, entity_set, navigation_name, from_key, target,
+                 line=None):
+        """Stages a single navigation link without staging an entity.
+
+        *entity_set* is the source :py:class:`~pyslet.odata2.csdl.EntitySet`,
+        *navigation_name* the name of the navigation property carrying
+        the relationship and *from_key* the key of the source entity.
+        *target* is the target entity's key, or a target entity instance
+        (which must itself be staged in the batch or already present in
+        the container).
+
+        The source must be part of the batch (a link cannot be attached
+        to an existing entity) but the target may appear later in the
+        same input."""
+        self._require_active()
+        es_name = entity_set.name
+        if es_name not in self.entities:
+            raise BatchImportError(
+                "Entity set %s is not part of this container" % es_name,
+                line)
+        if from_key not in self.entities[es_name]:
+            raise BatchImportError(
+                "Cannot link from %s%s: the source entity is not part of "
+                "this import" % (
+                    es_name,
+                    odata.ODataURI.format_key_dict(
+                        entity_set.get_key_dict(from_key))),
+                line)
+        target_key = self._binding_key(entity_set, navigation_name,
+                                       target, line)
+        as_name = entity_set.navigation[navigation_name].parent.name
+        self.links[as_name].append((from_key, target_key, line))
+
+    def _stage_bindings(self, entity, nav_name, deferred, line):
+        as_name = entity.entity_set.navigation[nav_name].parent.name
+        from_key = entity.key()
+        for binding in deferred.bindings:
+            target_key = self._binding_key(entity.entity_set, nav_name,
+                                           binding, line)
+            self.links[as_name].append(
+                (from_key, target_key, line))
+        # the bindings are now owned by the batch, prevent them being
+        # actioned again if the entity object is reused by the caller
+        deferred.clear_bindings()
+
+    def _binding_key(self, entity_set, nav_name, binding, line):
+        target_set = entity_set.get_target(nav_name)
+        if isinstance(binding, edm.Entity):
+            if binding.entity_set is not target_set:
+                raise BatchImportError(
+                    "Binding for %s.%s targets the wrong entity set" %
+                    (entity_set.name, nav_name), line)
+            target_key = binding.key()
+            if not binding.exists and not getattr(
+                    binding, self.stub_attr, False) and \
+                    target_key not in self.entities[target_set.name]:
+                # a freshly created entity handed to us, stage it too so
+                # that the forward reference can be resolved
+                self.add_entity(binding, line)
+            return target_key
+        else:
+            return target_set.get_key(binding)
+
+    def _validate(self):
+        # check that every link endpoint exists either in the container
+        # or in the batch, applying the multiplicity declared by the model
+        for as_name, link_list in dict_items(self.links):
+            aindex = self.container.associationStorage[as_name]
+            for from_key, to_key, line in link_list:
+                self._check_endpoint(aindex.to_store, to_key, as_name,
+                                     line)
+                self._check_endpoint(aindex.from_store, from_key,
+                                     as_name, line)
+                self._check_multiplicity(aindex, from_key, to_key, line)
+        # required navigation properties must be bound for every
+        # staged entity
+        for es_name, staged in dict_items(self.entities):
+            entity_set = self.container.entityStorage[es_name].entity_set
+            for key, entry in dict_items(staged):
+                self._check_required(entity_set, entry[0], key,
+                                     entry[1])
+
+    def _check_endpoint(self, store, key, as_name, line):
+        if key in self.entities[store.entity_set.name]:
+            return
+        if store.test_key(key):
+            return
+        raise BatchImportError(
+            "Missing target for relationship %s: %s%s" % (
+                as_name, store.entity_set.name,
+                odata.ODataURI.format_key_dict(
+                    store.entity_set.get_key_dict(key))),
+            line)
+
+    def _check_multiplicity(self, aindex, from_key, to_key, line):
+        to_end = aindex.to_end
+        if to_end.associationEnd.multiplicity != edm.Multiplicity.Many:
+            others = set(aindex.get_links_from(from_key))
+            others.update(self._staged_targets(aindex.name, from_key))
+            others.discard(to_key)
+            if others:
+                self._multiplicity_error(to_end, aindex.name, line)
+        from_end = aindex.from_end
+        if from_end.associationEnd.multiplicity != \
+                edm.Multiplicity.Many:
+            others = set(aindex.get_links_to(to_key))
+            others.update(self._staged_sources(aindex.name, to_key))
+            others.discard(from_key)
+            if others:
+                self._multiplicity_error(from_end, aindex.name, line)
+
+    def _staged_targets(self, as_name, from_key):
+        result = set()
+        for staged_from, staged_to, line in self.links[as_name]:
+            if staged_from == from_key:
+                result.add(staged_to)
+        return result
+
+    def _staged_sources(self, as_name, to_key):
+        result = set()
+        for staged_from, staged_to, line in self.links[as_name]:
+            if staged_to == to_key:
+                result.add(staged_from)
+        return result
+
+    def _multiplicity_error(self, end, as_name, line):
+        encoded = edm.Multiplicity.Encode[end.associationEnd.multiplicity]
+        raise BatchImportError(
+            "Multiple links violate the %s multiplicity at end %s of %s"
+            % (encoded, end.name, as_name), line)
+
+    def _check_required(self, entity_set, entity, key, line):
+        bad_end = entity_set.unboundPrincipal
+        if bad_end is not None:
+            aindex = self.container.associationStorage[
+                bad_end.parent.name]
+            if not self._end_is_bound(aindex, bad_end, key):
+                raise BatchImportError(
+                    "Entity %s%s has an unbound principal" % (
+                        entity_set.name,
+                        odata.ODataURI.format_key_dict(
+                            entity_set.get_key_dict(key))),
+                    line)
+        for nav_name, dv in entity.navigation_items():
+            if not dv.isRequired:
+                continue
+            as_name = entity_set.navigation[nav_name].parent.name
+            aindex = self.container.associationStorage[as_name]
+            from_end = entity_set.navigation[nav_name]
+            if not self._end_is_bound(aindex, from_end, key):
+                raise BatchImportError(
+                    "Required navigation property %s of %s%s is not "
+                    "bound" % (
+                        nav_name, entity_set.name,
+                        odata.ODataURI.format_key_dict(
+                            entity_set.get_key_dict(key))),
+                    line)
+
+    def _end_is_bound(self, aindex, end, key):
+        if aindex.from_end is end:
+            for from_key, to_key, line in self.links[aindex.name]:
+                if from_key == key:
+                    return True
+            return bool(aindex.get_links_from(key))
+        else:
+            for from_key, to_key, line in self.links[aindex.name]:
+                if to_key == key:
+                    return True
+            return bool(aindex.get_links_to(key))
+
+    def commit(self):
+        """Validates and publishes the whole batch atomically.
+
+        On success every staged entity and link becomes visible together
+        and the batch is closed.  On failure nothing is published, the
+        staging storage is discarded and a :py:class:`BatchImportError`
+        is raised."""
+        self._require_active()
+        try:
+            with self.container.lock:
+                self._validate()
+                self._publish()
+        except Exception:
+            self.rollback()
+            raise
+        self.active = False
+
+    def _publish(self):
+        # re-check keys under the lock as the container may have changed
+        # while the batch was being assembled
+        for es_name, staged in dict_items(self.entities):
+            store = self.container.entityStorage[es_name]
+            for key, entry in dict_items(staged):
+                if store.test_key(key):
+                    raise BatchImportError(
+                        "Duplicate key: %s%s already exists in %s" % (
+                            es_name,
+                            odata.ODataURI.format_key_dict(
+                                store.entity_set.get_key_dict(key)),
+                            es_name),
+                        entry[1])
+        published_entities = []
+        published_links = []
+        try:
+            # publish all the entities first, links become visible only
+            # once every entity exists
+            for es_name, staged in dict_items(self.entities):
+                store = self.container.entityStorage[es_name]
+                for key, entry in dict_items(staged):
+                    store.add_entity(entry[0])
+                    published_entities.append((store, key))
+            for as_name, link_list in dict_items(self.links):
+                aindex = self.container.associationStorage[as_name]
+                for from_key, to_key, line in link_list:
+                    aindex.add_link(from_key, to_key)
+                    published_links.append(
+                        (aindex, from_key, to_key))
+        except Exception:
+            # undo anything already published so the container is left
+            # exactly as it was before the commit
+            for aindex, from_key, to_key in reversed(published_links):
+                aindex.remove_link(from_key, to_key)
+            for store, key in reversed(published_entities):
+                if store.test_key(key):
+                    store.delete_entity(key)
+            raise
+
+    def rollback(self):
+        """Discards all staged entities and links.
+
+        Already committed batches and the existing contents of the
+        container are unaffected."""
+        self.entities = {}
+        self.links = {}
+        self.active = False
+
+    def import_feed(self, entity_set, objects, line_offset=0):
+        """Stages a sequence of JSON-style entity objects in file order.
+
+        *objects* is an iterable given in file order; each item is either
+        a python dictionary in the same shape accepted by
+        :py:meth:`pyslet.odata2.core.Entity.set_from_json_object` or a
+        ``(entity_set, obj)`` tuple targeting a different set.  A plain
+        dictionary is placed in *entity_set* unless its
+        ``__metadata.uri`` names another entity set in the container, so
+        a single file may interleave entities from several sets (for
+        example products arriving before the categories they reference).
+        *line_offset* is added to the zero-based position of each object
+        when reporting its input line (useful when the feed does not
+        start on the first line of the file).
+
+        Link objects use the standard ``{"__metadata": {"uri": ...}}``
+        form and may point at entities appearing later in the sequence:
+        such forward references are held as stubs and resolved when the
+        batch commits."""
+        self._require_active()
+        resolver = _BatchResolver(self)
+        for index, item in enumerate(objects):
+            line = line_offset + index + 1
+            if isinstance(item, tuple):
+                target_set, obj = item
+            else:
+                obj = item
+                target_set = self._feed_entity_set(entity_set, obj)
+            with target_set.open() as base_collection:
+                entity = base_collection.new_entity()
+                try:
+                    entity.set_from_json_object(obj, resolver.resolve)
+                    self.add_entity(entity, line)
+                except BatchImportError:
+                    self.rollback()
+                    raise
+                except Exception as err:
+                    # any malformed input must discard the partial batch
+                    self.rollback()
+                    raise BatchImportError(str(err), line)
+
+    def _feed_entity_set(self, default_set, obj):
+        metadata = obj.get('__metadata', None)
+        if not metadata or 'uri' not in metadata:
+            return default_set
+        request = odata.ODataURI(metadata['uri'])
+        for name, key_predicate in request.nav_path:
+            if name in self.container.entityStorage:
+                return self.container.container_def[name]
+        return default_set
+
+
+class _BatchResolver(object):
+
+    """Resolves link URIs found in a batch feed against the container
+    and the entities already staged by the batch.
+
+    A URI that points at neither a published nor a staged entity yields
+    a non-existent stub entity carrying just the key, allowing links to
+    entities that appear later in the same input to be staged."""
+
+    def __init__(self, batch):
+        self.batch = batch
+
+    def resolve(self, href):
+        container = self.batch.container
+        request = odata.ODataURI(href)
+        target_set = None
+        key = None
+        for name, key_predicate in request.nav_path:
+            if key_predicate is not None:
+                target_set = container.container_def[name]
+                key = target_set.get_key(key_predicate)
+                break
+        if target_set is None:
+            raise odata.InvalidData(
+                "Link URI does not identify an entity: %s" % str(href))
+        staged = self.batch.entities[target_set.name].get(key, None)
+        if staged is not None:
+            return staged[0]
+        with target_set.open() as collection:
+            try:
+                return collection[key]
+            except KeyError:
+                stub = collection.new_entity()
+                stub.set_key(key)
+                setattr(stub, BatchImport.stub_attr, True)
+                return stub
 
 
 class InMemoryEntityContainer(object):
