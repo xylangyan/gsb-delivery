@@ -1217,6 +1217,33 @@ Unbounded ranges use ``an.Preceding()`` or ``an.Following()`` without arguments.
 
     SELECT "date","amount",SUM("amount") OVER(PARTITION BY "account_id" ORDER BY "date" ROWS BETWEEN 7 PRECEDING AND CURRENT ROW) "rolling_7_day" FROM "transactions"
 
+Window Metrics at Range Edges
+"""""""""""""""""""""""""""""
+
+Filtering the source table to a visible date range before calculating ``LAG`` or ``LEAD`` silently drops the neighbours
+outside that range.  ``pypika.reporting.DeviceReadingsReport`` builds a bounded calculation window instead: every valid
+row in the half-open ``[start, end)`` range plus, per partition, at most one valid row before the range and one valid
+row at or after it.  The metrics are calculated in that window, and the outer query returns only visible rows.
+
+.. code-block:: python
+
+    from pypika import Order, Table
+    from pypika.reporting import DeviceReadingsReport
+
+    readings = Table('device_readings')
+    report = DeviceReadingsReport(readings)
+
+    # Half-open [start, end); display ascending or descending by reading.
+    q = report.build('2026-11-10', '2026-11-11')
+    q_desc = report.build('2026-11-10', '2026-11-11', order=Order.desc)
+
+The template is immutable, so different dates or display directions can be built from the same instance without
+changing queries generated earlier.  Invalid visible rows are still returned, but have null ``previous_reading`` and
+``next_reading``.  Rows outside the range are used for calculation and never returned.
+
+The calculation always orders by event time and the unique record id, not by the displayed reading value.  This keeps
+the two metrics independent of display order and makes same-timestamp rows deterministic: only the row nearest the
+range can become the neighbour.  Use ``report.window(start, end)`` to inspect the bounded calculation window itself.
 
 Parametrized Queries
 ^^^^^^^^^^^^^^^^^^^^

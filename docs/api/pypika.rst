@@ -9,6 +9,7 @@ pypika package
    pypika.functions
    pypika.pseudocolumns
    pypika.queries
+   pypika.reporting
    pypika.terms
    pypika.utils
 

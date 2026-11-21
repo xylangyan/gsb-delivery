@@ -108,6 +108,12 @@ from pypika.terms import (
 )
 
 # noinspection PyUnresolvedReferences
+from pypika.reporting import (
+    DeviceReadingsReport,
+    build_device_readings_report,
+)
+
+# noinspection PyUnresolvedReferences
 from pypika.utils import (
     CaseException,
     FunctionException,
@@ -169,6 +175,8 @@ __all__ = (
     'Rollup',
     'Tuple',
     'CustomFunction',
+    'DeviceReadingsReport',
+    'build_device_readings_report',
     'CaseException',
     'GroupingException',
     'JiraQuery',
