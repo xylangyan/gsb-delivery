@@ -750,6 +750,15 @@ class NavigationCollection(odata.NavigationCollection):
         else:
             self.aindex.remove_link(self.key, key)
 
+    def replace_if_current(self, entity, expected=None):
+        # The container lock is held for the whole check-and-replace
+        # operation so that concurrent readers never observe a
+        # partially updated association (e.g. both the old and the new
+        # link, or no link at all).
+        with self.aindex.container.lock:
+            return super(NavigationCollection, self).replace_if_current(
+                entity, expected)
+
     def replace(self, entity):
         key = entity.key()
         result_set = list(self.lookupMethod(self.key))

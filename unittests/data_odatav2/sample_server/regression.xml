@@ -124,6 +124,20 @@
                 </AssociationSet>
                 <EntitySet Name="Streams" EntityType="RegressionModel.Stream"/>
                 <EntitySet Name="XYStreams" EntityType="RegressionModel.XYStream"/>
+                <EntitySet Name="Products" EntityType="RegressionModel.Product"/>
+                <EntitySet Name="Warehouses" EntityType="RegressionModel.Warehouse"/>
+                <AssociationSet Name="Product_ResponsibleWarehouse" Association="RegressionModel.Product_ResponsibleWarehouse">
+                    <End Role="Product" EntitySet="Products"/>
+                    <End Role="ResponsibleWarehouse" EntitySet="Warehouses"/>
+                </AssociationSet>
+                <AssociationSet Name="Product_BackupWarehouses" Association="RegressionModel.Product_BackupWarehouses">
+                    <End Role="Product" EntitySet="Products"/>
+                    <End Role="BackupWarehouse" EntitySet="Warehouses"/>
+                </AssociationSet>
+                <AssociationSet Name="Product_ControlWarehouse" Association="RegressionModel.Product_ControlWarehouse">
+                    <End Role="Product" EntitySet="Products"/>
+                    <End Role="ControlWarehouse" EntitySet="Warehouses"/>
+                </AssociationSet>
             </EntityContainer>
             <EntityType Name="AutoKeyInt32">
                 <Key>
@@ -669,6 +683,47 @@
                 <Property Name="slugY" Type="Edm.String" Nullable="false" MaxLength="32" FixedLength="false"/>
                 <Property Name="title" Type="Edm.String" Nullable="true" MaxLength="255" FixedLength="false"/>
             </EntityType>
+            <EntityType Name="Product">
+                <Key>
+                    <PropertyRef Name="ProductID"/>
+                </Key>
+                <Property Name="ProductID" Type="Edm.Int32" Nullable="false"/>
+                <Property Name="Name" Type="Edm.String" Nullable="true" FixedLength="false"
+                    MaxLength="32"/>
+                <NavigationProperty Name="ResponsibleWarehouse" FromRole="Product" ToRole="ResponsibleWarehouse"
+                    Relationship="RegressionModel.Product_ResponsibleWarehouse"/>
+                <NavigationProperty Name="BackupWarehouses" FromRole="Product" ToRole="BackupWarehouse"
+                    Relationship="RegressionModel.Product_BackupWarehouses"/>
+                <NavigationProperty Name="ControlWarehouses" FromRole="Product" ToRole="ControlWarehouse"
+                    Relationship="RegressionModel.Product_ControlWarehouse"/>
+            </EntityType>
+            <EntityType Name="Warehouse">
+                <Key>
+                    <PropertyRef Name="WarehouseID"/>
+                </Key>
+                <Property Name="WarehouseID" Type="Edm.String" Nullable="false" MaxLength="5"
+                    Unicode="true" FixedLength="false"/>
+                <Property Name="Name" Type="Edm.String" Nullable="true" FixedLength="false"
+                    MaxLength="32"/>
+                <NavigationProperty Name="ResponsibleProducts" FromRole="ResponsibleWarehouse" ToRole="Product"
+                    Relationship="RegressionModel.Product_ResponsibleWarehouse"/>
+                <NavigationProperty Name="BackupProducts" FromRole="BackupWarehouse" ToRole="Product"
+                    Relationship="RegressionModel.Product_BackupWarehouses"/>
+                <NavigationProperty Name="ControlledProduct" FromRole="ControlWarehouse" ToRole="Product"
+                    Relationship="RegressionModel.Product_ControlWarehouse"/>
+            </EntityType>
+            <Association Name="Product_ResponsibleWarehouse">
+                <End Role="Product" Type="RegressionModel.Product" Multiplicity="*"/>
+                <End Role="ResponsibleWarehouse" Type="RegressionModel.Warehouse" Multiplicity="0..1"/>
+            </Association>
+            <Association Name="Product_BackupWarehouses">
+                <End Role="Product" Type="RegressionModel.Product" Multiplicity="*"/>
+                <End Role="BackupWarehouse" Type="RegressionModel.Warehouse" Multiplicity="*"/>
+            </Association>
+            <Association Name="Product_ControlWarehouse">
+                <End Role="Product" Type="RegressionModel.Product" Multiplicity="0..1"/>
+                <End Role="ControlWarehouse" Type="RegressionModel.Warehouse" Multiplicity="*"/>
+            </Association>
          </Schema>
     </edmx:DataServices>
 </edmx:Edmx>

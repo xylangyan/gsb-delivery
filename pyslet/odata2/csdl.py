@@ -3492,6 +3492,118 @@ class NavigationCollection(EntityCollection):
         self.clear()
         self[entity.key()] = entity
 
+    def replace_if_current(self, entity, expected=None):
+        """Conditionally replaces the current link(s) with a link to
+        a single *entity*.
+
+        This method supports data import and synchronisation scenarios
+        in which a navigation property must be moved to a new target
+        only if it still has the value previously read by the caller.
+        The read of the current link(s), the concurrency check and the
+        replace are combined into a single operation so that the source
+        and target ends of the association always change together.
+
+        entity
+            The entity to link to (or its key in the target entity
+            set).  The target is re-read from the data source before
+            any change is made; if no such entity exists KeyError is
+            raised and no links are modified.
+
+        expected
+            The caller's "receipt" for the current state of this
+            navigation property: an :py:class:`Entity` instance, a key
+            in the target entity set or None (the default) to indicate
+            that the collection is expected to be empty.
+
+        Returns True if the link was changed, i.e. the current link(s)
+        matched *expected* and have been replaced with a link to
+        *entity*.
+
+        If the collection already contains exactly the link to
+        *entity* then nothing is changed and False is returned.  This
+        allows a synchronisation operation to be safely replayed: a
+        resubmitted request that has already achieved its goal is a
+        successful no-op (returning False) and never creates duplicate
+        links, even if *expected* no longer matches.  This is
+        deliberately distinct from a genuine concurrency failure,
+        which raises :py:class:`ConcurrencyError` instead.
+
+        :py:class:`ConcurrencyError` is raised if the current link(s)
+        do not match *expected* (and the target is not already in
+        place).  The error message reports the current link(s) so the
+        caller can tell that the association has changed since its
+        receipt was obtained.  No links are modified in this case.
+
+        :py:class:`NavigationConstraintError` is raised if the change
+        would violate the multiplicity constraints of the association,
+        for example if the target is already linked to a different
+        entity through a constrained reverse navigation property.  No
+        links are modified in this case either.
+
+        Note for data providers: the default implementation performs
+        the check and the replace as separate steps.  Providers should
+        override this method to wrap the whole operation in the
+        appropriate lock or transaction so that concurrent readers
+        never observe a partially updated association."""
+        key = self.entity_set.get_key(entity)
+        # re-read the target from the base collection, this ensures it
+        # exists (KeyError if not) and that it really is a member of
+        # the entity set this collection draws from
+        with self.entity_set.open() as base_collection:
+            entity = base_collection[key]
+        current = set()
+        for current_key in self:
+            current.add(current_key)
+        if current == set([key]):
+            # already at target: a successful replay, not an error
+            return False
+        if expected is None:
+            expected_keys = set()
+        else:
+            expected_keys = set([self.entity_set.get_key(expected)])
+        if current != expected_keys:
+            raise ConcurrencyError(
+                "Link for navigation property %s has changed: expected "
+                "%s but found %s" %
+                (self.name, self._format_keys(expected_keys),
+                 self._format_keys(current)))
+        self._check_replace_constraints(entity)
+        self.replace(entity)
+        return True
+
+    def _format_keys(self, keys):
+        """Utility method that formats a set of entity keys for use in
+        error messages."""
+        return "{%s}" % ", ".join(repr(k) for k in sorted(keys))
+
+    def _check_replace_constraints(self, entity):
+        """Pre-flight constraint checks for :py:meth:`replace_if_current`.
+
+        Raises :py:class:`NavigationConstraintError` if replacing the
+        current link(s) of this collection with a link to *entity*
+        would violate the multiplicity constraints of the association.
+        The checks are made before any change is attempted so a
+        failure leaves both ends of the association untouched."""
+        if self.fromMultiplicity == Multiplicity.One:
+            # we can't remove the current link as it is required
+            for current_key in self:
+                raise NavigationConstraintError(
+                    "Can't remove a required link")
+        if self.fromMultiplicity != Multiplicity.Many:
+            # the target may be linked from at most one source, check
+            # the reverse navigation property (if one is bound) for
+            # links from other entities
+            reverse_end = self.from_end.otherEnd
+            reverse_name = self.entity_set.linkEnds.get(reverse_end, None)
+            if reverse_name is not None:
+                with entity[reverse_name].open() as reverse_collection:
+                    for reverse_key in reverse_collection:
+                        if reverse_key != self.from_entity.key():
+                            raise NavigationConstraintError(
+                                "Entity %s is already bound through this "
+                                "association" %
+                                str(entity.get_location()))
+
 
 class ExpandedEntityCollection(NavigationCollection):
 

@@ -5697,6 +5697,164 @@ class DataServiceRegressionTests(unittest.TestCase):
             self.assertTrue(sinfo.size == len(cafe))
             self.assertTrue(sinfo.md5 == hashlib.md5(cafe).digest())
 
+    def check_responsible(self, products, warehouses, product_key,
+                          warehouse_key):
+        """Checks both directions of the responsible warehouse link.
+
+        There must be exactly one responsible warehouse for the
+        product (never none, never two) and the reverse navigation
+        from the warehouse must agree with the forward one."""
+        with products.open() as pcoll:
+            p = pcoll[product_key]
+            responsible = p['ResponsibleWarehouse'].get_entity()
+            if warehouse_key is None:
+                self.assertTrue(
+                    responsible is None,
+                    "Expected no responsible warehouse for %s" %
+                    str(product_key))
+            else:
+                self.assertTrue(
+                    responsible is not None,
+                    "Responsible warehouse for %s is empty" %
+                    str(product_key))
+                self.assertTrue(
+                    responsible['WarehouseID'].value == warehouse_key)
+        with warehouses.open() as wcoll:
+            for w in wcoll.itervalues():
+                with w['ResponsibleProducts'].open() as nav:
+                    if w['WarehouseID'].value == warehouse_key:
+                        self.assertTrue(
+                            product_key in nav,
+                            "Warehouse %s missing reverse link to %s" %
+                            (str(warehouse_key), str(product_key)))
+                    else:
+                        self.assertTrue(
+                            product_key not in nav,
+                            "Warehouse %s has unexpected link to %s" %
+                            (str(w['WarehouseID'].value),
+                             str(product_key)))
+
+    def runtest_nav_replace_if_current(self):
+        container = self.ds['RegressionModel.RegressionContainer']
+        products = container['Products']
+        warehouses = container['Warehouses']
+        with products.open() as pcoll:
+            with warehouses.open() as wcoll:
+                for wid in ['A', 'B', 'C', 'D']:
+                    w = wcoll.new_entity()
+                    w['WarehouseID'].set_from_value(wid)
+                    w['Name'].set_from_value('Warehouse %s' % wid)
+                    wcoll.insert_entity(w)
+                # product P is the responsibility of A with D as backup
+                p = pcoll.new_entity()
+                p['ProductID'].set_from_value(1)
+                p['Name'].set_from_value('Widget')
+                p['ResponsibleWarehouse'].bind_entity('A')
+                p['BackupWarehouses'].bind_entity('D')
+                pcoll.insert_entity(p)
+                # product Q is controlled by B through the association
+                # with the constrained reverse multiplicity
+                q = pcoll.new_entity()
+                q['ProductID'].set_from_value(2)
+                q['Name'].set_from_value('Gadget')
+                q['ControlWarehouses'].bind_entity('B')
+                pcoll.insert_entity(q)
+        # two sync workers both read the old state (their receipts)
+        with products.open() as pcoll:
+            receipt_w1 = pcoll[1]['ResponsibleWarehouse'].get_entity()
+            receipt_w2 = pcoll[1]['ResponsibleWarehouse'].get_entity()
+        self.assertTrue(receipt_w1['WarehouseID'].value == 'A')
+        self.assertTrue(receipt_w2['WarehouseID'].value == 'A')
+        # worker 1 moves P from A to B
+        with products.open() as pcoll:
+            p = pcoll[1]
+            with p['ResponsibleWarehouse'].open() as nav:
+                changed = nav.replace_if_current('B', expected=receipt_w1)
+            self.assertTrue(changed, "A->B change should report success")
+        # P's key, data properties and backup link are preserved and
+        # the forward and reverse navigations agree: A is out, B is in
+        with products.open() as pcoll:
+            p = pcoll[1]
+            self.assertTrue(p['ProductID'].value == 1)
+            self.assertTrue(p['Name'].value == 'Widget')
+            with p['BackupWarehouses'].open() as nav:
+                self.assertTrue(set(nav) == set(['D']),
+                                "Backup warehouse link must be preserved")
+        self.check_responsible(products, warehouses, 1, 'B')
+        # worker 2 replays with a stale receipt (still A) aiming for C
+        with products.open() as pcoll:
+            p = pcoll[1]
+            with p['ResponsibleWarehouse'].open() as nav:
+                try:
+                    nav.replace_if_current('C', expected=receipt_w2)
+                    self.fail("Stale receipt must raise ConcurrencyError")
+                except edm.ConcurrencyError as err:
+                    # the error must report the current (changed) link
+                    self.assertTrue('B' in str(err))
+        # P must not have been moved to C
+        self.check_responsible(products, warehouses, 1, 'B')
+        # worker 1 resubmits the same operation: already at target, so
+        # this is a successful replay (returns False), not a failure,
+        # and it must not add duplicate links
+        with products.open() as pcoll:
+            p = pcoll[1]
+            with p['ResponsibleWarehouse'].open() as nav:
+                changed = nav.replace_if_current('B', expected=receipt_w1)
+            self.assertFalse(
+                changed, "Replay of an achieved change returns False")
+        with warehouses.open() as wcoll:
+            with wcoll['B']['ResponsibleProducts'].open() as nav:
+                self.assertTrue(len(nav) == 1, "No duplicate links")
+        # from the initial state: a missing target raises KeyError and
+        # leaves both ends of the association untouched
+        with products.open() as pcoll:
+            p = pcoll.new_entity()
+            p['ProductID'].set_from_value(3)
+            p['Name'].set_from_value('Gizmo')
+            p['ResponsibleWarehouse'].bind_entity('A')
+            p['BackupWarehouses'].bind_entity('D')
+            pcoll.insert_entity(p)
+        with products.open() as pcoll:
+            p = pcoll[3]
+            with p['ResponsibleWarehouse'].open() as nav:
+                try:
+                    nav.replace_if_current('MISSING', expected='A')
+                    self.fail("Missing target must raise KeyError")
+                except KeyError:
+                    pass
+        self.check_responsible(products, warehouses, 3, 'A')
+        with products.open() as pcoll:
+            p = pcoll[3]
+            with p['BackupWarehouses'].open() as nav:
+                self.assertTrue(set(nav) == set(['D']))
+        # a multiplicity violation (B already controls Q through the
+        # constrained reverse association) also leaves both ends intact
+        with products.open() as pcoll:
+            p = pcoll[3]
+            with p['ControlWarehouses'].open() as nav:
+                try:
+                    nav.replace_if_current('B', expected=None)
+                    self.fail("Control conflict must raise "
+                              "NavigationConstraintError")
+                except edm.NavigationConstraintError:
+                    pass
+        with warehouses.open() as wcoll:
+            controlled = wcoll['B']['ControlledProduct'].get_entity()
+            self.assertTrue(controlled is not None)
+            self.assertTrue(controlled['ProductID'].value == 2)
+        with products.open() as pcoll:
+            p = pcoll[3]
+            with p['ControlWarehouses'].open() as nav:
+                self.assertTrue(len(nav) == 0)
+        self.check_responsible(products, warehouses, 3, 'A')
+        # retrying with the legal target B now succeeds
+        with products.open() as pcoll:
+            p = pcoll[3]
+            with p['ResponsibleWarehouse'].open() as nav:
+                changed = nav.replace_if_current('B', expected='A')
+            self.assertTrue(changed, "Retry with legal target B")
+        self.check_responsible(products, warehouses, 3, 'B')
+
     def run_combined(self):
         """Runs all individual tests combined into one
 
@@ -5729,6 +5887,7 @@ class DataServiceRegressionTests(unittest.TestCase):
         self.runtest_nav_many2many_1()
         self.runtest_nav_many2many_r()
         self.runtest_nav_many2many_r1()
+        self.runtest_nav_replace_if_current()
 
 
 if __name__ == "__main__":
