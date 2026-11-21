@@ -18,10 +18,11 @@ import glob
 # https://docs.python.org/3.7/library/io.html
 import io
 import itertools
+import math
 import os
-import sys
-
 # http://www.python.org/doc/2.4.4/lib/module-unittest.html
+import struct
+import sys
 import unittest
 import zlib
 
@@ -1267,6 +1268,266 @@ class Test(unittest.TestCase):
         self.assertTrue(len(failed_runs) == 0, msg="%r failed" % failed_runs)
 
 
+class TestGrey4Stats(unittest.TestCase):
+    """Incremental 4-bit greyscale measurement ingest."""
+
+    width = 8
+    height = 6
+    rows = [
+        [0, 1, 2, 3, 4, 5, 6, 7],
+        [7, 7, 7, 7, 7, 7, 7, 7],
+        [0, 0, 0, 7, 7, 1, 1, 1],
+        [6, 6, 6, 6, 6, 6, 6, 6],
+        [7, 3, 3, 3, 3, 3, 3, 7],
+        [1, 2, 3, 4, 5, 6, 7, 0],
+    ]
+
+    def expected(self):
+        return expected_row_stats(self.width, self.rows)
+
+    def test_full_run_statistics(self):
+        """Row numbers, extrema, invalid count and pixel total."""
+
+        data = grey4_png(self.width, self.height, self.rows)
+        stats = png.Reader(bytes=data).grey4_stats(preview=3)
+        confirmed = stats.run()
+        self.assertEqual(confirmed, self.expected())
+        self.assertTrue(stats.complete)
+        self.assertFalse(stats.incomplete)
+        # The all-transparent row has no extrema; 0 is a valid value.
+        transparent_row = confirmed[1]
+        self.assertIsNone(transparent_row.minimum)
+        self.assertIsNone(transparent_row.maximum)
+        self.assertEqual(transparent_row.invalid, self.width)
+        self.assertEqual(transparent_row.pixels, self.width)
+        self.assertEqual(confirmed[0].minimum, 0)
+        self.assertEqual(confirmed[0].invalid, 1)
+
+    def test_matches_reader_read(self):
+        """Stats agree with independently computed read() statistics."""
+
+        data = grey4_png(self.width, self.height, self.rows)
+        _, _, pixels, _ = png.Reader(bytes=data).read()
+        independent = expected_row_stats(
+            self.width, [list(row) for row in pixels])
+        stats = png.Reader(bytes=data).grey4_stats(preview=3).run()
+        self.assertEqual(stats, independent)
+
+    def test_preview_before_crc_is_provisional(self):
+        """A long IDAT yields preview rows before its CRC can be read."""
+
+        data = single_idat_png(self.width, self.height, self.rows)
+        stats = png.Reader(file=SlowStream(data, 7)).grey4_stats(preview=3)
+        while len(stats.preview_rows) < 3:
+            self.assertTrue(stats.pump())
+        # Nothing is confirmed while the only IDAT's CRC is unread.
+        self.assertEqual(stats.confirmed, [])
+        self.assertGreaterEqual(len(stats.pending), 3)
+        self.assertEqual(stats.preview_rows, self.expected()[:3])
+
+    def test_pause_and_resume(self):
+        """Provisional preview is confirmed once the CRC later passes."""
+
+        data = single_idat_png(self.width, self.height, self.rows)
+        stats = png.Reader(file=SlowStream(data, 7)).grey4_stats(preview=3)
+        while len(stats.preview_rows) < 3:
+            stats.pump()
+        preview = list(stats.preview_rows)
+        self.assertEqual(stats.confirmed, [])
+        # Resume to the end; the same rows are now confirmed.
+        confirmed = stats.run()
+        self.assertEqual(confirmed, self.expected())
+        self.assertEqual(confirmed[:3], preview)
+        # A completed ingestor has nothing left to pump.
+        self.assertFalse(stats.pump())
+
+    def test_cross_chunk_bad_crc_interval(self):
+        """A row spanning two chunks is revoked with a precise interval."""
+
+        data, spanning, _ = split_idat_png(
+            self.width, self.height, self.rows, bad_second_crc=True)
+        stats = png.Reader(file=SlowStream(data, 5)).grey4_stats(preview=3)
+        with self.assertRaises(png.IngestChecksumError) as context:
+            stats.run()
+        error = context.exception
+        self.assertEqual(error.chunk_type, b"IDAT")
+        self.assertEqual(error.first_row, spanning)
+        self.assertEqual(error.last_row, self.height - 1)
+        # Rows wholly inside the first, independently verified chunk stay.
+        self.assertEqual(
+            [row.row for row in stats.confirmed],
+            list(range(spanning)))
+        # The provisional preview from the bad chunk has been revoked.
+        self.assertEqual(stats.pending, [])
+        self.assertIn("Rows %d..%d" % (spanning, self.height - 1),
+                      str(error))
+
+    def test_good_split_confirms_all_rows(self):
+        """The same split with a correct second CRC ingests every row."""
+
+        data, _, _ = split_idat_png(
+            self.width, self.height, self.rows, bad_second_crc=False)
+        confirmed = png.Reader(bytes=data).grey4_stats(preview=3).run()
+        self.assertEqual(confirmed, self.expected())
+
+    def test_preview_is_revocable(self):
+        """Provisional rows disappear when their chunk fails the CRC."""
+
+        data, spanning, _ = split_idat_png(
+            self.width, self.height, self.rows, bad_second_crc=True)
+        stats = png.Reader(file=SlowStream(data, 5)).grey4_stats(preview=3)
+        # Let the first, independently verified chunk confirm its rows.
+        while not stats.confirmed and not stats.failure:
+            stats.pump()
+        self.assertEqual(
+            [row.row for row in stats.confirmed], list(range(spanning)))
+        # Rows provisional from the bad chunk are later revoked.
+        provisional = set()
+        with self.assertRaises(png.IngestChecksumError):
+            while True:
+                stats.pump()
+                provisional.update(row.row for row in stats.pending)
+        self.assertTrue(provisional)
+        self.assertIn(spanning, provisional)
+        self.assertEqual(stats.pending, [])
+        retained = {row.row for row in stats.confirmed}
+        self.assertTrue(provisional.isdisjoint(retained))
+        self.assertEqual(retained, set(range(spanning)))
+
+    def test_incomplete_stream(self):
+        """A truncated stream is reported incomplete, not as success."""
+
+        data = single_idat_png(self.width, self.height, self.rows)
+        stream = SlowStream(data[:len(data) // 2], 5)
+        stats = png.Reader(file=stream).grey4_stats(preview=3)
+        while stats.pump():
+            pass
+        self.assertFalse(stats.complete)
+        with self.assertRaises(png.FormatError):
+            stats.run()
+        self.assertTrue(stats.incomplete)
+        self.assertLess(len(stats.confirmed), self.height)
+
+    def test_row_count_mismatch_is_incomplete(self):
+        """Confirmed stats are not a full image when heights disagree."""
+
+        data = bytearray(grey4_png(self.width, self.height, self.rows))
+        struct.pack_into("!I", data, 20, self.height + 3)
+        ihdr_body = bytes(data[16:29])
+        checksum = zlib.crc32(b"IHDR")
+        checksum = zlib.crc32(ihdr_body, checksum)
+        struct.pack_into("!I", data, 29, checksum & 0xFFFFFFFF)
+        stats = png.Reader(bytes=bytes(data)).grey4_stats(preview=3)
+        with self.assertRaises(png.FormatError):
+            stats.run()
+        self.assertTrue(stats.incomplete)
+        self.assertEqual(len(stats.confirmed), self.height)
+
+    def test_buffers_independent_of_remaining_height(self):
+        """Preview buffers depend on width/preview, not image height."""
+
+        width = 16
+        stride = 1 + width // 2
+
+        def random_rows(height, seed=12345):
+            # High LCG bits give incompressible nibbles, so file size
+            # scales with height rather than collapsing under deflate.
+            state = seed
+            result = []
+            for _ in range(height):
+                row = []
+                for _ in range(width):
+                    state = (1103515245 * state + 12345) & 0x7FFFFFFF
+                    row.append((state >> 16) & 7)
+                result.append(row)
+            return result
+
+        measurements = {}
+        for height in (8, 4000):
+            data = single_idat_png(width, height, random_rows(height))
+            stream = SlowStream(data, 11)
+            stats = png.Reader(file=stream).grey4_stats(preview=3)
+            max_pending = 0
+            max_leftover = 0
+            while len(stats.preview_rows) < 3:
+                stats.pump()
+                max_pending = max(max_pending, len(stats.pending))
+                max_leftover = max(max_leftover, len(stats._leftover))
+            # The long IDAT's CRC is still unread at preview time.
+            self.assertEqual(stats.confirmed, [])
+            # A constant bound: one segment may overshoot by one row,
+            # but neither buffer grows with the remaining image height.
+            self.assertLessEqual(max_pending, 3 + 1)
+            self.assertLess(max_leftover, stride)
+            self.assertEqual(stats._cap, (3 + 2) * stride)
+            # Only width/preview-sized pixel data is held.
+            self.assertLessEqual(
+                max_pending * width + max_leftover,
+                (3 + 1) * width + stride)
+            bytes_read = len(data) - len(stream.data)
+            measurements[height] = (len(data), bytes_read, max_pending)
+            stats.run()
+            self.assertEqual(len(stats.confirmed), height)
+
+        short_file, short_read, _ = measurements[8]
+        tall_file, tall_read, _ = measurements[4000]
+        # The tall image is far larger, yet reaching its head costs
+        # about the same small number of reads as the short image.
+        self.assertGreater(tall_file, short_file * 100)
+        self.assertLessEqual(tall_read, short_read * 4)
+        self.assertGreater(tall_file - tall_read, tall_file * 9 // 10)
+
+    def test_short_segments_never_need_filling(self):
+        """Reads returning fewer bytes than asked still ingest fully."""
+
+        data = single_idat_png(self.width, self.height, self.rows)
+        stream = SlowStream(data, 3)
+        confirmed = png.Reader(file=stream).grey4_stats(preview=3).run()
+        self.assertEqual(confirmed, self.expected())
+        self.assertGreater(stream.reads, len(data) // 3)
+
+    def test_rejects_unsupported_formats(self):
+        """Only non-interlaced 4-bit greyscale images are accepted."""
+
+        interlaced = BytesIO()
+        png.Writer(4, 4, greyscale=True, bitdepth=4,
+                   interlace=True).write(interlaced,
+                                         [[0, 1, 2, 3]] * 4)
+        eight_bit = BytesIO()
+        png.Writer(4, 4, greyscale=True, bitdepth=8).write(
+            eight_bit, [[0, 1, 2, 3]] * 4)
+        palette = BytesIO()
+        png.Writer(4, 4, bitdepth=4,
+                   palette=[(0, 0, 0), (1, 1, 1)]).write(
+            palette, [[0, 1, 0, 1]] * 4)
+        for stream in (interlaced, eight_bit, palette):
+            with self.assertRaises(png.ProtocolError):
+                png.Reader(bytes=stream.getvalue()).grey4_stats()
+
+    def test_ancillary_chunk_between_idats(self):
+        """Non-IDAT chunks are framed and checksummed but ignored."""
+
+        data = grey4_png(self.width, self.height, self.rows)
+        parts = []
+        for chunk_type, body, _ in parse_chunks(data):
+            if chunk_type == b"IEND":
+                text = b"comment\x00hello"
+                parts.append((b"tEXt", text, None))
+            parts.append((chunk_type, body, None))
+        rebuilt = build_png(parts)
+        confirmed = png.Reader(bytes=rebuilt).grey4_stats(preview=3).run()
+        self.assertEqual(confirmed, self.expected())
+
+    def test_reader_read_still_strict_on_crc(self):
+        """The existing read() path keeps its strict CRC behaviour."""
+
+        data, _, _ = split_idat_png(
+            self.width, self.height, self.rows, bad_second_crc=True)
+        _, _, rows, _ = png.Reader(bytes=data).read()
+        with self.assertRaises(png.ChunkError):
+            list(rows)
+
+
 def read_modify_chunks(modify_chunk):
     """Create a temporary PNG file by modifying the chunks of
     an existing one, then read that temporary file.
@@ -1283,6 +1544,138 @@ def read_modify_chunks(modify_chunk):
     png.write_chunks(o, newchunks())
     r = png.Reader(bytes=o.getvalue())
     return list(r.asDirect()[2])
+
+
+def grey4_png(width, height, rows):
+    """Return a non-interlaced 4-bit greyscale PNG as bytes."""
+
+    o = BytesIO()
+    png.Writer(width, height, greyscale=True, bitdepth=4).write(o, rows)
+    return o.getvalue()
+
+
+def parse_chunks(data):
+    """Yield (type, body, crc) triples from PNG bytes."""
+
+    pos = 8
+    while pos < len(data):
+        (length,) = struct.unpack("!I", data[pos:pos + 4])
+        chunk_type = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        crc = data[pos + 8 + length:pos + 12 + length]
+        yield chunk_type, body, crc
+        pos += 12 + length
+
+
+def build_png(parts):
+    """Build PNG bytes from (type, body, crc_override) triples.
+    A None crc_overlay causes a correct CRC to be computed.
+    """
+
+    out = bytearray(png.signature)
+    for chunk_type, body, crc_override in parts:
+        out += struct.pack("!I", len(body)) + chunk_type + body
+        if crc_override is None:
+            checksum = zlib.crc32(chunk_type)
+            checksum = zlib.crc32(body, checksum)
+            crc_override = struct.pack("!I", checksum & 0xFFFFFFFF)
+        out += crc_override
+    return bytes(out)
+
+
+def single_idat_png(width, height, rows):
+    """A 4-bit greyscale PNG whose whole image is one (long) IDAT."""
+
+    data = grey4_png(width, height, rows)
+    ihdr = next(body for t, body, _ in parse_chunks(data) if t == b"IHDR")
+    idat = b"".join(body for t, body, _ in parse_chunks(data)
+                    if t == b"IDAT")
+    return build_png([
+        (b"IHDR", ihdr, None),
+        (b"IDAT", idat, None),
+        (b"IEND", b"", None),
+    ])
+
+
+def split_idat_png(width, height, rows, bad_second_crc=False):
+    """A 4-bit greyscale PNG with two IDAT chunks split so that a
+    scanline starts in the first chunk and ends in the second.
+    Returns (bytes, spanning_row, stride).
+    """
+
+    data = grey4_png(width, height, rows)
+    ihdr = next(body for t, body, _ in parse_chunks(data) if t == b"IHDR")
+    raw = zlib.decompress(
+        b"".join(body for t, body, _ in parse_chunks(data)
+                 if t == b"IDAT"))
+    stride = 1 + int(math.ceil(width / 2.0))
+    compressor = zlib.compressobj(9)
+    compressed = compressor.compress(raw) + compressor.flush()
+
+    # Choose a mid-scanline cut close to the middle of the image, so
+    # several whole rows are verified in chunk 1 while later rows lie
+    # wholly or partly in chunk 2.
+    cut = None
+    best = None
+    for candidate in range(2, len(compressed) - 2):
+        produced = len(zlib.decompressobj().decompress(
+            compressed[:candidate]))
+        if produced % stride == 0:
+            continue
+        spanning_row = produced // stride
+        if spanning_row == 0 or spanning_row >= height - 1:
+            continue
+        score = abs(produced - len(raw) // 2)
+        if best is None or score < best:
+            best = score
+            cut = candidate
+    assert cut is not None, "could not find a mid-scanline IDAT split"
+    spanning_row = (
+        len(zlib.decompressobj().decompress(compressed[:cut])) // stride)
+    assert 0 < spanning_row < height - 1
+
+    first = compressed[:cut]
+    second = compressed[cut:]
+    parts = [
+        (b"IHDR", ihdr, None),
+        (b"IDAT", first, None),
+        (b"IDAT", second, b"\x01\x02\x03\x04" if bad_second_crc else None),
+        (b"IEND", b"", None),
+    ]
+    return build_png(parts), spanning_row, stride
+
+
+def expected_row_stats(width, rows):
+    """The expected Grey4Row statistics for a set of pixel rows."""
+
+    result = []
+    for index, row in enumerate(rows):
+        valid = [value for value in row if value != 7]
+        result.append(png.Grey4Row(
+            index,
+            min(valid) if valid else None,
+            max(valid) if valid else None,
+            sum(1 for value in row if value == 7),
+            width,
+        ))
+    return result
+
+
+class SlowStream:
+    """A file-like object that only ever returns short segments,
+    so a single read never has to fill the requested size."""
+
+    def __init__(self, data, segment=7):
+        self.data = bytearray(data)
+        self.segment = segment
+        self.reads = 0
+
+    def read(self, length):
+        self.reads += 1
+        take = min(self.segment, length, len(self.data))
+        part = bytes(self.data[:take])
+        del self.data[:take]
+        return part
 
 
 def group(s, n):

@@ -187,7 +187,8 @@ import zlib
 from array import array
 
 
-__all__ = ['Image', 'Reader', 'Writer', 'write_chunks', 'from_array']
+__all__ = ['Image', 'Reader', 'Writer', 'write_chunks', 'from_array',
+           'Grey4Stats', 'Grey4Row', 'IngestChecksumError']
 
 
 # The PNG signature.
@@ -224,6 +225,15 @@ def adam7_generate(width, height):
 
 # Models the 'pHYs' chunk (used by the Reader)
 Resolution = collections.namedtuple('_Resolution', 'x y unit_is_meter')
+
+# One row of statistics produced by :class:`Grey4Stats`.
+# `row` is the original (0-based) row number;
+# `minimum` and `maximum` describe the valid (non-transparent) pixels,
+# and are None when the row has no valid pixels;
+# `invalid` counts the transparent (value 7) pixels;
+# `pixels` is the total number of pixels in the row.
+Grey4Row = collections.namedtuple(
+    'Grey4Row', 'row minimum maximum invalid pixels')
 
 
 def group(s, n):
@@ -343,6 +353,25 @@ class ProtocolError(Error):
 
 class ChunkError(FormatError):
     pass
+
+
+class IngestChecksumError(ChunkError):
+    """
+    A checksum failure discovered while ingesting an image incrementally.
+
+    The IDAT chunk that failed the checksum may have already supplied
+    (unverified) pixel rows.  Rows whose data lay wholly inside earlier,
+    independently verified chunks remain valid; the affected interval is
+    reported precisely as an inclusive range of original row numbers
+    (``first_row`` through ``last_row``), or as
+    ``first_row is None`` when the bad chunk had not yielded a whole row.
+    """
+
+    def __init__(self, message, chunk_type, first_row, last_row):
+        super().__init__(message)
+        self.chunk_type = chunk_type
+        self.first_row = first_row
+        self.last_row = last_row
 
 
 class Default:
@@ -1889,6 +1918,38 @@ class Reader:
         pixel = array(arraycode, itertools.chain(*pixel))
         return x, y, pixel, info
 
+    def grey4_stats(self, preview=3):
+        """
+        Begin an incremental ingest of a non-interlaced, 4-bit greyscale
+        PNG (colour type 0, bit depth 4).
+
+        Returns a :class:`Grey4Stats` object that can be pumped one short
+        read at a time with :meth:`Grey4Stats.pump`.  The first `preview`
+        rows are exposed as provisional statistics as soon as they can be
+        decompressed from the IDAT data that has arrived, even when the
+        chunk's trailing CRC has not been read yet.  Rows are only moved
+        to the confirmed statistics once the IDAT chunk carrying them has
+        passed its CRC check; see :class:`Grey4Stats` for the details.
+        """
+
+        # The preamble's framing assumes full reads, so coalesce short
+        # segments for it; the incremental ingestor then reads the
+        # original segment-delivering stream directly.
+        stream = self.file
+        self.file = _CoalescingReader(stream)
+        try:
+            self.preamble()
+        finally:
+            self.file = stream
+        if self.interlace:
+            raise ProtocolError(
+                "grey4_stats is only supported for non-interlaced images")
+        if not self.greyscale or self.alpha or self.bitdepth != 4:
+            raise ProtocolError(
+                "grey4_stats is only supported for non-interlaced 4-bit"
+                " greyscale images (colour type 0, bit depth 4)")
+        return Grey4Stats(self, preview=preview)
+
     def palette(self, alpha='natural'):
         """
         Returns a palette that is a sequence of 3-tuples or 4-tuples,
@@ -2176,6 +2237,365 @@ class Reader:
         info['greyscale'] = False
         info['planes'] = 4
         return width, height, convert(), info
+
+
+class _CoalescingReader:
+    """
+    Adapt a stream whose ``read`` may return fewer bytes than requested
+    (a slow connexion delivering small segments) into one whose
+    ``read(n)`` keeps reading until exactly ``n`` bytes have arrived or
+    the underlying stream is exhausted.  Used only for the metadata
+    preamble, whose framing predates incremental reading.
+    """
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def read(self, length):
+        chunks = []
+        remaining = length
+        while remaining > 0:
+            part = self.stream.read(remaining)
+            if not part:
+                break
+            chunks.append(part)
+            remaining -= len(part)
+        return b''.join(chunks)
+
+
+class Grey4Stats:
+    """
+    Incremental ingest of a non-interlaced 4-bit greyscale PNG,
+    producing per-row statistics suitable for measurement ingest.
+
+    An instance is created with :meth:`Reader.grey4_stats`.
+    The input stream is read one short read at a time with
+    :meth:`pump`; each read may return fewer bytes than requested
+    (a slow connexion that delivers the file in small segments).
+
+    Rows are decompressed and statified as soon as enough IDAT data
+    has arrived, even while the IDAT chunk's trailing CRC has not
+    been read.  Such rows are *provisional* and appear in
+    :attr:`pending`; they are exposed by :attr:`preview_rows`.
+    A provisional row is revoked again if the chunk that supplies it
+    fails its CRC.  Only when a chunk's CRC passes do its rows move
+    into :attr:`confirmed`, from where they can be ingested.
+
+    Transparent pixels are those with the marker value 7.
+    Each row is reported as a :class:`Grey4Row`: the original row
+    number, the minimum and maximum valid (non-transparent) pixel
+    values, the number of transparent (invalid) pixels, and the
+    total pixel count.  A row that is entirely transparent has no
+    extrema (``minimum`` and ``maximum`` are ``None``); the value 0
+    is a valid pixel and contributes to the extrema, not the
+    invalid count.
+
+    Decompression is driven with a fixed output cap, so the bytes
+    buffered while delivering the first few rows depend on the
+    preview size and the image width, not on the image height.
+    """
+
+    # One read is at most this many bytes; the underlying stream may
+    # legitimately return fewer.  Keeping this small means a slow
+    # connexion that delivers small segments is handled directly.
+    read_size = 4096
+
+    def __init__(self, reader, preview=3):
+        if not isinstance(preview, int) or preview < 1:
+            raise ProtocolError(
+                "preview must be a positive integer, not %r" % (preview,))
+        self.reader = reader
+        self.width = reader.width
+        self.height = reader.height
+        self.preview = preview
+        # Bytes per scanline plus its leading filter-type byte.
+        self.stride = reader.row_bytes + 1
+        # Bound on bytes returned by one decompress() call.
+        self._cap = (preview + 2) * self.stride
+
+        # Rows that have been verified by a passing chunk CRC.
+        self.confirmed = []
+        # Rows decoded from a chunk whose CRC has not passed yet.
+        self.pending = []
+        # Original row number span covered by `pending` / partial data.
+        self._pending_first = None
+        self._pending_last = None
+
+        # Chunk framing state.  Reader.preamble() has already read the
+        # length and type bytes of the first IDAT chunk (it leaves them
+        # in reader.atchunk), so seed the header buffer from there.
+        self._state = 'header'
+        self._header = bytearray()
+        if reader.atchunk:
+            length, chunk_type = reader.atchunk
+            self._header = bytearray(struct.pack('!I4s', length, chunk_type))
+        self._body_remaining = 0
+        self._chunk_type = None
+        self._crc = 0
+        self._crc_bytes = bytearray()
+
+        # Decompression and scanline reconstruction state.
+        self._inflate = zlib.decompressobj()
+        # IDAT payload already read from the stream but not yet pulled
+        # through the decompressor.  Kept compressed so pausing on the
+        # first few rows never buffers a height-sized pixel array.
+        self._compressed = bytearray()
+        self._leftover = bytearray()
+        self._recon = None
+        self._row_index = 0
+
+        # While True, decompression pauses once a preview-sized set of
+        # provisional rows is buffered.  run() switches this off to
+        # ingest the whole image.
+        self._bounded = True
+        self._row_cap = preview + 1
+
+        self.complete = False
+        self.incomplete = False
+        self.failure = None
+
+    @property
+    def preview_rows(self):
+        """The first `preview` rows available so far (confirmed first,
+        then provisional), or fewer if not that many rows have arrived.
+        """
+
+        return (self.confirmed + self.pending)[:self.preview]
+
+    @property
+    def rows(self):
+        """All row statistics available so far, confirmed then pending."""
+
+        return self.confirmed + self.pending
+
+    def pump(self):
+        """
+        Perform exactly one read on the underlying stream and process
+        whatever arrives.  Returns ``True`` if some bytes were read,
+        ``False`` if the stream currently has no more data.
+
+        Provisional rows may appear in :attr:`pending` after a pump;
+        they are only confirmed once a chunk CRC has been verified.
+        A failed CRC raises :class:`IngestChecksumError` and revokes
+        the provisional rows.
+        """
+
+        if self.failure:
+            raise self.failure
+        if self.complete:
+            return False
+        data = self.reader.file.read(self.read_size)
+        if not data:
+            return False
+        self._feed(data)
+        return True
+
+    def run(self):
+        """
+        Pump the stream until the image is complete or an error occurs.
+        Returns the list of confirmed :class:`Grey4Row` statistics.
+
+        Raises :class:`FormatError` if the stream ends before the whole
+        image has arrived or the number of rows does not match the
+        IHDR height; confirmed statistics are never reported as a
+        complete image in that case.
+        """
+
+        # The whole image is wanted now, so lift the preview backpressure.
+        self._bounded = False
+        while not self.complete:
+            if self.failure:
+                raise self.failure
+            if not self.pump():
+                self.incomplete = True
+                raise FormatError(
+                    "incomplete 4-bit greyscale PNG: stream ended after"
+                    " %d of %d rows." % (self._row_index, self.height))
+        if self._row_index != self.height or self._leftover:
+            self.incomplete = True
+            raise FormatError(
+                "wrong size for decompressed IDAT: got %d rows, expected"
+                " %d." % (self._row_index, self.height))
+        return self.confirmed
+
+    def _feed(self, data):
+        """Drive the chunk framing state machine over one read."""
+
+        view = memoryview(data)
+        pos = 0
+        while pos < len(view):
+            if self._state == 'header':
+                take = min(8 - len(self._header), len(view) - pos)
+                self._header.extend(view[pos:pos + take])
+                pos += take
+                if len(self._header) == 8:
+                    self._begin_chunk()
+            elif self._state == 'body':
+                take = min(self._body_remaining, len(view) - pos)
+                chunk = bytes(view[pos:pos + take])
+                pos += take
+                self._body_remaining -= take
+                self._crc = zlib.crc32(chunk, self._crc)
+                if self._chunk_type == b'IDAT':
+                    # Keep payload compressed until the preview cap lets
+                    # it through; never expand a height-sized stream up
+                    # front.
+                    self._compressed.extend(chunk)
+                    self._decompress_pending()
+                if self._body_remaining == 0:
+                    self._state = 'crc'
+                    self._crc_bytes = bytearray()
+            else:
+                take = min(4 - len(self._crc_bytes), len(view) - pos)
+                self._crc_bytes.extend(view[pos:pos + take])
+                pos += take
+                if len(self._crc_bytes) == 4:
+                    self._finish_chunk()
+
+    def _begin_chunk(self):
+        length, chunk_type = struct.unpack('!I4s', bytes(self._header))
+        self._header = bytearray()
+        if length > 2 ** 31 - 1:
+            raise FormatError(
+                'Chunk %s is too large: %d.' % (chunk_type, length))
+        type_bytes = set(bytearray(chunk_type))
+        if not (type_bytes <= set(range(65, 91)) | set(range(97, 123))):
+            raise FormatError(
+                'Chunk %r has invalid Chunk Type.' % list(chunk_type))
+        self._chunk_type = chunk_type
+        self._body_remaining = length
+        self._crc = zlib.crc32(chunk_type)
+        self._state = 'body'
+
+    def _finish_chunk(self):
+        checksum = bytes(self._crc_bytes)
+        verify = struct.pack('!I', self._crc & (2 ** 32 - 1))
+        chunk_type = self._chunk_type
+        if chunk_type == b'IDAT':
+            # Materialize every row this chunk supplied before judging
+            # its CRC, so the affected interval is exact and the
+            # compressed buffer never straddles a verification boundary.
+            self._decompress_pending(force=True)
+        if checksum != verify:
+            (a, ) = struct.unpack('!I', checksum)
+            (b, ) = struct.unpack('!I', verify)
+            message = ("Checksum error in %s chunk: 0x%08X != 0x%08X."
+                       % (chunk_type.decode('ascii'), a, b))
+            if chunk_type == b'IDAT':
+                first, last = self._affected_interval()
+                if first is not None:
+                    message += " Rows %d..%d are not verified." % (first, last)
+                else:
+                    message += (" No complete row was supplied by the"
+                                " chunk.")
+                # Provisional rows from the failed chunk are revoked,
+                # along with any scanline it only partly assembled.
+                self.pending = []
+                self._pending_first = None
+                self._pending_last = None
+                self._leftover = bytearray()
+                self.failure = IngestChecksumError(
+                    message, chunk_type, first, last)
+                raise self.failure
+            self.failure = ChunkError(message)
+            raise self.failure
+
+        if chunk_type == b'IDAT':
+            # The chunk is trustworthy: promote its provisional rows.
+            self.confirmed.extend(self.pending)
+            self.pending = []
+            self._pending_first = None
+            self._pending_last = None
+        elif chunk_type == b'IEND':
+            # Drain whatever the decompressor still holds, then mark
+            # the image complete.  All IDAT CRCs have already passed,
+            # so every row produced here is verified.
+            self._bounded = False
+            self._decompress_pending()
+            self._drain(self._inflate.flush())
+            self.confirmed.extend(self.pending)
+            self.pending = []
+            self._pending_first = None
+            self._pending_last = None
+            self.complete = True
+        self._state = 'header'
+
+    def _affected_interval(self):
+        """The original row numbers touched by a failing IDAT chunk."""
+
+        first = self._pending_first
+        last = self._pending_last
+        if self._leftover:
+            # A further row was partly assembled but never completed.
+            partial_row = self._row_index
+            if first is None:
+                first = partial_row
+            last = partial_row if last is None else max(last, partial_row)
+        return first, last
+
+    def _decompress_pending(self, force=False):
+        """Pull buffered IDAT payload through the decompressor.
+
+        While preview backpressure is on (and `force` is not set),
+        decompression pauses once a preview-sized set of provisional
+        rows has been produced; the remainder stays compressed in the
+        decompressor / `_compressed`.  `force` is used at an IDAT chunk
+        boundary so that every row the chunk supplied is materialized
+        before its CRC is judged.
+        """
+
+        if not force and self._bounded and \
+                len(self.pending) >= self._row_cap:
+            return
+        # One stride at a time keeps provisional rows at the cap; once
+        # backpressure is off, larger pieces are used for throughput.
+        byte_cap = self.stride if (self._bounded and not force) else self._cap
+
+        while self._compressed or self._inflate.unconsumed_tail:
+            if not force and self._bounded and \
+                    len(self.pending) >= self._row_cap:
+                return
+            if self._inflate.unconsumed_tail:
+                feed = self._inflate.unconsumed_tail
+            else:
+                feed = bytes(self._compressed)
+                self._compressed = bytearray()
+            out = self._inflate.decompress(feed, max_length=byte_cap)
+            self._drain(out)
+            if not out and not self._inflate.unconsumed_tail:
+                break
+
+    def _drain(self, out):
+        """Assemble decompressed bytes into whole, statified scanlines."""
+
+        self._leftover.extend(out)
+        while len(self._leftover) >= self.stride:
+            filter_type = self._leftover[0]
+            scanline = bytearray(self._leftover[1:self.stride])
+            del self._leftover[:self.stride]
+            self._recon = self.reader.undo_filter(
+                filter_type, scanline, self._recon)
+            self._add_row(self.reader._bytes_to_values(self._recon))
+
+    def _add_row(self, values):
+        minimum = None
+        maximum = None
+        invalid = 0
+        for value in values:
+            if value == 7:
+                invalid += 1
+                continue
+            if minimum is None or value < minimum:
+                minimum = value
+            if maximum is None or value > maximum:
+                maximum = value
+        row = Grey4Row(self._row_index, minimum, maximum,
+                       invalid, len(values))
+        if self._pending_first is None:
+            self._pending_first = self._row_index
+        self._pending_last = self._row_index
+        self.pending.append(row)
+        self._row_index += 1
 
 
 def decompress(data_blocks):
