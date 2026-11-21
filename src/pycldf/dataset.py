@@ -1,7 +1,6 @@
 """
 An implementation of a CLDF dataset object.
 """
-import re
 import types
 from typing import Optional, Type, Any
 import logging
@@ -14,7 +13,7 @@ import urllib.parse
 import urllib.request
 
 import csvw
-from csvw.metadata import TableGroup, Table, Column, Link, is_url, URITemplate
+from csvw.metadata import TableGroup, Table, Column, Link, is_url
 from csvw import datatypes
 from csvw.dsv import iterrows
 from clldutils.path import walk
@@ -22,7 +21,8 @@ from clldutils.path import walk
 from pycldf.module import get_module_impl, get_modules
 from pycldf.sources import Sources, Source
 from pycldf.util import (
-    pkg_path, DictTuple, iter_uritemplates, MD_SUFFIX, GitRepository, copy_dataset)
+    pkg_path, DictTuple, iter_effective_uritemplates, rewrite_uritemplate,
+    MD_SUFFIX, GitRepository, copy_dataset)
 from pycldf.sliceutil import multislice_with_split
 from pycldf.fileutil import PathType
 from pycldf.schemautil import ColSpecType, make_column, make_table, TableType, ColType
@@ -573,35 +573,110 @@ class Dataset:  # pylint: disable=too-many-public-methods
 
         This functionality can be used to change the names of columns added automatically by
         :meth:`Dataset.add_component`
+
+        For swapping several column names in one consistent step (and for explicit conflict
+        handling) see :meth:`Dataset.rename_columns`.
+        """
+        self.rename_columns(table, {col: name})
+
+    def rename_columns(self, table: TableType, renames: dict[ColType, str]) -> None:
+        """
+        Rename several columns of one table atomically.
+
+        `renames` maps column specifications (see :meth:`Dataset.__getitem__`) to the new names
+        to assign. Because all checks run before any change is applied, this supports swapping
+        names between columns - e.g. ``{'slug': 'slug_long', 'slug_long': 'slug'}`` - while a
+        plain sequence of :meth:`Dataset.rename_column` calls could not represent such a swap.
+
+        The change is cascaded to everything referencing the affected columns:
+
+        - URI templates (`aboutUrl`, `valueUrl`) are rebound following CSVW inheritance,
+          including a template inherited from the enclosing `TableGroup`. A shared inherited
+          template is left untouched for other tables; instead a rebound copy is materialized on
+          this table. An explicit template on the table itself keeps its precedence and is only
+          rebound in place. Template modifiers such as prefix length (``:3``) are preserved.
+        - the table's primary key,
+        - all foreign keys referencing the columns (including composite and self-referencing
+          ones), both in the column reference of the referencing table and in the reference
+          pointing at this table.
+
+        :raises ValueError: If a target name is already the name of another column that is not
+            itself being renamed, or if a column is specified twice. In that case nothing is
+            changed.
         """
         table = self[table]
-        col = self[table, col]
+        columns = [self[table, col] for col in renames]
 
-        for obj, prop, tmpl in iter_uritemplates(table):
-            if col.name in tmpl.variable_names:
-                old = str(tmpl)
-                new = re.sub(
-                    r'{([^}]+)}',
-                    lambda m: '{' + re.sub(re.escape(col.name), name, m.groups()[0]) + '}',
-                    old)
-                if old != new:
-                    setattr(obj, prop, URITemplate(new))
+        if len({id(col) for col in columns}) != len(columns):
+            raise ValueError('The same column is listed more than once in the rename declaration')
 
-        if col.name in table.tableSchema.primaryKey:
+        targets = [renames[col] for col in renames]
+        if len(set(targets)) != len(targets):
+            raise ValueError(
+                f'Duplicate target column name in rename declaration: '
+                f'{sorted({n for n in targets if targets.count(n) > 1})}')
+
+        current_names = {col.name for col in table.tableSchema.columns}
+        renamed = {col.name for col in columns}
+        occupied = current_names - renamed
+        conflicts = sorted(set(targets) & occupied)
+        if conflicts:
+            raise ValueError(
+                f'Cannot rename column(s) to name(s) already used by another column in '
+                f'table "{table.url}": {conflicts}')
+
+        changes = [
+            (col, renames[spec])
+            for spec, col in zip(renames, columns) if col.name != renames[spec]]
+        if not changes:
+            # Only identity mappings were given: nothing to cascade or change.
+            return
+        rename_map = {col.name: new for col, new in changes}
+
+        # Rebind URI templates. Effective (possibly inherited) templates are resolved along the
+        # CSVW inheritance chain. A template owned by an ancestor (typically the TableGroup) is
+        # shared between tables, so it must not be mutated; a rebound copy is materialized on the
+        # table (aboutUrl) or the affected columns (valueUrl) instead, leaving local explicit
+        # templates with their original precedence.
+        local_objects = [table, table.tableSchema] + list(table.tableSchema.columns)
+        materialize_about = False
+        materialize_value_cols = {}
+        for governed, owner, prop, tmpl in iter_effective_uritemplates(table):
+            if not set(tmpl.variable_names) & rename_map.keys():
+                continue
+            new_tmpl = rewrite_uritemplate(tmpl, rename_map)
+            if owner in local_objects:
+                # Explicit template carried by the table, its schema or one of its columns:
+                # rebind in place so precedence is unchanged.
+                setattr(owner, prop, new_tmpl)
+            elif prop == 'aboutUrl':
+                # Inherited row-level template: a single rebound copy on the table covers the
+                # table, schema and columns via inheritance.
+                materialize_about = True
+            elif isinstance(governed, Column):
+                # Inherited valueUrl: rebind each column that actually inherited it.
+                materialize_value_cols[id(governed)] = (governed, new_tmpl)
+        if materialize_about:
+            table.aboutUrl = rewrite_uritemplate(
+                table.inherit('aboutUrl'), rename_map)
+        for col, new_tmpl in materialize_value_cols.values():
+            col.valueUrl = new_tmpl
+
+        if table.tableSchema.primaryKey:
             table.tableSchema.primaryKey = [
-                name if n == col.name else n for n in table.tableSchema.primaryKey]
+                rename_map.get(n, n) for n in table.tableSchema.primaryKey]
 
-        for t in self.tables:
-            for fk in t.tableSchema.foreignKeys:
-                if fk.reference.resource == table.url and col.name in fk.reference.columnReference:
+        for other in self.tables:
+            for fk in other.tableSchema.foreignKeys:
+                if fk.reference.resource == table.url:
                     fk.reference.columnReference = [
-                        name if n == col.name else n for n in fk.reference.columnReference]
+                        rename_map.get(n, n) for n in fk.reference.columnReference]
+                if other.url == table.url:
+                    fk.columnReference = [
+                        rename_map.get(n, n) for n in fk.columnReference]
 
-                if t.url == table.url and col.name in fk.columnReference:
-                    # We also need to check the columnReference
-                    fk.columnReference = [name if n == col.name else n for n in fk.columnReference]
-
-        col.name = name
+        for col, new in changes:
+            col.name = new
 
     def add_foreign_key(
             self,

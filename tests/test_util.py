@@ -1,10 +1,50 @@
 import pytest
 
+from csvw.metadata import URITemplate
+
 from pycldf.util import *
 from pycldf.fileutil import *
 from pycldf.urlutil import *
 from pycldf.sliceutil import *
 from pycldf.markdown import metadata2markdown
+
+
+@pytest.mark.parametrize("template,renames,expected", [
+    # Whole-name matching: a distinct longer variable is left untouched.
+    ('http://x/{slug_long}', {'slug': 'catalog_id'}, None),
+    # Prefix modifier is preserved and stays attached to the renamed variable.
+    ('http://x/{slug:3}', {'slug': 'catalog_id'}, 'http://x/{catalog_id:3}'),
+    # Fragment operator and prefix survive.
+    ('http://x/{#slug}', {'slug': 'catalog_id'}, 'http://x/{#catalog_id}'),
+    # Multiple expressions; only the matching variable changes.
+    ('http://x/{slug}-{slug_long:5}',
+     {'slug': 'catalog_id'}, 'http://x/{catalog_id}-{slug_long:5}'),
+    # Composite variable list in one expression.
+    ('http://x/{slug,slug_long}',
+     {'slug': 'catalog_id'}, 'http://x/{catalog_id,slug_long}'),
+    # Explode modifier is preserved.
+    ('http://x/{slug*}', {'slug': 'catalog_id'}, 'http://x/{catalog_id*}'),
+    # A swap is applied simultaneously without one replacement clobbering the other.
+    ('http://x/{slug}/{slug_long}',
+     {'slug': 'slug_long', 'slug_long': 'slug'},
+     'http://x/{slug_long}/{slug}'),
+    # Existing single-column rename behaviour (fragment + ID).
+    ('{#ID}.md', {'ID': 'X'}, '{#X}.md'),
+])
+def test_rewrite_uritemplate(template, renames, expected):
+    result = rewrite_uritemplate(URITemplate(template), renames)
+    if expected is None:
+        assert result is None
+    else:
+        assert str(result) == expected
+
+
+def test_rewrite_uritemplate_keeps_expansion():
+    template = URITemplate('http://x/{slug:3}/{slug_long}/{slug}')
+    rewritten = rewrite_uritemplate(template, {'slug': 'catalog_id'})
+    assert rewritten.expand(catalog_id='abcdef', slug_long='GH') == \
+        template.expand(slug='abcdef', slug_long='GH')
+
 
 
 @pytest.mark.parametrize("sliceable,slices,expected", [

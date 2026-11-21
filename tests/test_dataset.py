@@ -1,4 +1,5 @@
 import shutil
+import json
 import logging
 import zipfile
 import warnings
@@ -1012,6 +1013,136 @@ def test_Dataset_rename_column(ds):
         fk.reference for fk in ex.tableSchema.foreignKeys
         if 'Language_ID' in fk.columnReference][0]
     assert 'X' in lfk.columnReference
+
+
+def _slug_dataset(tmp_path):
+    ds = Generic.in_dir(tmp_path)
+    lt = ds.add_component('LanguageTable')
+    ft = ds.add_component('FormTable')
+    ds.add_columns(
+        lt, {'name': 'slug', 'datatype': 'string'},
+        {'name': 'slug_long', 'datatype': 'string'})
+    ds.add_columns(
+        ft, {'name': 'slug', 'datatype': 'string'},
+        {'name': 'slug_long', 'datatype': 'string'})
+    return ds, lt, ft
+
+
+def _rekey(row, mapping):
+    return {mapping.get(key, key): value for key, value in row.items()}
+
+
+def test_Dataset_rename_columns_swap(tmp_path):
+    shared_about = 'http://catalog.example.org/lang/{slug:3}/{slug_long}/{slug}-{slug_long}'
+    lt_valueurl = 'http://glottolog.org/resource/languoid/id/{Glottocode}'
+    ft_about = 'http://catalog.example.org/form/{ID}'
+
+    ds, lt, ft = _slug_dataset(tmp_path)
+    # A shared aboutUrl on the TableGroup, an explicit LT valueUrl and an FT schema override.
+    ds.tablegroup.aboutUrl = URITemplate(shared_about)
+    lt.get_column('Glottocode').valueUrl = URITemplate(lt_valueurl)
+    ft.aboutUrl = URITemplate(ft_about)
+    # Composite explicit FK FormTable -> LanguageTable on two fields.
+    ft.tableSchema.foreignKeys.append(ForeignKey.fromdict({
+        'columnReference': ['slug', 'slug_long'],
+        'reference': {
+            'resource': 'languages.csv', 'columnReference': ['slug', 'slug_long']}}))
+    # Self-referencing FK on LanguageTable.
+    ds.add_foreign_key(lt, 'slug_long', lt, 'slug')
+
+    lang_row = {
+        'ID': 'l1', 'Name': 'One', 'Glottocode': 'stan1293',
+        'slug': 'abc', 'slug_long': 'abcdef'}
+    expected_page = URITemplate(shared_about).expand(**lang_row)
+
+    # One declaration swaps the two slug columns and renames the old ID to catalog_id.
+    ds.rename_columns(
+        lt, {'slug': 'slug_long', 'slug_long': 'slug', 'ID': 'catalog_id'})
+
+    # Shared definition is left as-is and still binds the original names; FT override is untouched.
+    assert str(ds.tablegroup.aboutUrl) == shared_about
+    assert str(ft.aboutUrl) == ft_about
+    # LT gets a materialized, rebound local aboutUrl (variables swapped, prefix length kept).
+    assert str(lt.aboutUrl) == \
+        'http://catalog.example.org/lang/{slug_long:3}/{slug}/{slug_long}-{slug}'
+    # Explicit LT valueUrl keeps its precedence (it referenced no renamed column).
+    assert str(lt.get_column('Glottocode').valueUrl) == lt_valueurl
+    # Primary key follows the ID rename.
+    assert lt.tableSchema.primaryKey == ['catalog_id']
+    # Auto FK and the composite FK reference rebound to the new LT column names.
+    auto_fk = [fk for fk in ft.tableSchema.foreignKeys
+               if fk.columnReference == ['Language_ID']][0]
+    assert auto_fk.reference.columnReference == ['catalog_id']
+    composite = [fk for fk in ft.tableSchema.foreignKeys
+                 if fk.columnReference == ['slug', 'slug_long']][0]
+    assert composite.reference.columnReference == ['slug_long', 'slug']
+    # Self reference rebound on both sides (the two columns exchanged names).
+    self_fk = [fk for fk in lt.tableSchema.foreignKeys
+               if fk.reference.resource == lt.url][0]
+    assert self_fk.columnReference == ['slug']
+    assert self_fk.reference.columnReference == ['slug_long']
+
+    # Provide rows under the new names; each value stays with its original physical column.
+    forward = {'slug': 'slug_long', 'slug_long': 'slug', 'ID': 'catalog_id'}
+    ds.write(LanguageTable=[_rekey(lang_row, forward)])
+
+    reopened = Dataset.from_metadata(tmp_path / 'Generic-metadata.json')
+    lt2, ft2 = reopened['LanguageTable'], reopened['FormTable']
+    row = list(lt2)[0]
+    assert row['catalog_id'] == 'l1'
+    assert row['slug_long'] == 'abc' and row['slug'] == 'abcdef'
+    # The effective LT aboutUrl still expands to the very same catalog page.
+    assert URITemplate(str(lt2.inherit('aboutUrl'))).expand(**row) == expected_page
+    assert lt2.tableSchema.primaryKey == ['catalog_id']
+    # FT keeps its own override while the shared template remains intact.
+    assert str(ft2.aboutUrl) == ft_about
+    assert str(reopened.tablegroup.aboutUrl) == shared_about
+
+    # Reverse the declaration; the materialized template returns to the original and the page is
+    # still the same.
+    reverse = {'slug_long': 'slug', 'slug': 'slug_long', 'catalog_id': 'ID'}
+    reopened.rename_columns(lt2, reverse)
+    assert lt2.tableSchema.primaryKey == ['ID']
+    assert str(lt2.aboutUrl) == shared_about
+    reverted = _rekey(row, reverse)
+    assert URITemplate(str(lt2.inherit('aboutUrl'))).expand(**reverted) == expected_page
+
+
+def test_Dataset_rename_columns_inherited_templates(tmp_path):
+    ds, lt, _ = _slug_dataset(tmp_path)
+    # Columns added dynamically only get their _parent wired on reload, so inherited templates
+    # must still be resolved and materialized per column in the same session.
+    ds.tablegroup.aboutUrl = URITemplate('http://g/{slug:3}')
+    ds.tablegroup.valueUrl = URITemplate('http://g/v/{slug}/{slug_long}')
+    slug_col = lt.get_column('slug')
+    slug_long_col = lt.get_column('slug_long')
+
+    ds.rename_columns(lt, {'slug': 'catalog_id'})
+
+    assert str(ds.tablegroup.aboutUrl) == 'http://g/{slug:3}'
+    assert str(ds.tablegroup.valueUrl) == 'http://g/v/{slug}/{slug_long}'
+    assert str(lt.aboutUrl) == 'http://g/{catalog_id:3}'
+    expected_value = 'http://g/v/{catalog_id}/{slug_long}'
+    assert str(slug_col.valueUrl) == expected_value
+    assert str(slug_long_col.valueUrl) == expected_value
+
+
+def test_Dataset_rename_columns_conflict_is_atomic(tmp_path):
+    ds, lt, _ = _slug_dataset(tmp_path)
+    snapshot = json.dumps(ds.metadata_dict, sort_keys=True)
+
+    # The same target name must not be claimable by two columns.
+    with pytest.raises(ValueError, match='Duplicate target column name'):
+        ds.rename_columns(lt, {'slug': 'dup', 'slug_long': 'dup'})
+    assert json.dumps(ds.metadata_dict, sort_keys=True) == snapshot
+
+    # A target occupied by a third, non-participating column is rejected as well.
+    with pytest.raises(ValueError, match='already used by another column'):
+        ds.rename_columns(lt, {'slug': 'Name'})
+    assert json.dumps(ds.metadata_dict, sort_keys=True) == snapshot
+
+    # Nothing was partially changed: the single-column entry point still sees the original names.
+    assert {c.name for c in lt.tableSchema.columns} >= {'slug', 'slug_long', 'Name'}
 
 
 def test_Dataset_set_sources(ds):

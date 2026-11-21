@@ -103,6 +103,7 @@ and columns.
 .. automethod:: Dataset.add_columns
 .. automethod:: Dataset.remove_columns
 .. automethod:: Dataset.rename_column
+.. automethod:: Dataset.rename_columns
 .. automethod:: Dataset.add_foreign_key
 .. automethod:: Dataset.add_provenance
 

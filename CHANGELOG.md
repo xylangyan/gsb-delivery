@@ -3,6 +3,19 @@
 The `pycldf` package adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+- Added `Dataset.rename_columns` to rename several columns of a table in one atomic
+  declaration. This supports swapping column names and rejects conflicting target names
+  without applying any partial change.
+- Column renaming now follows CSVW template inheritance: an `aboutUrl`/`valueUrl` inherited
+  from a shared `TableGroup` is rebound for the affected table only (a rebound copy is
+  materialized locally), while the shared definition stays intact for other tables; explicit
+  local templates keep their precedence. URI template variables are matched by whole name and
+  operators and modifiers (e.g. prefix length `:3`) are preserved.
+- Column renaming cascades to composite and self-referencing foreign keys.
+
+
 ## [2.2.0] - 2026-11-11
 
 - Fixed bug where missing words in glossed examples would lead to downstream
