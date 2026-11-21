@@ -31,6 +31,12 @@ Added
 -----
 
 * Added SWITCH() function
+* Added ``ExcelCompiler.restrict_to()`` to declare the ranges a consumer may
+  evaluate and set: the graph is trimmed to the declared dependency closure,
+  the declaration is persisted by ``to_file()``, and ``evaluate()`` /
+  ``set_value()`` of undeclared addresses raise ``RestrictedAccessError``
+  (naming the requested address and its undeclared portion) after
+  ``from_file()``
 
 Changed
 -------

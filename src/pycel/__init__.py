@@ -22,6 +22,6 @@ _install_openpyxl_compat()
 
 # Imports are intentionally after compatibility patching, so pycel users get
 # openpyxl shims installed as soon as the package is imported.
-from .excelcompiler import ExcelCompiler  # noqa: E402
+from .excelcompiler import ExcelCompiler, RestrictedAccessError  # noqa: E402
 from .excelutil import AddressCell, AddressRange, PyCelException  # noqa: E402
 from .version import __version__  # noqa: E402

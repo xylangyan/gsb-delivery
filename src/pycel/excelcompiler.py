@@ -30,6 +30,9 @@ from pycel.excelutil import (
     is_address,
     iterative_eval_tracker,
     list_like,
+    MAX_COL,
+    MAX_ROW,
+    PyCelException,
 )
 from pycel.excelwrapper import ExcelOpxWrapper, ExcelOpxWrapperNoData
 
@@ -40,6 +43,12 @@ REF_FORMAT = REF_START + '{}' + REF_END
 Mismatch = collections.namedtuple('Mismatch', 'original calced formula')
 
 pycel_logger = logging.getLogger('pycel')
+
+
+class RestrictedAccessError(PyCelException, ValueError):
+    """Raised when an address outside the declared allowed ranges is
+    requested from a restricted compiler (see `ExcelCompiler.restrict_to`).
+    """
 
 
 class ExcelCompiler:
@@ -90,6 +99,11 @@ class ExcelCompiler:
 
         self.extra_data = None
         self.conditional_formats = {}
+
+        # addresses a consumer of this model is allowed to evaluate and set,
+        # as declared by `restrict_to()`; None means unrestricted
+        self.allowed_ranges = None
+        self.allowed_inputs = None
         self._formula_cells_dict = {}
         self._plugin_modules = plugins
 
@@ -181,6 +195,16 @@ class ExcelCompiler:
         return next((extension for extension in cls.save_file_extensions
                      if filename.endswith(extension)), None)
 
+    @staticmethod
+    def _addresses_to_text(addresses):
+        return None if addresses is None else sorted(
+            addr.address for addr in addresses)
+
+    @staticmethod
+    def _addresses_from_text(addresses):
+        return None if addresses is None else tuple(
+            AddressRange(addr) for addr in addresses)
+
     def _to_text(self, filename=None, is_json=False):
         """Serialize to a json/yaml file"""
         extra_data = {} if self.extra_data is None else self.extra_data
@@ -203,6 +227,8 @@ class ExcelCompiler:
             )),
             # serialize the workbook filename (not the serialization path)
             filename=self.filename,
+            allowed_ranges=self._addresses_to_text(self.allowed_ranges),
+            allowed_inputs=self._addresses_to_text(self.allowed_inputs),
         ))
         if not filename:
             filename = self.filename + ('.json' if is_json else '.yml')
@@ -221,6 +247,8 @@ class ExcelCompiler:
                 json.dump(extra_data, f, indent=4)
 
         del extra_data['cell_map']
+        del extra_data['allowed_ranges']
+        del extra_data['allowed_inputs']
 
         # hash the newfile, return True if it changed, this is only reliable
         # on pythons which have ordered dict (CPython 3.6 & python 3.7+)
@@ -244,6 +272,10 @@ class ExcelCompiler:
         excel = _CompiledImporter(filename, data)
         excel_compiler = cls(excel=excel, cycles=data.pop('cycles', False))
         excel.compiler = excel_compiler
+        excel_compiler.allowed_ranges = cls._addresses_from_text(
+            data.pop('allowed_ranges', None))
+        excel_compiler.allowed_inputs = cls._addresses_from_text(
+            data.pop('allowed_inputs', None))
 
         def add_line_numbers(cell_addr, line_number):
             formula = excel_compiler.cell_map[cell_addr].formula
@@ -425,6 +457,12 @@ class ExcelCompiler:
             set to true to set the entire range to the inserted list.
         """
 
+        if self.allowed_ranges is not None and not list_like(address) and (
+                set_as_range or not list_like(value)):
+            # restricted compilers only allow setting declared addresses;
+            # list like values are checked address by address below
+            self._check_allowed(address)
+
         if list_like(value) and not set_as_range:
             value = tuple(flatten(value))
             if list_like(address):
@@ -574,6 +612,131 @@ class ExcelCompiler:
                                 if addr not in needed_cells)
         for addr in cells_to_remove:
             del self.cell_map[addr]
+
+    def restrict_to(self, allowed_ranges, allowed_inputs=()):
+        """Declare the addresses a consumer of this model is allowed to use
+
+        Trims the compiled graph to the cells needed to compute
+        ``allowed_ranges`` (leaving ``allowed_inputs`` settable), and records
+        the declaration so it is persisted by ``to_file()`` and enforced on
+        ``evaluate()`` and ``set_value()`` after ``from_file()``.
+
+        Which cells are carried into the serialized artifact is determined
+        by this declaration (the dependency closure of the declared
+        addresses), not by which addresses happened to be evaluated before
+        publishing.  Precedents which are not declared as inputs are carried
+        as frozen values; they can not be selected directly.
+
+        :param allowed_ranges: addresses (cells or ranges) that may be
+            evaluated, aka the published outputs
+        :param allowed_inputs: addresses that may be evaluated and updated
+            with ``set_value()``, aka the published inputs
+        """
+        if isinstance(allowed_ranges, (str, AddressRange, AddressCell)):
+            allowed_ranges = (allowed_ranges, )
+        if isinstance(allowed_inputs, (str, AddressRange, AddressCell)):
+            allowed_inputs = (allowed_inputs, )
+
+        def normalize(address):
+            address = AddressRange.create(address)
+            if not address.has_sheet:
+                address = AddressRange(
+                    address, sheet=self.excel.get_active_sheet_name())
+            return address
+
+        outputs = tuple(normalize(addr) for addr in allowed_ranges)
+        inputs = tuple(normalize(addr) for addr in allowed_inputs)
+
+        # trim everything not needed to compute the declared outputs;
+        # inputs stay settable, other precedents are frozen to their values
+        self.trim_graph(inputs, outputs)
+
+        self.allowed_ranges = outputs
+        self.allowed_inputs = inputs
+
+    @staticmethod
+    def _address_bounds(address):
+        """Effective (row1, col1, row2, col2) bounds, unbounded aware"""
+        return (address.start.row or 1, address.start.col_idx or 1,
+                address.end.row or MAX_ROW, address.end.col_idx or MAX_COL)
+
+    @classmethod
+    def _address_covered_by(cls, address, allowed):
+        """Is this address fully contained in one of the allowed addresses"""
+        row1, col1, row2, col2 = cls._address_bounds(address)
+        for allowed_address in allowed:
+            if allowed_address.sheet != address.sheet:
+                continue
+            a_row1, a_col1, a_row2, a_col2 = cls._address_bounds(
+                allowed_address)
+            if (a_row1 <= row1 and a_col1 <= col1 and
+                    a_row2 >= row2 and a_col2 >= col2):
+                return True
+        return False
+
+    @staticmethod
+    def _compact_addresses(cells):
+        """Compact cells (all on one sheet) to a minimal list of addresses"""
+        cells = sorted(cells, key=lambda c: (c.col_idx, c.row))
+
+        # gather contiguous vertical runs per column
+        col_runs = []
+        for cell in cells:
+            if (col_runs and col_runs[-1][0] == cell.col_idx and
+                    col_runs[-1][2] == cell.row - 1):
+                col_runs[-1][2] = cell.row
+            else:
+                col_runs.append([cell.col_idx, cell.row, cell.row])
+
+        # merge adjacent columns with identical row spans
+        merged = []
+        for col_idx, row1, row2 in col_runs:
+            if (merged and merged[-1][2:] == [row1, row2] and
+                    merged[-1][1] == col_idx - 1):
+                merged[-1][1] = col_idx
+            else:
+                merged.append([col_idx, col_idx, row1, row2])
+
+        sheet = cells[0].sheet
+        return tuple(
+            AddressCell((col1, row1, col1, row1), sheet=sheet)
+            if (col1, row1) == (col2, row2) else
+            AddressRange((col1, row1, col2, row2), sheet=sheet)
+            for col1, col2, row1, row2 in merged
+        )
+
+    def _check_allowed(self, address):
+        """Verify an address is covered by the declared allowed ranges
+
+        Raises `RestrictedAccessError` naming the requested address and the
+        undeclared portion of it.  Declared addresses are allowed even when
+        the cell is empty; emptiness is a value, not an access violation.
+        """
+        if self.allowed_ranges is None:
+            return
+
+        address = AddressRange.create(address)
+        if not is_address(address):
+            return
+        if not address.has_sheet:
+            address = AddressRange(
+                address, sheet=self.excel.get_active_sheet_name())
+
+        allowed = self.allowed_ranges + self.allowed_inputs
+        if address.is_unbounded_range:
+            missing = () if self._address_covered_by(
+                address, allowed) else (address, )
+        else:
+            uncovered = tuple(
+                cell for cell in flatten(address.resolve_range)
+                if not self._address_covered_by(cell, allowed))
+            missing = self._compact_addresses(uncovered) if uncovered else ()
+
+        if missing:
+            raise RestrictedAccessError(
+                f"Address '{address}' is not in the declared allowed ranges. "
+                f"Undeclared: {', '.join(str(m) for m in missing)}. "
+                f"Declared: {', '.join(a.address for a in allowed)}")
 
     def validate_serialized(self, **kwargs):
         assert self.excel, "validate_serialized() needs to be run on the compiler"
@@ -844,6 +1007,11 @@ class ExcelCompiler:
             or iterable of these three
         :return: evaluated value/values
         """
+        if self.allowed_ranges is not None and not list_like(address):
+            # restricted compilers only allow evaluating declared addresses;
+            # list like addresses are checked one by one below
+            self._check_allowed(address)
+
         if str(address) not in self.cell_map:
             if list_like(address):
                 if not isinstance(address, (tuple, list)):
