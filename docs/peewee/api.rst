@@ -3657,6 +3657,30 @@ Fields
 
          Doc.update(data=Doc.data.update({'new_field': 1})).execute()
 
+   .. method:: apply_steps(steps, error_field=None)
+
+      **SQLite only.** Return an UPDATE-clause expression that applies an
+      ordered list of mutation steps to the document.  ``steps`` may be a
+      ``JSONField``, a field name, another SQL node, or a Python list.  Each
+      matching row's own list is read from the database while the UPDATE runs;
+      the generated SQL has a fixed size and requires no application-defined
+      function.  Supported operations are ``remove``, ``copy``, ``move``,
+      ``set``, ``insert``, ``append`` and ``merge``; see
+      :ref:`the JSONField docs <json-field>` for the step schema, conditions,
+      and failure behavior.
+
+      .. code-block:: python
+
+         Staging.update(payload=Staging.payload.apply_steps(Staging.cleanup))
+
+         # Record the first failing step in a JSON column.
+         Staging.update(payload=Staging.payload.apply_steps(Staging.cleanup,
+                                                            'error'))
+
+         # Or in two separate columns.
+         Staging.update(payload=Staging.payload.apply_steps(
+             Staging.cleanup, (Staging.failed_step, Staging.failed_reason)))
+
    .. method:: has_key(key)
                has_keys(key_list)
                has_any_keys(key_list)

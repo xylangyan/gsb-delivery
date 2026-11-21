@@ -1184,3 +1184,173 @@ class TestKeyExistence(ModelTestCase):
     def test_has_any_keys_on_path(self):
         q = JM.select().where(JM.data['meta'].has_any_keys(['nope', 'env']))
         self.assertEqual(q.count(), 1)
+
+class TestApplySteps(ModelTestCase):
+    requires = []
+
+    def setUp(self):
+        super(TestApplySteps, self).setUp()
+
+        class Staging(TestModel):
+            name = TextField()
+            data = JSONField(null=True)
+            steps = JSONField(null=True)
+            failure = JSONField(null=True)
+            failed_step = IntegerField(null=True)
+            failed_reason = TextField(null=True)
+
+        self.Staging = Staging
+        Staging._meta.database = db
+        Staging.create_table()
+
+    def tearDown(self):
+        self.Staging.drop_table()
+        super(TestApplySteps, self).tearDown()
+
+    def add(self, name, data, steps):
+        return self.Staging.create(name=name, data=data, steps=steps)
+
+    def test_ordered_remove_then_copy(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        steps = [{'op': 'remove', 'path': ['boxes', 0]},
+                 {'op': 'copy', 'from': ['boxes', 1], 'to': ['labels']}]
+        self.add('a', {'boxes': ['one', 'two', 'three'], 'labels': []}, steps)
+        self.add('b', {'boxes': ['x', 'y', 'z'], 'labels': []}, steps)
+        (self.Staging.update(
+            data=self.Staging.data.apply_steps(self.Staging.steps))
+         .execute())
+        self.assertEqual(self.Staging.get(self.Staging.name == 'a').data,
+                         {'boxes': ['two', 'three'], 'labels': 'three'})
+        self.assertEqual(self.Staging.get(self.Staging.name == 'b').data,
+                         {'boxes': ['y', 'z'], 'labels': 'z'})
+
+    def test_dotted_key_is_literal(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        steps = [{'op': 'remove', 'path': ['labels', 'warehouse.a']},
+                 {'op': 'copy', 'from': ['labels', 'arr', 1],
+                  'to': ['meta', 'code']}]
+        self.add('a', {'labels': {'warehouse.a': 1, 'arr': [4, 5]},
+                       'meta': {}}, steps)
+        self.Staging.update(
+            data=self.Staging.data.apply_steps(self.Staging.steps)).execute()
+        self.assertEqual(self.Staging.get().data,
+                         {'labels': {'arr': [4, 5]}, 'meta': {'code': 5}})
+
+    def test_conditional_typed_source(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+
+        def steps(decl):
+            return [{'op': 'set', 'path': ['hit'], 'value': 1,
+                     'when': dict(decl, path=['k'])}]
+
+        self.add('null', {'k': None}, steps({'type': 'null'}))
+        self.add('missing', {}, steps({'type': 'null'}))
+        self.add('true', {'k': True}, steps({'type': 'true'}))
+        self.add('false', {'k': False}, steps({'type': 'false'}))
+        self.add('int', {'k': 1}, steps({'type': 'integer'}))
+        self.add('str', {'k': '1'}, steps({'type': 'integer'}))
+        self.Staging.update(
+            data=self.Staging.data.apply_steps(self.Staging.steps)).execute()
+        hit = lambda name: 'hit' in self.Staging.get(
+            self.Staging.name == name).data
+        self.assertTrue(hit('null'))
+        self.assertFalse(hit('missing'))
+        self.assertTrue(hit('true'))
+        self.assertTrue(hit('false'))
+        self.assertTrue(hit('int'))
+        self.assertFalse(hit('str'))
+
+    def test_failed_tail_keeps_document(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        steps = [{'op': 'set', 'path': ['n'], 'value': i}
+                 for i in range(50)]
+        steps.append({'op': 'remove', 'path': ['boxes', 99]})
+        self.add('bad', {'boxes': ['a'], 'n': 0}, steps)
+        self.add('good', {'boxes': ['a', 'b', 'c'], 'n': 0},
+                 [{'op': 'remove', 'path': ['boxes', 0]},
+                  {'op': 'copy', 'from': ['boxes', 1], 'to': ['labels']}])
+        (self.Staging.update(
+            data=self.Staging.data.apply_steps(self.Staging.steps, 'failure'))
+         .execute())
+        bad = self.Staging.get(self.Staging.name == 'bad')
+        self.assertEqual(bad.data, {'boxes': ['a'], 'n': 0})
+        self.assertEqual(bad.failure,
+                         {'step': 50, 'reason': 'missing path'})
+        good = self.Staging.get(self.Staging.name == 'good')
+        self.assertEqual(good.data, {'boxes': ['b', 'c'], 'labels': 'c',
+                                    'n': 0})
+        self.assertIsNone(good.failure)
+
+    def test_short_list_and_alias_steps(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        self.add('a', {'a': [1, 2], 'b': []},
+                 [['copy', ['a', 1], ['b']]])
+        self.add('b', {'a': [1, 2]},
+                 [{'operation': 'remove', 'path': ['a', 0]}])
+        self.Staging.update(
+            data=self.Staging.data.apply_steps(self.Staging.steps)).execute()
+        self.assertEqual(self.Staging.get(self.Staging.name == 'a').data,
+                         {'a': [1, 2], 'b': 2})
+        self.assertEqual(self.Staging.get(self.Staging.name == 'b').data,
+                         {'a': [2]})
+
+    def test_where_and_error_columns(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        steps = [{'op': 'remove', 'path': ['x']}]
+        self.add('bad', {}, steps)
+        self.add('good', {'x': 1}, steps)
+        self.add('skip', {}, steps)
+        (self.Staging.update(data=self.Staging.data.apply_steps(
+            self.Staging.steps,
+            (self.Staging.failed_step, self.Staging.failed_reason)))
+         .where(self.Staging.name != 'skip').execute())
+        bad = self.Staging.get(self.Staging.name == 'bad')
+        self.assertEqual(bad.data, {})
+        self.assertEqual(bad.failed_step, 0)
+        self.assertEqual(bad.failed_reason, 'missing path')
+        good = self.Staging.get(self.Staging.name == 'good')
+        self.assertEqual(good.data, {})
+        self.assertIsNone(good.failed_step)
+        skip = self.Staging.get(self.Staging.name == 'skip')
+        self.assertIsNone(skip.failed_step)
+
+    def test_sql_is_fixed_size_and_reads_steps_at_run_time(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        one = [{'op': 'set', 'path': ['n'], 'value': 1}]
+        many = [{'op': 'set', 'path': ['n'], 'value': i}
+                for i in range(40)]
+        self.add('a', {'n': 0}, one)
+        self.add('b', {'n': 0}, many)
+        query = self.Staging.update(
+            data=self.Staging.data.apply_steps(self.Staging.steps))
+        sql, params = query.sql()
+        self.assertEqual(params, [])
+        # No step data is embedded in the statement.
+        # The compiled SQL contains operation names, but never a
+        # serialized copy of either row's step list.
+        self.assertNotIn('"value": 39', sql)
+        self.assertNotIn('"value":39', sql)
+        # Rewriting the row's list after the query was built is reflected.
+        self.Staging.update(steps=many).where(
+            self.Staging.name == 'a').execute()
+        query.execute()
+        self.assertEqual(self.Staging.get(
+            self.Staging.name == 'a').data, {'n': 39})
+        self.assertEqual(self.Staging.get(
+            self.Staging.name == 'b').data, {'n': 39})
+
+    def test_json_mutators_still_work(self):
+        if not IS_SQLITE:
+            self.skipTest('apply_steps() is SQLite-only.')
+        self.add('a', {'k': 1}, [])
+        self.Staging.update(
+            data=self.Staging.data['k'].set(2)).execute()
+        self.assertEqual(self.Staging.get().data, {'k': 2})
+

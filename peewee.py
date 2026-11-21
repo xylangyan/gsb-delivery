@@ -2807,10 +2807,16 @@ class Update(_WriteQuery):
         super(Update, self).__init__(table, **kwargs)
         self._update = update
         self._from = None
+        self._json_step_updates = []
 
     @Node.copy
     def from_(self, *sources):
         self._from = sources
+
+    def clone(self):
+        query = super(Update, self).clone()
+        query._json_step_updates = list(self._json_step_updates)
+        return query
 
     def __sql__(self, ctx):
         super(Update, self).__sql__(ctx)
@@ -2820,6 +2826,8 @@ class Update(_WriteQuery):
 
             expressions = []
             for k, v in sorted(self._update.items(), key=ctx.column_sort_key):
+                if isinstance(v, JSONStepUpdate):
+                    continue
                 if not isinstance(v, Node):
                     if isinstance(k, Field):
                         v = k.to_value(v)
@@ -2835,6 +2843,9 @@ class Update(_WriteQuery):
                     v = qualify_names(v)
 
                 expressions.append(NodeList((k, SQL('='), v)))
+
+            for step_update in self._json_step_updates:
+                step_update.add_assignments(ctx, expressions)
 
             (ctx
              .sql(self.table)
@@ -3175,6 +3186,368 @@ def _truncate_constraint_name(constraint, maxlen=64):
         name_hash = hashlib.md5(constraint.encode('utf-8')).hexdigest()
         constraint = '%s_%s' % (constraint[:(maxlen - 8)], name_hash[:7])
     return constraint
+
+
+# Compiler for JSONField.apply_steps().  The generated SQL is fixed in size,
+# reads the per-row step list from the staging column with json_each(), and
+# needs no application-defined SQL function.
+_OP_KEYS = ('op', 'action', 'operation')
+_SRC_KEYS = ('from', 'source', 'src')
+_DST_KEYS = ('to', 'target', 'dst', 'path')
+_COND_KEYS = ('when', 'if', 'condition')
+_CAT_NAMES = (
+    ('rm', ('remove', 'delete', 'unset', 'clear', 'drop', 'pop')),
+    ('cp', ('copy', 'clone', 'duplicate')),
+    ('mv', ('move', 'rename', 'relocate')),
+    ('set', ('set', 'put', 'assign', 'write')),
+    ('ins', ('insert', 'ensure')),
+    ('app', ('append', 'push', 'add')),
+    ('mrg', ('merge', 'patch')),
+)
+_TYPES = ('missing', 'null', 'true', 'false', 'boolean', 'text', 'integer',
+          'real', 'number', 'array', 'object')
+_TYPE_CODES = dict((name, i + 1) for i, name in enumerate(_TYPES))
+_TYPE_CODES.update({'string': 6, 'int': 7, 'float': 8, 'numeric': 9,
+                    'list': 10, 'dict': 11, 'absent': 1, 'undefined': 1,
+                    'json_null': 2, 'bool': 5})
+def _co(*parts):
+    parts = [part for part in parts if part]
+    if not parts:
+        return 'NULL'
+    if len(parts) == 1:
+        return parts[0]
+    return 'coalesce(%s)' % ', '.join(parts)
+
+
+def _col(raw, key):
+    return "json_extract(%s, '$.%s')" % (raw, key)
+
+
+def _typ(raw, key):
+    return "json_type(%s, '$.%s')" % (raw, key)
+
+
+def _op(raw):
+    return ("lower(case when json_type(%s)='array' then "
+            "json_extract(%s, '$[0]') else %s end)"
+            % (raw, raw, _co(_col(raw, 'op'), _col(raw, 'action'),
+                             _col(raw, 'operation'), "''")))
+
+
+def _cat(op):
+    return "(case %s %s else '?' end)" % (
+        op, ' '.join("when '%s' then '%s'" % (name, cat)
+                     for cat, names in _CAT_NAMES for name in names))
+
+
+def _path(expr):
+    seg = ("case when typeof(value)='integer' then "
+           "case when value<0 then '[#-'||(-value)||']' "
+           "else '['||value||']' end "
+           "else '.'||json_quote(value) end")
+    return ("case when %(p)s is null then NULL "
+            "when substr(%(p)s,1,1)='$' then %(p)s "
+            "when json_valid(%(p)s) then case json_type(%(p)s) "
+            "when 'array' then ('$'||coalesce((select group_concat(%(s)s,'') "
+            "from json_each(%(p)s)),'')) "
+            "when 'integer' then '$['||(%(p)s)||']' else NULL end "
+            "else NULL end" % {'p': expr, 's': seg})
+
+
+def _parent(expr):
+    seg = ("case when typeof(value)='integer' then "
+           "case when value<0 then '[#-'||(-value)||']' "
+           "else '['||value||']' end "
+           "else '.'||json_quote(value) end")
+    return ("case when %(p)s is null then NULL "
+            "when substr(%(p)s,1,1)='$' then NULL "
+            "when json_valid(%(p)s) then case json_type(%(p)s) "
+            "when 'array' then ('$'||coalesce((select group_concat(%(s)s,'') "
+            "from json_each(%(p)s) where key < json_array_length(%(p)s)-1),"
+            "'')) else NULL end else NULL end" % {'p': expr, 's': seg})
+
+
+def _typed(doc, path):
+    return ("(case json_type(%(d)s, %(p)s) when 'true' then json('true') "
+            "when 'false' then json('false') when 'null' then json('null') "
+            "when 'object' then json(json_extract(%(d)s, %(p)s)) "
+            "when 'array' then json(json_extract(%(d)s, %(p)s)) "
+            "else json_extract(%(d)s, %(p)s) end)"
+            % {'d': doc, 'p': path})
+
+
+def _json_typed(expr, type_expr):
+    # json_object() stores SQL booleans as integers, losing the JSON type.
+    # Re-wrap using the type from the original step record so later
+    # json_type() calls (e.g. in conditions) still see true/false/null.
+    return ("(case %(t)s when 'true' then json('true') "
+            "when 'false' then json('false') when 'null' then json('null') "
+            "when 'object' then json(%(v)s) when 'array' then json(%(v)s) "
+            "else %(v)s end)" % {'t': type_expr, 'v': expr})
+
+
+def _guard(cond, expr):
+    return ("(case when json_valid(%s) then case when json_type(%s)='object' "
+            "then %s end end)" % (cond, cond, expr))
+
+
+def _typecode(expr):
+    return "(case lower(%s) %s else 0 end)" % (
+        expr, ' '.join("when '%s' then %d" % (name, code)
+                       for name, code in _TYPE_CODES.items()))
+
+
+def _type_match(code, jt):
+    return ("(case %(c)s when 0 then 1 when 1 then %(j)s is null "
+            "when 2 then %(j)s='null' when 3 then %(j)s='true' "
+            "when 4 then %(j)s='false' when 5 then %(j)s in ('true','false') "
+            "when 6 then %(j)s='text' when 7 then %(j)s='integer' "
+            "when 8 then %(j)s='real' when 9 then %(j)s in ('integer','real') "
+            "when 10 then %(j)s='array' when 11 then %(j)s='object' "
+            "else 0 end)" % {'c': code, 'j': jt})
+
+
+_FIELDS = ('op', 'cat', 'sp', 'dp', 'dpp', 'rp', 'dpa', 'vt', 'vl', 'rv',
+           'cp', 'ct2', 'cpath', 'ctype', 'cvt', 'cv', 'cx', 'cm', 'ca', 'cn')
+
+
+def _pack(raw):
+    op = _op(raw)
+    cat = _cat(op)
+    payload = raw
+    cp = "%s in ('cp','mv')" % cat
+    src = ("(case when %s then %s else %s end)"
+           % (cp, _co(_col(payload, 'from'), _col(payload, 'source'),
+                      _col(payload, 'src'), "json_extract(%s,'$[1]')" % payload),
+              _co(_col(payload, 'from'), _col(payload, 'source'),
+                  _col(payload, 'src'), "json_extract(%s,'$[1]')" % payload)))
+    dst = ("(case when %s then %s else %s end)"
+           % (cp, _co(_col(payload, 'to'), _col(payload, 'target'),
+                      _col(payload, 'dst'), _col(payload, 'path'),
+                      "json_extract(%s,'$[2]')" % payload),
+              _co(_col(payload, 'to'), _col(payload, 'target'),
+                  _col(payload, 'dst'), _col(payload, 'path'),
+                  "json_extract(%s,'$[1]')" % payload)))
+    path = _co(_col(payload, 'path'), _col(payload, 'target'),
+               _col(payload, 'to'), "json_extract(%s,'$[1]')" % payload)
+    valraw = ("(case when %s then NULL else %s end)"
+              % (cp, _co(_col(payload, 'value'), _col(payload, 'val'),
+                         "json_extract(%s,'$[2]')" % payload)))
+    vpath = _co("case when json_type(%(r)s, '$.value') is not null "
+                "then '$.value' end" % {'r': payload},
+                "case when json_type(%(r)s, '$.val') is not null "
+                "then '$.val' end" % {'r': payload},
+                "case when json_type(%(r)s) = 'array' and "
+                "json_type(%(r)s, '$[2]') is not null "
+                "then '$[2]' end" % {'r': payload})
+    refraw = ("(case when json_type(%(r)s, %(p)s) = 'object' then "
+              "coalesce(json_extract(%(r)s, %(p)s||'.$\"$ref\"'), "
+              "json_extract(%(r)s, %(p)s||'.$ref'), "
+              "json_extract(%(r)s, %(p)s||'.$from')) end)"
+              % {'r': payload, 'p': vpath})
+    cond = _co(_col(payload, 'when'), _col(payload, 'if'),
+               _col(payload, 'condition'))
+    cpath = _co(_col(cond, 'path'), _col(cond, 'from'),
+                _col(cond, 'source'), _col(cond, 'src'))
+    ctype = _co(_col(cond, 'type'), _col(cond, 'kind'))
+    cvt = _co(_typ(cond, 'value'), _typ(cond, 'equals'), _typ(cond, 'eq'))
+    cv = _co(_col(cond, 'value'), _col(cond, 'equals'), _col(cond, 'eq'))
+    vtype = ("(case when %(cp)s then NULL else %(t)s end)"
+             % {'cp': cp, 't': _co(_typ(payload, 'value'),
+                                   _typ(payload, 'val'), _typ(payload, "$[2]"))})
+    vlit = _co(_col(payload, 'value'), _col(payload, 'val'),
+               "json_extract(%s,'$[2]')" % payload)
+    vals = {
+        'op': op, 'cat': cat, 'sp': _path(src), 'dp': _path(dst),
+        'dpp': _parent(dst), 'rp': _path(path), 'dpa': dst,
+        'vt': vtype, 'vl': vlit,
+        'rv': _path(refraw),
+        'cp': _json_typed(cond, _co(
+            "json_type(%s, '$.when')" % payload,
+            "json_type(%s, '$.if')" % payload,
+            "json_type(%s, '$.condition')" % payload)),
+        'ct2': _co(
+            "json_type(%s, '$.when')" % payload,
+            "json_type(%s, '$.if')" % payload,
+            "json_type(%s, '$.condition')" % payload),
+        'cpath': _guard(cond, _path(cpath)),
+        'ctype': _guard(cond, _typecode(ctype)),
+        'cvt': _guard(cond, cvt), 'cv': _guard(cond, cv),
+        'cx': _guard(cond, _typ(cond, 'exists')),
+        'cm': _guard(cond, _typ(cond, 'missing')),
+        'ca': _guard(cond, _typ(cond, 'absent')),
+        'cn': _guard(cond, _typ(cond, 'is_null')),
+    }
+    pairs = ', '.join("'%s', %s" % (key, vals[key]) for key in _FIELDS)
+    return 'json_object(%s)' % pairs
+
+
+def compile_steps(doc, steps, error=False, both=False, mode='doc'):
+    # Build a single recursive CTE: each iteration advances one step, keeping
+    # the original document for rollback and a packed description of the
+    # current step's targets.  ``mode`` selects the projection:
+    #   'doc'    - the resulting document.
+    #   'error'  - {"step": i, "reason": "..."} or NULL.
+    #   'index'  - the failing step index or NULL.
+    #   'reason' - the failure reason or NULL.
+    #   'both'   - (document, error).
+    ok = ("(case when json_valid(%(d)s) and json_valid(%(s)s) and "
+          "json_type(%(s)s,'$')='array' then 1 else 0 end)"
+          % {'d': doc, 's': steps})
+    first = _pack("json_extract(%s,'$[0]')" % steps)
+    anchor = ("SELECT 0, json_extract(%(s)s,'$[0]'), %(s)s, "
+              "case when %(ok)s then json_array_length(%(s)s) else 0 end, "
+              "case when %(ok)s then 0 else 1 end, "
+              "case when %(ok)s then -1 else 0 end, "
+              "case when %(ok)s then NULL when not json_valid(%(d)s) "
+              "then 'invalid document' else 'invalid steps' end, "
+              "%(d)s, %(d)s, %(first)s"
+              % {'s': steps, 'ok': ok, 'd': doc, 'first': first})
+    nxt = _pack("json_extract(r.steps,'$['||(r.i+1)||']')")
+    cur = 'r.doc'
+
+    def p(key):
+        return "json_extract(r.stepinfo, '$.%s')" % key
+
+    def present(key):
+        return 'json_type(%s, %s) is not null' % (cur, p(key))
+
+    cvar = "coalesce(%s, %s, %s, '$')" % (p('cpath'), p('sp'), p('rp'))
+    jt = 'json_type(%s, %s)' % (cur, cvar)
+    leaf = ("(case when %(dpa)s is null or not json_valid(%(dpa)s) or "
+            "json_array_length(%(dpa)s)=0 then 1 "
+            "when %(dp)s is null or substr(%(dp)s,1,1)='$' then 1 "
+            "else case json_type(%(dpa)s, '$[#-1]') "
+            "when 'text' then (json_type(%(d)s, %(dpp)s) is null or "
+            "json_type(%(d)s, %(dpp)s)='object') "
+            "when 'integer' then (json_type(%(d)s, %(dpp)s) is null or "
+            "json_type(%(d)s, %(dpp)s)='array') and "
+            "((json_extract(%(dpa)s, '$[#-1]')>=0 and "
+            "json_extract(%(dpa)s, '$[#-1]')<=json_array_length(%(d)s, %(dpp)s)) or "
+            "(json_extract(%(dpa)s, '$[#-1]')<0 and "
+            "-json_extract(%(dpa)s, '$[#-1]')<=json_array_length(%(d)s, %(dpp)s))) "
+            "else 0 end end)"
+            % {'dpa': p('dpa'), 'dp': p('dp'), 'd': cur, 'dpp': p('dpp')})
+    parent_ok = ('(%s is null or json_type(%s, %s) is null or '
+                 "json_type(%s, %s) in ('object','array'))"
+                 % (p('dpp'), cur, p('dpp'), cur, p('dpp')))
+    vm = ("(case %(cvt)s when 'true' then %(j)s='true' "
+          "when 'false' then %(j)s='false' when 'null' then %(j)s='null' "
+          "when 'text' then %(j)s='text' and json_extract(%(d)s, "
+          "%(cvar)s)=%(cv)s "
+          "when 'integer' then %(j)s='integer' and json_extract(%(d)s, "
+          "%(cvar)s)=%(cv)s "
+          "when 'real' then %(j)s='real' and json_extract(%(d)s, "
+          "%(cvar)s)=%(cv)s "
+          "when 'array' then %(j)s='array' and json(json_extract(%(d)s, "
+          "%(cvar)s))=json(%(cv)s) "
+          "when 'object' then %(j)s='object' and json(json_extract(%(d)s, "
+          "%(cvar)s))=json(%(cv)s) else 1 end)"
+          % {'j': jt, 'd': cur, 'cvar': cvar,
+             'cvt': p('cvt'), 'cv': p('cv')})
+    flags = []
+    for key, expr in (('cx', '%s is not null' % jt), ('cm', '%s is null' % jt),
+                      ('ca', '%s is null' % jt), ('cn', "%s='null'" % jt)):
+        flags.append("case when %s is not null then (case when coalesce(%s,0) "
+                     "then (%s) else not (%s) end) else 1 end"
+                     % (p(key), p(key), expr, expr))
+    gate = ("(case when %(ct2)s is null then 1 "
+            "when %(ct2)s in ('true','false') "
+            "then %(cp)s "
+            "when %(ct2)s='text' then (case when lower(%(cp)s) "
+            "in ('false','0','no','') then 0 else 1 end) "
+            "else %(tm)s and %(vm)s and %(fl)s end)"
+            % {'cp': p('cp'), 'ct2': p('ct2'), 'ctype': p('ctype'),
+               'codes': ' '.join("when '%s' then %d" % (name, code)
+                                 for name, code in _TYPE_CODES.items()),
+               'tm': _type_match(p('ctype'), jt), 'vm': vm,
+               'fl': ' and '.join(flags)})
+    invalid = ("(case when %(cat)s='?' then 1 when %(cat)s='rm' then "
+               "not (%(rpp)s and %(rp)s <> '$') "
+               "when %(cat)s in ('cp','mv') then not (%(spp)s and %(dpp)s "
+               "and %(leaf)s) "
+               "when %(cat)s in ('set','ins','mrg') then not (%(dpp)s and "
+               "%(leaf)s) "
+               "when %(cat)s='app' then not (%(dpp)s and %(leaf)s and "
+               "(not %(dpe)s or json_type(%(d)s,%(dp)s)='array')) "
+               "else 0 end)"
+               % {'cat': p('cat'), 'rpp': present('rp'), 'rp': p('rp'),
+                  'spp': present('sp'), 'dpp': parent_ok, 'leaf': leaf,
+                  'dpe': present('dp'), 'd': cur, 'dp': p('dp')})
+    reason = ("(case when %(cat)s='?' then 'unknown operation' "
+              "when %(cat)s='rm' then 'missing path' "
+              "when %(cat)s in ('cp','mv') then (case when not %(spp)s "
+              "or %(sp)s is null then 'missing source' "
+              "else 'invalid path' end) "
+              "when %(cat)s='app' then (case when not (%(dpp)s and %(leaf)s) "
+              "then 'invalid path' else 'not an array' end) "
+              "when %(cat)s in ('set','ins','mrg') then 'invalid path' "
+              "else 'invalid path' end)"
+              % {'cat': p('cat'), 'spp': present('sp'), 'sp': p('sp'),
+                 'dpp': parent_ok, 'leaf': leaf})
+    val = ("(case when %(rv)s is not null then %(rvv)s "
+           "when %(vt)s is null then json('null') else case %(vt)s "
+           "when 'true' then json('true') when 'false' then json('false') "
+           "when 'null' then json('null') when 'object' then json(%(vl)s) "
+           "when 'array' then json(%(vl)s) else %(vl)s end end)"
+           % {'rv': p('rv'), 'rvv': _typed(cur, p('rv')),
+              'vt': p('vt'), 'vl': p('vl')})
+    sv = _typed(cur, p('sp'))
+    set_ = 'json_set(%s, %s, %s)' % (cur, p('dp'), val)
+    ins = 'case when %s then %s else %s end' % (present('dp'), cur, set_)
+    app = ('case when %s then json_set(%s, %s||\'[#]\', %s) '
+           'else json_set(%s, %s, json_array(%s)) end'
+           % (present('dp'), cur, p('dp'), val, cur, p('dp'), val))
+    mrg = ('json_set(%s, %s, json_patch(coalesce(json_extract(%s, %s), '
+           "json('{}')), %s))" % (cur, p('dp'), cur, p('dp'), val))
+    newdoc = ("(case %(cat)s when 'rm' then json_remove(%(d)s,%(rp)s) "
+              "when 'cp' then json_set(%(d)s,%(dp)s,%(sv)s) "
+              "when 'mv' then json_remove(json_set(%(d)s,%(dp)s,%(sv)s),%(sp)s) "
+              "when 'set' then %(set)s when 'ins' then %(ins)s "
+              "when 'app' then %(app)s when 'mrg' then %(mrg)s "
+              "else %(d)s end)"
+              % {'cat': p('cat'), 'd': cur, 'rp': p('rp'), 'dp': p('dp'),
+                 'sv': sv, 'sp': p('sp'), 'set': set_, 'ins': ins,
+                 'app': app, 'mrg': mrg})
+    error_only = (error or mode in ('error', 'index', 'reason')) and not both
+    new_value = 'r.doc' if error_only else (
+        "case when r.bad=1 then r.orig when (%(g)s) and (%(bad)s) "
+        "then r.orig when (%(g)s) then %(new)s else r.doc end"
+        % {'g': gate, 'bad': invalid, 'new': newdoc})
+    head = ("SELECT r.i+1, json_extract(r.steps,'$['||(r.i+1)||']'), "
+            "r.steps, r.n, case when r.bad=1 then 1 "
+            "when (%(g)s) and (%(bad)s) then 1 else 0 end, "
+            "case when r.bad=1 then r.e_i when (%(g)s) and (%(bad)s) "
+            "then r.i else -1 end, "
+            "case when r.bad=1 then r.e_r when (%(g)s) and (%(bad)s) "
+            "then %(reason)s else NULL end, %(newv)s, "
+            "r.orig, %(next)s FROM r WHERE r.i < r.n AND r.bad=0"
+            % {'g': gate, 'bad': invalid, 'reason': reason, 'newv': new_value,
+               'next': nxt})
+    cols = 'i, raw, steps, n, bad, e_i, e_r, doc, orig, stepinfo'
+    cte = ("WITH RECURSIVE r(%(cols)s) AS (%(anchor)s UNION ALL %(head)s)"
+           % {'cols': cols, 'anchor': anchor, 'head': head})
+    if both or mode == 'both':
+        tail = ("SELECT doc, case when bad=1 then json_object("
+                "'step', e_i, 'reason', e_r) else NULL end "
+                "FROM r ORDER BY i DESC LIMIT 1")
+    elif error or mode == 'error':
+        tail = ("SELECT case when bad=1 then json_object('step', e_i, "
+                "'reason', e_r) else NULL end "
+                "FROM r ORDER BY i DESC LIMIT 1")
+    elif mode == 'index':
+        tail = ("SELECT case when bad=1 then e_i else NULL end "
+                "FROM r ORDER BY i DESC LIMIT 1")
+    elif mode == 'reason':
+        tail = ("SELECT case when bad=1 then e_r else NULL end "
+                "FROM r ORDER BY i DESC LIMIT 1")
+    elif mode == 'all':
+        tail = ("SELECT doc, case when bad=1 then e_i else NULL end, "
+                "case when bad=1 then e_r else NULL end "
+                "FROM r ORDER BY i DESC LIMIT 1")
+    else:
+        tail = "SELECT doc FROM r ORDER BY i DESC LIMIT 1"
+    return cte + ' ' + tail
 
 
 class BaseJSONMethods(object):
@@ -6464,6 +6837,100 @@ class JSONPath(ColumnBase):
                                                 key_list)
 
 
+class _JSONStepSQL(Node):
+    """Render the compiled step-application SQL for an UPDATE assignment."""
+    def __init__(self, doc_col, steps_col, mode='doc'):
+        self.doc_col = doc_col
+        self.steps_col = steps_col
+        self.mode = mode
+
+    def _columns(self, ctx):
+        rendered = []
+        for node in (self.doc_col, self.steps_col):
+            sub = ctx.as_new()
+            sub.alias_manager = ctx.alias_manager
+            node.__sql__(sub)
+            rendered.append(''.join(sub._sql))
+        return rendered
+
+    def _sql(self, ctx):
+        doc, steps = self._columns(ctx)
+        return '(%s)' % compile_steps(doc, steps, mode=self.mode)
+
+    def __sql__(self, ctx):
+        return ctx.literal(self._sql(ctx))
+
+
+
+
+
+class JSONStepUpdate(object):
+    """Deferred UPDATE assignment produced by JSONField.apply_steps().
+
+    The value is compiled when the query is rendered.  Both the target row's
+    JSON document and its step list are read by the generated SQL, so the
+    assignment reflects the database contents at the moment the UPDATE runs.
+    """
+    def __init__(self, field, steps, error_field=None):
+        self.field = field
+        self.steps = steps
+        self.error_field = error_field
+
+    def _doc_field(self):
+        field = self.field
+        if not isinstance(field, JSONField):
+            raise ValueError('apply_steps() must be passed to a JSONField.')
+        return field
+
+    def _columns(self):
+        doc_field = self._doc_field()
+        table = doc_field.model._meta.table
+        doc_col = Column(table, doc_field.column_name)
+        steps = self.steps
+        if isinstance(steps, str):
+            steps_field = doc_field.model._meta.combined.get(steps)
+            if steps_field is None:
+                raise ValueError('Unknown steps field: %s.' % steps)
+            steps_col = Column(table, steps_field.column_name)
+        elif isinstance(steps, Field):
+            steps_col = Column(steps.model._meta.table, steps.column_name)
+        elif isinstance(steps, Node):
+            steps_col = steps
+        else:
+            payload = doc_field._dumps(steps)
+            steps_col = SQL("'%s'" % payload.replace("'", "''"))
+        return doc_col, steps_col
+
+    def add_assignments(self, ctx, expressions):
+        doc_col, steps_col = self._columns()
+        error_field = self.error_field
+        if not error_field:
+            sql = _JSONStepSQL(doc_col, steps_col)
+            expressions.append(NodeList((doc_col, SQL('='), sql)))
+            return
+
+        if isinstance(error_field, tuple):
+            step_col, reason_col = error_field
+            columns = [doc_col, self._resolve_column(step_col),
+                       self._resolve_column(reason_col)]
+            sql = _JSONStepSQL(doc_col, steps_col, mode='all')
+        else:
+            columns = [doc_col, self._resolve_column(error_field)]
+            sql = _JSONStepSQL(doc_col, steps_col, mode='both')
+        # One CTE supplies the document and the first failing step.
+        expressions.append(NodeList(
+            (EnclosedNodeList(columns), SQL('='), sql)))
+
+    def _resolve_column(self, field):
+        if isinstance(field, str):
+            field = self._doc_field().model._meta.combined.get(field)
+            if field is None:
+                raise ValueError('Unknown error field: %s.' % field)
+        if isinstance(field, Field):
+            return Column(field.model._meta.table, field.column_name)
+        return field
+
+
 class JSONField(FieldDatabaseHook, Field):
     field_type = 'JSON'
 
@@ -6550,6 +7017,17 @@ class JSONField(FieldDatabaseHook, Field):
         # RFC-7396 deep merge on SQLite/MySQL/MariaDB, shallow `||` concat on
         # PostgreSQL.
         return self._helper.update(self, value)
+
+    def apply_steps(self, steps, error_field=None):
+        """Return an UPDATE expression applying the ordered cleanup list.
+
+        ``steps`` may be a field (or any SQL node) holding the per-row list,
+        or a Python list.  ``error_field`` optionally names the field that
+        receives a JSON report when a step cannot be applied.  The whole
+        step list is applied inside one UPDATE, in order, using only SQLite
+        built-in JSON functions; no user-defined SQL function is required.
+        """
+        return JSONStepUpdate(self, steps, error_field)
 
     def contains(self, value):
         return self._helper.contains(self, (), value)
@@ -7772,7 +8250,15 @@ class Model(Node, metaclass=ModelBase):
 
     @classmethod
     def update(cls, __data=None, **update):
-        return ModelUpdate(cls, cls._normalize_data(__data, update))
+        query = ModelUpdate(cls, cls._normalize_data(__data, update))
+        for value in update.values():
+            if isinstance(value, JSONStepUpdate):
+                query._json_step_updates.append(value)
+        if isinstance(__data, dict):
+            for value in __data.values():
+                if isinstance(value, JSONStepUpdate):
+                    query._json_step_updates.append(value)
+        return query
 
     @classmethod
     def insert(cls, __data=None, **insert):

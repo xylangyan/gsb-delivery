@@ -715,6 +715,98 @@ Method         On JSONField (root)  On JSONPath          Cross-backend?
    # JSONField.update().
    Doc.update(data=Doc.data.update({'last_seen': '2026-01-01'})).execute()
 
+Ordered step lists (SQLite)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Staging tables often keep the original document in one ``JSONField`` and an
+ordered cleanup list in another, with a different number of steps per row.
+:meth:`JSONField.apply_steps` compiles an UPDATE expression that reads each
+row's list from the database as the statement runs and applies its steps in
+order.  The SQL is the same size no matter how many steps a row carries, and
+it uses only SQLite's built-in JSON functions -- no user-defined function or
+extension is registered on the writing connection.
+
+.. code-block:: python
+
+   class Staging(db.Model):
+       payload = JSONField(null=True)
+       cleanup = JSONField(null=True)
+       error = JSONField(null=True)
+
+   # One UPDATE applies every row's own list, in that row's own order.
+   (Staging.update(payload=Staging.payload.apply_steps(Staging.cleanup))
+    .where(Staging.status == 'pending').execute())
+
+Both the document and the step list are read from the row when the UPDATE
+starts.  Building the query does not copy either value, so a list (or
+document) rewritten by another commit before ``execute()`` is used instead.
+The existing ``WHERE`` clause and ordinary JSONField update expressions are
+unchanged and can be mixed in the same ``update()`` call.
+
+Supported steps are ``{"op": ..., ...}`` records.  ``action`` and
+``operation`` are accepted as synonyms for ``op``, and values are
+case-insensitive.  A short list form is also accepted: ``[op, from, to]``
+for ``copy``/``move`` and ``[op, path]`` for the other operations.
+
+==========  ==========================================================
+Operation   Behavior
+==========  ==========================================================
+``remove``  Remove ``path``.  Requires the path to exist.
+``copy``    Copy the typed value at ``from`` to ``to``.
+``move``    Copy ``from`` to ``to``, then remove ``from``.
+``set``     Write ``value`` at ``path`` / ``to``.
+``insert``  Write ``value`` only if the destination is absent.
+``append``  Append ``value`` to an existing array (creates one if absent).
+``merge``   RFC-7396 merge patch of ``value`` into the destination.
+==========  ==========================================================
+
+Paths are JSON arrays: ``["labels", "arr", 0]``.  A string path beginning
+with ``$`` is used verbatim.  Keys are quoted, so a literal key containing a
+dot (``"warehouse.a"``) is one key, not two nested keys.  Negative array
+indexes address from the end, matching the rest of the JSON API.  A ``value``
+may also be a reference record, ``{"$ref": ["a", "b"]}``, to copy the value
+currently at that path.
+
+A step may include a condition under ``when`` (``if`` / ``condition`` are
+synonyms).  Only when it matches is the step applied; otherwise it is a
+no-op.  A condition is either a type name (``missing``, ``null``, ``true``,
+``false``, ``boolean``, ``text``, ``integer``, ``real``, ``number``,
+``array``, ``object``) or a record with ``type`` and/or ``value`` keys:
+
+.. code-block:: python
+
+   {'op': 'set', 'path': ['flag'], 'value': 1,
+    'when': {'path': ['state'], 'type': 'string', 'value': 'ready'}}
+
+Conditions see the document as modified by earlier steps in the same list.
+A missing key, a stored JSON ``null`` and the boolean ``true`` are distinct:
+``{"type": "null"}`` matches only a stored JSON null (not an absent key), and
+``{"type": "true"}`` matches only JSON true, not ``1``.
+
+If a step cannot be applied (unknown operation, missing source, or an invalid
+destination), the rest of that row's list is skipped and the row keeps its
+entire original document -- earlier steps are never partially written.  Other
+rows in the same UPDATE continue normally.  Pass ``error_field`` to record the
+first failing step:
+
+.. code-block:: python
+
+   # Write a JSON report, e.g. {"step": 3, "reason": "missing source"}.
+   Staging.update(payload=Staging.payload.apply_steps(Staging.cleanup,
+                                                      'error'))
+
+   # Or write the step number and the reason into separate columns.
+   Staging.update(payload=Staging.payload.apply_steps(
+       Staging.cleanup, (Staging.failed_step, Staging.failed_reason)))
+
+   # Or both at once.
+   Staging.update(payload=Staging.payload.apply_steps(
+       Staging.cleanup, ('error', Staging.failed_reason)))
+
+Because both the document and the step list are read inside the statement,
+changing either one in another transaction before ``execute()`` is picked up
+correctly.
+
 For mutation patterns outside this subset (path-level update,
 ``json_each`` / ``jsonb_path_query``, etc.), either read-modify-save the row
 in Python:

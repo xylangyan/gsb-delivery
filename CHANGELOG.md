@@ -7,6 +7,11 @@ https://github.com/coleifer/peewee/releases
 
 ## master
 
+* Add `JSONField.apply_steps()` for SQLite, which applies a per-row ordered
+  list of JSON mutation steps in a single UPDATE.  Each row's document and
+  steps are read from the database by a fixed-size recursive CTE using only
+  built-in JSON functions; if a step fails the row keeps its original
+  document and the first failing step can be written to an error column.
 * Clear `after_commit` callbacks registered on a savepoint if that savepoint is
   then rolled-back.
 * Re-create triggers during sqlite migrator table rebuilds.
