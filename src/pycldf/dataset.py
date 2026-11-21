@@ -780,12 +780,21 @@ class Dataset:  # pylint: disable=too-many-public-methods
             table.common_props['dc:extent'] = table.write(items, _zipped=table_type in zipped)
         return self.write_metadata(fname)
 
-    def copy(self, dest: PathType, mdname: str = None) -> pathlib.Path:
+    def copy(
+            self,
+            dest: PathType,
+            mdname: str = None,
+            languages: Optional[list[str] | set[str] | str] = None,
+            language_ids: Optional[list[str] | set[str] | str] = None,
+    ) -> pathlib.Path:
         """
         Copy metadata, data and sources to files in `dest`.
 
         :param dest: Destination directory.
         :param mdname: Name of the new metadata file.
+        :param languages: Optional selection of language IDs. If given, only forms for these \
+        languages are copied, together with the languages, media and sources they reference.
+        :param language_ids: Alias for `languages`.
         :return: Path of the new CLDF metadata file.
 
         This can be used together with :func:`iter_datasets` to extract CLDF data from their
@@ -798,7 +807,8 @@ class Dataset:  # pylint: disable=too-many-public-methods
             ...     if 'with_examples' in ds.directory.name:
             ...         ds.copy('some_directory', mdname='md.json')
         """
-        return copy_dataset(self, dest, mdname)
+        return copy_dataset(
+            self, dest, mdname, languages=languages, language_ids=language_ids)
 
     # Reporting ------------------------------------------------------------------------------------
     def validate(

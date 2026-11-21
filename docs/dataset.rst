@@ -141,6 +141,7 @@ Writing (meta)data
 .. automethod:: Dataset.write
 .. automethod:: Dataset.write_metadata
 .. automethod:: Dataset.write_sources
+.. automethod:: Dataset.copy
 
 
 Reporting

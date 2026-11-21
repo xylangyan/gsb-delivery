@@ -1,3 +1,4 @@
+import struct
 import shutil
 import logging
 import zipfile
@@ -16,6 +17,7 @@ from pycldf.dataset import (
 from pycldf.module import get_modules
 from pycldf.sources import Sources
 from pycldf.media import MediaTable
+from pycldf.util import MediaFileMissingError
 
 
 @pytest.fixture
@@ -989,6 +991,143 @@ def test_Dataset_copy_nested_media(tmp_path, dataset_with_media, nested):
     assert {f.id: f.read() for f in MediaTable(restored)} == expected
     assert str(ds['MediaTable'].url) == source_url
     assert {f.id: f.read() for f in MediaTable(ds)} == expected
+
+
+def _wav_bytes(sample: bytes) -> bytes:
+    """Minimal valid RIFF/WAVE container with 8kHz mono 16-bit PCM."""
+    data = struct.pack('<h', int.from_bytes(sample[:2], 'little') - 32768) * 4
+    header = b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt '
+    header += struct.pack('<IHHIIHH', 16, 1, 1, 8000, 16000, 2, 16)
+    header += b'data' + struct.pack('<I', len(data))
+    return header + data
+
+
+def _language_copy_dataset(tmp_path, remove=None, drop_zip_member=False):
+    """
+    Build a wordlist with two selected languages, shared M1, zipped M2, unselected M3
+    and shared/exclusive sources. `remove` names a media file to leave missing.
+    """
+    d = tmp_path / 'src'
+    (d / 'audio').mkdir(parents=True)
+    (d / 'media').mkdir()
+    (d / 'audio' / 'm1.wav').write_bytes(_wav_bytes(b'\x01\x02'))
+    (d / 'audio' / 'm3.wav').write_bytes(_wav_bytes(b'\x03\x04'))
+    with zipfile.ZipFile(d / 'audio' / 'bundle.zip', 'w') as zf:
+        zf.writestr('inner/m2.wav', _wav_bytes(b'\x05\x06'))
+
+    ds = Wordlist.in_dir(d)
+    ds.add_component('LanguageTable')
+    ds.add_component('ParameterTable')
+    ds.add_component('MediaTable')
+    ds.add_columns('FormTable', 'Media_ID')
+    ds['FormTable', 'Media_ID'].propertyUrl = term_uri('mediaReference')
+    ds['FormTable'].add_foreign_key('Media_ID', 'media/mymedia.csv', 'ID')
+    ds['MediaTable'].url = Link('media/mymedia.csv')
+    ds.properties['dc:source'] = 'refs.bib'
+    ds.add_sources(
+        '@book{shared, title={Shared Book}}',
+        '@book{pick, title={Selected Book}}',
+        '@book{other, title={Other Book}}')
+    forms = [
+        dict(ID='f1', Language_ID='l1', Parameter_ID='p1', Form='one',
+             Media_ID='M1', Source=['shared[3-5]']),
+        dict(ID='f2', Language_ID='l1', Parameter_ID='p2', Form='two',
+             Media_ID='M1', Source=['pick[7]']),
+        dict(ID='f3', Language_ID='l1', Parameter_ID='p3', Form='three',
+             Media_ID='M2', Source=['shared']),
+        dict(ID='f4', Language_ID='l2', Parameter_ID='p1', Form='four',
+             Media_ID='M1', Source=['other[1]']),
+        dict(ID='f5', Language_ID='l2', Parameter_ID='p2', Form='five',
+             Media_ID='M3', Source=['other']),
+    ]
+    media = [
+        dict(ID='M1', Media_Type='audio/x-wav', Download_URL='audio/m1.wav'),
+        dict(ID='M2', Media_Type='audio/x-wav', Download_URL='audio/bundle.zip',
+             Path_In_Zip='inner/missing.wav' if drop_zip_member else 'inner/m2.wav'),
+        dict(ID='M3', Media_Type='audio/x-wav', Download_URL='audio/m3.wav'),
+    ]
+    if remove:
+        (d / 'audio' / remove).unlink()
+    ds.write(
+        fname=d / 'metadata.json',
+        FormTable=forms,
+        LanguageTable=[dict(ID='l1', Name='One'), dict(ID='l2', Name='Two')],
+        ParameterTable=[dict(ID='p1'), dict(ID='p2'), dict(ID='p3')],
+        MediaTable=media)
+    return d
+
+
+def test_Dataset_copy_languages(tmp_path):
+    src = _language_copy_dataset(tmp_path)
+    ds = Dataset.from_metadata(src / 'metadata.json')
+    dest = tmp_path / 'delivery'
+    md = ds.copy(dest, mdname='md.json', languages=['l1'])
+
+    assert md == dest / 'md.json'
+    # Relocate the delivery and isolate the original data.
+    moved = tmp_path / 'moved'
+    shutil.move(str(dest), str(moved))
+    shutil.move(str(src), str(tmp_path / 'source-hidden'))
+    copied = Dataset.from_metadata(moved / 'md.json')
+    assert copied.validate()
+
+    assert [r['ID'] for r in copied['FormTable']] == ['f1', 'f2', 'f3']
+    assert [r['ID'] for r in copied['LanguageTable']] == ['l1']
+    assert [r['ID'] for r in copied['MediaTable']] == ['M1', 'M2']
+    assert 'other' not in copied.sources
+    assert set(copied.sources.keys()) == {'shared', 'pick'}
+    assert (moved / 'refs.bib').exists()
+    assert not (moved / 'audio' / 'm3.wav').exists()
+
+    # ORM-level language, source/page and media traversal must work after relocation.
+    form = copied.get_object('FormTable', 'f1')
+    assert form.language.id == 'l1'
+    refs = {r.source.id: r.description for r in form.references}
+    assert refs == {'shared': '3-5'}
+    form2 = copied.get_object('FormTable', 'f2')
+    assert [(r.source.id, r.description) for r in form2.references] == [('pick', '7')]
+
+    media = {f.id: f for f in MediaTable(copied)}
+    assert media['M1'].read() == _wav_bytes(b'\x01\x02')
+    assert media['M2'].path_in_zip == 'inner/m2.wav'
+    assert media['M2'].read() == _wav_bytes(b'\x05\x06')
+    assert not (moved / 'audio' / 'bundle.zip.zip').exists()
+    assert (moved / 'audio' / 'bundle.zip').exists()
+
+    # M1 is one media row and one physical file despite being referenced by f1 and f2.
+    assert (moved / 'audio' / 'm1.wav').exists()
+    assert 'M1' in (moved / 'media' / 'mymedia.csv').read_text()
+    fk = copied.get_foreign_key_reference('FormTable', 'Media_ID')
+    assert fk[0].url.string == 'media/mymedia.csv'
+
+
+def test_Dataset_copy_languages_missing_selected_media(tmp_path):
+    src = _language_copy_dataset(tmp_path, remove='m1.wav')
+    dest = tmp_path / 'delivery'
+    with pytest.raises(MediaFileMissingError) as exc:
+        Dataset.from_metadata(src / 'metadata.json').copy(dest, languages=['l1'])
+    assert exc.value.media_id == 'M1'
+    assert any(r.lineno == 2 and r.label == 'f1' for r in exc.value.references)
+    assert 'forms.csv:2' in str(exc.value)
+    assert not dest.exists()
+
+
+def test_Dataset_copy_languages_missing_zip_member(tmp_path):
+    src = _language_copy_dataset(tmp_path, drop_zip_member=True)
+    dest = tmp_path / 'delivery'
+    with pytest.raises(MediaFileMissingError) as exc:
+        Dataset.from_metadata(src / 'metadata.json').copy(dest, languages=['l1'])
+    assert exc.value.media_id == 'M2'
+    assert 'inner/missing.wav' in str(exc.value)
+    assert not dest.exists()
+
+
+def test_Dataset_copy_languages_ignores_missing_unselected_media(tmp_path):
+    src = _language_copy_dataset(tmp_path, remove='m3.wav')
+    dest = tmp_path / 'delivery'
+    Dataset.from_metadata(src / 'metadata.json').copy(dest, languages=['l1'])
+    assert (dest / 'metadata.json').exists()
+    assert 'M3' not in (dest / 'media' / 'mymedia.csv').read_text()
 
 
 def test_Dataset_rename_column(ds):
