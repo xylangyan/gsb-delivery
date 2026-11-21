@@ -9,6 +9,7 @@ from peewee import Expression
 from peewee import Node
 from peewee import NodeList
 from peewee import OP
+from peewee import is_model
 from peewee import merge_dict
 from peewee import sqlite3
 from playhouse import fts_parser as _fts_parser
@@ -611,7 +612,11 @@ class FTS5Model(BaseFTSModel):
 
     Note: with sqlite's default recursive_triggers=off, INSERT OR REPLACE on
     the content table skips the delete trigger and corrupts the index. Enable
-    PRAGMA recursive_triggers if REPLACE may be used.
+    PRAGMA recursive_triggers if REPLACE may be used, or call
+    ``FTS5Model.install_maintenance()``: it installs BEFORE/AFTER triggers
+    plus a staging table that stay correct with recursive_triggers off for
+    plain writes and INSERT OR REPLACE / INSERT OR IGNORE alike, and backfills
+    an index left with stale or missing terms in a single transaction.
 
     Built-in auxiliary functions:
 
@@ -851,6 +856,248 @@ class FTS5Model(BaseFTSModel):
     @classmethod
     def integrity_check(cls, rank=0):
         return cls._fts_cmd('integrity-check', rank=rank)
+
+    @classmethod
+    def _external_content_meta(cls, content_model=None):
+        # Resolve the external-content table, its integer rowid column and the
+        # indexed columns from the model's FTS5 options.
+        options = cls._meta.options or {}
+        if content_model is None:
+            content_model = options.get('content')
+        rowid_field = options.get('content_rowid')
+        if not is_model(content_model) or not isinstance(rowid_field, Field):
+            raise ImproperlyConfigured(
+                'install_maintenance() requires an external-content FTS5 '
+                'table declared with the "content" (a Model) and '
+                '"content_rowid" (an integer Field) options.')
+        columns = [f.column_name for f in cls._meta.sorted_fields
+                   if isinstance(f, SearchField)]
+        return (content_model,
+                content_model._meta.table_name,
+                rowid_field.column_name,
+                columns)
+
+    @staticmethod
+    def _quote(name):
+        return '"%s"' % name.replace('"', '""')
+
+    @classmethod
+    def _sync_object_names(cls, content_table):
+        return {
+            'stage': '%s_fts5_stage' % content_table,
+            'triggers': {
+                'bi': '%s_fts5_bi' % content_table,
+                'ai': '%s_fts5_ai' % content_table,
+                'au': '%s_fts5_au' % content_table,
+                'ad': '%s_fts5_ad' % content_table,
+            },
+        }
+
+    @classmethod
+    def _drop_legacy_sync_triggers(cls, db, content_table, fts_table, names):
+        our_names = set(names['triggers'].values())
+        detected = set()
+        for catalog in ('sqlite_master', 'sqlite_temp_master'):
+            rows = db.execute_sql(
+                'SELECT name, sql FROM %s WHERE type = ? AND tbl_name = ?'
+                % catalog, ('trigger', content_table)).fetchall()
+            for name, sql in rows:
+                if name in our_names:
+                    continue
+                # Only replace triggers that maintain this FTS index.
+                if sql and fts_table in sql:
+                    detected.add(name)
+        for name in our_names | detected:
+            db.execute_sql('DROP TRIGGER IF EXISTS %s' % cls._quote(name))
+
+    @classmethod
+    def install_sync_triggers(cls, content_model=None):
+        """
+        Create (or replace) the triggers that keep an external-content FTS5
+        index in sync, together with a staging table they use to remember
+        the indexed values.
+
+        The triggers are correct with ``PRAGMA recursive_triggers`` kept off:
+        ``INSERT OR REPLACE`` skips the content table's DELETE triggers in that
+        configuration, so the old values are captured in a BEFORE INSERT
+        trigger instead. ``INSERT OR IGNORE`` conflicts only fire BEFORE
+        INSERT, which means nothing is ever applied to the FTS index for a row
+        that was not actually written.
+        """
+        content_model, content_table, rowid_col, columns = (
+            cls._external_content_meta(content_model))
+        db = cls._meta.database
+        fts_table = cls._meta.table_name
+        names = cls._sync_object_names(content_table)
+        stage_table = names['stage']
+        triggers = names['triggers']
+
+        q = cls._quote
+        fts = q(fts_table)
+        doc = q(content_table)
+        stage = q(stage_table)
+        rid = q(rowid_col)
+        cols = [q(column) for column in columns]
+        col_list = ', '.join(cols)
+
+        cls._drop_legacy_sync_triggers(
+            db, content_table, fts_table, names)
+
+        stage_ddl = ('CREATE TABLE IF NOT EXISTS %s ("rid" INTEGER '
+                     'PRIMARY KEY%s)')
+        extra = ''.join(', %s' % column for column in cols)
+        db.execute_sql(stage_ddl % (stage, extra))
+
+        delete_cmd = "'delete'"
+        old_vals = ', '.join('old.%s' % column for column in cols)
+        new_vals = ', '.join('new.%s' % column for column in cols)
+
+        # BEFORE INSERT: remember whatever is currently indexed under the
+        # incoming rowid. On an INSERT OR REPLACE conflict this is the only
+        # trigger that can still see the doomed row; on an INSERT OR IGNORE
+        # conflict it is the only trigger that fires at all.
+        same_content = ' AND '.join(
+            '"d".%s IS %s.%s' % (column, stage, column)
+            for column in cols)
+        bi_sql = (
+            'CREATE TRIGGER %s BEFORE INSERT ON %s BEGIN\n'
+            '  DELETE FROM %s WHERE EXISTS(\n'
+            '    SELECT 1 FROM %s AS "d"\n'
+            '     WHERE "d".%s IS %s."rid" AND (%s));\n'
+            '  DELETE FROM %s WHERE %s."rid" IS new.%s;\n'
+            '  INSERT INTO %s ("rid", %s)\n'
+            '  SELECT %s, %s FROM %s WHERE %s.%s IS new.%s;\n'
+            'END') % (
+            q(triggers['bi']), doc, stage, doc,
+            rid, stage, same_content,
+            stage, stage, rid,
+            stage, col_list,
+            rid, col_list, doc, doc, rid, rid)
+
+        # AFTER INSERT: remove the previously indexed values (REPLACE only),
+        # discard the staged row (IGNORE conflicts leave it here harmlessly),
+        # then index the values that were actually written.
+        ai_sql = (
+            'CREATE TRIGGER %s AFTER INSERT ON %s BEGIN\n'
+            '  INSERT INTO %s (%s, "rowid", %s)\n'
+            '  SELECT %s, "rid", %s FROM %s WHERE "rid" IS new.%s;\n'
+            '  DELETE FROM %s WHERE "rid" IS new.%s;\n'
+            '  INSERT INTO %s ("rowid", %s) VALUES(new.%s, %s);\n'
+            'END;') % (
+            q(triggers['ai']), doc,
+            fts, fts, col_list,
+            delete_cmd, col_list, stage, rid,
+            stage, rid,
+            fts, col_list, rid, new_vals)
+
+        au_sql = (
+            'CREATE TRIGGER %s AFTER UPDATE ON %s BEGIN\n'
+            '  INSERT INTO %s (%s, "rowid", %s) VALUES(%s, old.%s, %s);\n'
+            '  INSERT INTO %s ("rowid", %s) VALUES(new.%s, %s);\n'
+            '  DELETE FROM %s WHERE "rid" IN (old.%s, new.%s);\n'
+            'END;') % (
+            q(triggers['au']), doc,
+            fts, fts, col_list, delete_cmd, rid, old_vals,
+            fts, col_list, rid, new_vals,
+            stage, rid, rid)
+
+        ad_sql = (
+            'CREATE TRIGGER %s AFTER DELETE ON %s BEGIN\n'
+            '  INSERT INTO %s (%s, "rowid", %s) VALUES(%s, old.%s, %s);\n'
+            '  DELETE FROM %s WHERE "rid" IS old.%s;\n'
+            'END;') % (
+            q(triggers['ad']), doc,
+            fts, fts, col_list, delete_cmd, rid, old_vals,
+            stage, rid)
+
+        for statement in (bi_sql, ai_sql, au_sql, ad_sql):
+            db.execute_sql(statement)
+        return names
+
+    @classmethod
+    def reconcile_external_index(cls, content_model=None):
+        """
+        Bring an external-content FTS5 index back in line with the content
+        table row by row.
+
+        A healthy index only receives the content rows that are missing from
+        it; the index is not rebuilt. A drifted index (stale terms or orphan
+        rows left by the old insert-only triggers) is rebuilt once inside the
+        operation. Integrity is always re-verified afterwards.
+        """
+        content_model, content_table, rowid_col, columns = (
+            cls._external_content_meta(content_model))
+        db = cls._meta.database
+        fts_table = cls._meta.table_name
+        names = cls._sync_object_names(content_table)
+
+        q = cls._quote
+        fts = q(fts_table)
+        doc = q(content_table)
+        rid = q(rowid_col)
+        cols = [q(column) for column in columns]
+        col_list = ', '.join(cols)
+
+        # rank 1 verifies the index against the content table. A failure
+        # poisons the current statement, so probe inside a savepoint.
+        drifted = False
+        try:
+            with db.savepoint():
+                cls.integrity_check(rank=1)
+        except DatabaseError:
+            drifted = True
+
+        if drifted:
+            cls.delete_all()
+            db.execute_sql(
+                'INSERT INTO %s ("rowid", %s) SELECT %s, %s FROM %s' % (
+                    fts, col_list, rid, col_list, doc))
+        else:
+            # Only the "row"/"col" fts5vocab tables report external-content
+            # rowids unreliably; the instance table reports the real rowids.
+            vocab_table = '%s_fts5_reconcile_vocab' % fts_table
+            db.execute_sql(
+                'CREATE VIRTUAL TABLE %s USING fts5vocab(%s, %s)' % (
+                    q(vocab_table), fts, "'instance'"))
+            try:
+                db.execute_sql(
+                    'INSERT INTO %s ("rowid", %s)\n'
+                    'SELECT %s, %s FROM %s WHERE %s NOT IN (\n'
+                    '  SELECT DISTINCT "doc" FROM %s)' % (
+                        fts, col_list, rid, col_list, doc, rid,
+                        q(vocab_table)))
+            finally:
+                db.execute_sql('DROP TABLE %s' % q(vocab_table))
+
+        cls.integrity_check(rank=1)
+        # INSERT OR IGNORE conflicts that ran before the install can leave
+        # staging rows behind; nothing should remain once the index is aligned.
+        stage_exists = db.execute_sql(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (names['stage'],)).fetchone()
+        if stage_exists:
+            db.execute_sql('DELETE FROM %s' % q(names['stage']))
+        return {'rebuilt': drifted}
+
+    @classmethod
+    def install_maintenance(cls, content_model=None):
+        """
+        Re-runnable, single-transaction maintenance install for an
+        external-content FTS5 table.
+
+        Replaces any triggers that previously maintained this index (including
+        insert-only legacy triggers), installs triggers that correctly handle
+        plain inserts, updates, deletes and ``INSERT OR REPLACE`` /
+        ``INSERT OR IGNORE`` against the integer content rowid, then backfills
+        the historical content. Every step is transactional DDL, so a failure
+        rolls the whole install back and leaves the old behavior untouched.
+        """
+        db = cls._meta.database
+        with db.atomic():
+            names = cls.install_sync_triggers(content_model)
+            result = cls.reconcile_external_index(content_model)
+            result['names'] = names
+            return result
 
     @classmethod
     def VocabModel(cls, table_type='row', table=None):

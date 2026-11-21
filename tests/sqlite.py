@@ -107,6 +107,26 @@ class ContentPost5(FTS5Model):
         options = {'content': Post, 'content_rowid': Post.id}
 
 
+class FTS5MaintenanceDoc(TestModel):
+    # Integer content rowid used directly as the external-content rowid.
+    doc_id = IntegerField(primary_key=True)
+    title = TextField(null=True)
+    body = TextField(null=True)
+    tag = TextField(null=True)
+    class Meta:
+        legacy_table_names = False
+
+
+class FTS5MaintenanceIndex(FTS5Model):
+    title = SearchField()
+    body = SearchField()
+    tag = SearchField(unindexed=True)
+    class Meta:
+        legacy_table_names = False
+        options = {'content': FTS5MaintenanceDoc,
+                   'content_rowid': FTS5MaintenanceDoc.doc_id}
+
+
 class FTS5Contentless(FTS5Model):
     title = SearchField()
     data = SearchField()
@@ -1623,6 +1643,262 @@ class TestFTS5(BaseFTSTestCase, ModelTestCase):
         )
         for a, b in cases:
             self.assertEqual(FTS5Test.clean_query(a), b)
+
+
+@skip_unless(FTS5Model.fts5_installed(), 'requires fts5')
+class TestFTS5ExternalMaintenance(ModelTestCase):
+    database = ext_database
+    requires = [FTS5MaintenanceDoc, FTS5MaintenanceIndex]
+
+    fts_table = FTS5MaintenanceIndex._meta.table_name
+    doc_table = FTS5MaintenanceDoc._meta.table_name
+    stage_table = '%s_fts5_stage' % doc_table
+
+    legacy_rows = [
+        {'doc_id': 1, 'title': 'alpha title', 'body': 'alpha one',
+         'tag': 'red'},
+        {'doc_id': 2, 'title': 'bravo title', 'body': 'bravo two',
+         'tag': None},
+        {'doc_id': 3, 'title': 'charlie title', 'body': 'charlie three',
+         'tag': 'blue'},
+    ]
+
+    def setUp(self):
+        super(TestFTS5ExternalMaintenance, self).setUp()
+        # The maintenance rules are designed for this exact setting.
+        self.assertEqual(
+            self.database.execute_sql('PRAGMA recursive_triggers').fetchone(),
+            (0,))
+
+    def hits(self, term):
+        # Rowid-only MATCH stays readable even while orphan rows exist.
+        cursor = self.database.execute_sql(
+            'SELECT rowid FROM %s WHERE %s MATCH ? ORDER BY rowid'
+            % (self.fts_table, self.fts_table), (term,))
+        return [row[0] for row in cursor.fetchall()]
+
+    def indexed_rowids(self):
+        # The instance vocab reports the real indexed rowids, unlike the
+        # read-through SELECT on the external-content table.
+        self.database.execute_sql(
+            "CREATE VIRTUAL TABLE fts5_maint_vocab USING fts5vocab('%s', "
+            "'instance')" % self.fts_table)
+        try:
+            rows = self.database.execute_sql(
+                'SELECT DISTINCT doc FROM fts5_maint_vocab ORDER BY doc'
+            ).fetchall()
+        finally:
+            self.database.execute_sql('DROP TABLE fts5_maint_vocab')
+        return [row[0] for row in rows]
+
+    def seed_legacy_state(self):
+        # An insert-only legacy trigger, existing content, a history gap (row
+        # 3 removed from the index) and an orphan row with no content row.
+        self.database.execute_sql(
+            'CREATE TRIGGER %s_legacy_ai AFTER INSERT ON %s BEGIN '
+            'INSERT INTO %s(rowid, title, body, tag) '
+            'VALUES(new.doc_id, new.title, new.body, new.tag); END'
+            % (self.doc_table, self.doc_table, self.fts_table))
+        FTS5MaintenanceDoc.insert_many(self.legacy_rows).execute()
+        self.database.execute_sql(
+            "INSERT INTO %s(%s, rowid, title, body, tag) VALUES("
+            "'delete', 3, 'charlie title', 'charlie three', 'blue')"
+            % (self.fts_table, self.fts_table))
+        self.database.execute_sql(
+            "INSERT INTO %s(rowid, title, body, tag) VALUES("
+            "99, 'ghost title', 'ghost orphan', 'x')" % self.fts_table)
+
+    def legacy_trigger_count(self):
+        return self.database.execute_sql(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = ?", ('%s_legacy_ai' % self.doc_table,)).fetchone()[0]
+
+    def new_trigger_count(self):
+        return self.database.execute_sql(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' "
+            "AND name LIKE '%s_fts5_%%'" % self.doc_table).fetchone()[0]
+
+    def stage_count(self):
+        return self.database.execute_sql(
+            'SELECT count(*) FROM %s' % self.stage_table).fetchone()[0]
+
+    def test_failed_install_rolls_back_to_legacy_behavior(self):
+        self.seed_legacy_state()
+
+        class PlannedFailure(Exception):
+            pass
+
+        with self.assertRaises(PlannedFailure):
+            with self.database.atomic():
+                FTS5MaintenanceIndex.install_sync_triggers()
+                # Inside the transaction the old trigger is already gone...
+                self.assertEqual(self.legacy_trigger_count(), 0)
+                raise PlannedFailure('fails after trigger swap, before '
+                                     'the historical backfill')
+
+        # ...but rollback restores every legacy object and the old results.
+        self.assertEqual(self.legacy_trigger_count(), 1)
+        self.assertEqual(self.new_trigger_count(), 0)
+        self.assertEqual(self.database.execute_sql(
+            "SELECT count(*) FROM sqlite_master WHERE name = ?",
+            (self.stage_table,)).fetchone()[0], 0)
+        self.assertEqual(self.hits('charlie'), [])
+        self.assertEqual(self.hits('ghost'), [99])
+        self.assertEqual(self.hits('alpha'), [1])
+
+    def test_install_reconciles_history_and_removes_orphans(self):
+        self.seed_legacy_state()
+
+        result = FTS5MaintenanceIndex.install_maintenance()
+        self.assertTrue(result['rebuilt'])  # drifted index -> one rebuild
+        self.assertEqual(self.legacy_trigger_count(), 0)
+        self.assertEqual(self.new_trigger_count(), 4)
+
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+        self.assertEqual(self.indexed_rowids(), [1, 2, 3])
+        self.assertEqual(self.hits('charlie'), [3])  # history backfilled
+        self.assertEqual(self.hits('ghost'), [])     # orphan retired
+        self.assertEqual(self.stage_count(), 0)
+
+    def test_reinstall_does_not_rebuild_or_double_index(self):
+        self.seed_legacy_state()
+        FTS5MaintenanceIndex.install_maintenance()
+
+        result = FTS5MaintenanceIndex.install_maintenance()
+        self.assertFalse(result['rebuilt'])
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+        self.assertEqual(self.indexed_rowids(), [1, 2, 3])
+        self.assertEqual(self.stage_count(), 0)
+
+    def test_ignore_replace_and_pk_update_commit(self):
+        self.seed_legacy_state()
+        FTS5MaintenanceIndex.install_maintenance()
+
+        with self.database.atomic():
+            # Different content, same existing rowid: the IGNORE is a no-op.
+            self.database.execute_sql(
+                'INSERT OR IGNORE INTO %s(doc_id, title, body, tag) '
+                "VALUES(1, 'ignored title', 'ignored delta', 'green')"
+                % self.doc_table)
+            # REPLACE the same integer rowid with different content.
+            self.database.execute_sql(
+                'INSERT OR REPLACE INTO %s(doc_id, title, body, tag) '
+                "VALUES(1, 'replaced title', 'replaced echo', NULL)"
+                % self.doc_table)
+            # A normal UPDATE moves another document to a new integer rowid.
+            self.database.execute_sql(
+                'UPDATE %s SET doc_id = 9, title = ?, body = ? '
+                'WHERE doc_id = 2' % self.doc_table,
+                ('moved title', 'moved golf'))
+
+        # IGNORE left the original content searchable.
+        self.assertEqual(self.hits('ignored'), [])
+        self.assertEqual(self.hits('alpha'), [])
+        self.assertEqual(self.hits('echo'), [1])
+        # REPLACE retired every old term of row 1.
+        self.assertEqual(self.hits('one'), [])
+        # The moved document's old rowid and old terms both leave the index.
+        self.assertEqual(self.hits('bravo'), [])
+        self.assertEqual(self.hits('two'), [])
+        self.assertEqual(self.hits('golf'), [9])
+        self.assertEqual(self.indexed_rowids(), [1, 3, 9])
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+        self.assertEqual(self.stage_count(), 0)
+
+    def test_ignore_replace_and_pk_update_rollback(self):
+        self.seed_legacy_state()
+        FTS5MaintenanceIndex.install_maintenance()
+
+        with self.database.atomic() as transaction:
+            self.database.execute_sql(
+                'INSERT OR IGNORE INTO %s(doc_id, title, body, tag) '
+                "VALUES(3, 'ignored x', 'ignored y', 'z')" % self.doc_table)
+            self.database.execute_sql(
+                'INSERT OR REPLACE INTO %s(doc_id, title, body, tag) '
+                "VALUES(1, 'tx title', 'tx kilo', 'z')" % self.doc_table)
+            self.database.execute_sql(
+                'UPDATE %s SET body = ? WHERE doc_id = 2' % self.doc_table,
+                ('rollback lima',))
+            self.assertEqual(self.hits('kilo'), [1])
+            self.assertEqual(self.hits('lima'), [2])
+            transaction.rollback()
+
+        # Every term-level change is undone alongside the content.
+        self.assertEqual(self.hits('kilo'), [])
+        self.assertEqual(self.hits('lima'), [])
+        self.assertEqual(self.hits('ignored'), [])
+        self.assertEqual(self.hits('alpha'), [1])
+        self.assertEqual(self.hits('bravo'), [2])
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+        self.assertEqual(self.stage_count(), 0)
+        self.assertEqual(self.indexed_rowids(), [1, 2, 3])
+
+    def test_ordinary_writes_stay_incremental(self):
+        self.seed_legacy_state()
+        FTS5MaintenanceIndex.install_maintenance()
+
+        FTS5MaintenanceDoc.delete_by_id(3)
+        self.assertEqual(self.hits('charlie'), [])
+        FTS5MaintenanceDoc.create(doc_id=7, title='india title',
+                                  body='india fresh', tag='p')
+        self.assertEqual(self.hits('india'), [7])
+        FTS5MaintenanceDoc.update(body='alpha edited').where(
+            FTS5MaintenanceDoc.doc_id == 1).execute()
+        self.assertEqual(self.hits('one'), [])
+        self.assertEqual(self.hits('edited'), [1])
+
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+        self.assertEqual(self.indexed_rowids(), [1, 2, 7])
+        self.assertEqual(self.stage_count(), 0)
+
+    def test_lonely_ignore_is_healed_by_reconcile(self):
+        self.seed_legacy_state()
+        FTS5MaintenanceIndex.install_maintenance()
+
+        # An IGNORE conflict with no later write leaves one staging row, but
+        # never touches the index.
+        self.database.execute_sql(
+            'INSERT OR IGNORE INTO %s(doc_id, title, body, tag) '
+            "VALUES(1, 'x', 'lonely ignore', 'z')" % self.doc_table)
+        self.assertEqual(self.stage_count(), 1)
+        self.assertEqual(self.hits('lonely'), [])
+
+        result = FTS5MaintenanceIndex.reconcile_external_index()
+        self.assertFalse(result['rebuilt'])
+        self.assertEqual(self.stage_count(), 0)
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+
+    def test_repeated_replace_keeps_single_index_entry(self):
+        self.seed_legacy_state()
+        FTS5MaintenanceIndex.install_maintenance()
+
+        self.database.execute_sql(
+            'INSERT OR REPLACE INTO %s(doc_id, title, body, tag) '
+            "VALUES(7, 'first mike', 'first mike body', 'p')" % self.doc_table)
+        self.database.execute_sql(
+            'INSERT OR REPLACE INTO %s(doc_id, title, body, tag) '
+            "VALUES(7, 'second november', 'second november body', 'p')"
+            % self.doc_table)
+
+        self.assertEqual(self.hits('mike'), [])
+        self.assertEqual(self.hits('november'), [7])
+        self.assertEqual(self.indexed_rowids().count(7), 1)
+        FTS5MaintenanceIndex.integrity_check(rank=1)
+        self.assertEqual(self.stage_count(), 0)
+
+    def test_requires_external_content_configuration(self):
+        class Standalone(FTS5Model):
+            body = SearchField()
+            class Meta:
+                database = self.database
+                table_name = 'fts5_standalone_maint'
+
+        Standalone.create_table()
+        try:
+            self.assertRaises(ImproperlyConfigured,
+                              Standalone.install_maintenance)
+        finally:
+            Standalone.drop_table()
 
 
 class TestRowIDField(ModelTestCase):
