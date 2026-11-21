@@ -2838,13 +2838,15 @@ Model
              (DQ(status='draft') | DQ(status='published')),
              timestamp__gte=datetime.date(2023, 1, 1))
 
-   .. method:: prefetch(*subqueries, prefetch_type=PREFETCH_TYPE.WHERE)
+   .. method:: prefetch(*subqueries, prefetch_type=PREFETCH_TYPE.WHERE, per_parent=None)
 
       :param subqueries: A list of :class:`Model` classes or select
           queries to prefetch. Each element may also be a ``(query, target_model)``
           tuple: the ``target_model`` names which previously-listed model
           should be joined through when more than one candidate exists.
       :param prefetch_type: Query type to use for the subqueries.
+      :param per_parent: Per-parent row limit(s), as described in
+          :func:`prefetch`.
       :return: a list of models with selected relations prefetched.
 
       Execute the query, prefetching the given additional resources. Same as
@@ -6600,7 +6602,7 @@ Queries
       nrows = query.execute(database)
 
 
-.. function:: prefetch(sq, *subqueries, prefetch_type=PREFETCH_TYPE.WHERE)
+.. function:: prefetch(sq, *subqueries, prefetch_type=PREFETCH_TYPE.WHERE, per_parent=None)
 
    :param sq: Query to use as starting-point.
    :param subqueries: One or more models or :class:`ModelSelect` queries
@@ -6608,6 +6610,14 @@ Queries
         tuple: the ``target_model`` names which previously-listed model
         should be joined through when more than one candidate exists.
    :param prefetch_type: Query type to use for the subqueries.
+   :param per_parent: Keep only the first *n* rows for each parent in a
+       subquery, using the same windowed ranking as :class:`Load`. A scalar
+       applies to the first subquery, a sequence maps positionally to the
+       subqueries, and a dict is keyed by the target model (class, table name
+       or class name) or by the relation (backref name). ``None`` as a dict
+       key sets the default, and ``None`` at a position leaves that relation
+       unlimited. A limited subquery must have exactly one foreign key to its
+       parent, i.e. the one-to-many direction.
    :return: a list of models with selected relations prefetched. When called
        with no subqueries returns ``sq`` unmodified.
 

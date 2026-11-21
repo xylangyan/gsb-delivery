@@ -1,7 +1,7 @@
 import re
 import threading
 from _typeshed import Incomplete, SupportsKeysAndGetItem
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
 from types import TracebackType
@@ -2005,7 +2005,12 @@ class BaseModelSelect(_ModelQueryHelper):
     def except_(self, rhs) -> ModelCompoundSelectQuery: ...
     __sub__ = except_
     def __iter__(self): ...
-    def prefetch(self, *subqueries, prefetch_type: int = ...): ...
+    def prefetch(
+        self,
+        *subqueries,
+        prefetch_type: int = ...,
+        per_parent: int | Iterable[int | None] | Mapping[Any, int | None] | None = ...,
+    ): ...
     def with_related(
         self, *loads: Load | ForeignKeyField[Any] | BackrefAccessor
     ) -> Self: ...
@@ -2123,7 +2128,12 @@ class PrefetchQuery(_PrefetchQuery):
     def populate_instance(self, instance, id_map) -> None: ...
     def store_instance(self, instance, id_map) -> None: ...
 
-def prefetch(sq, *subqueries, prefetch_type: int = ...): ...
+def prefetch(
+    sq,
+    *subqueries,
+    prefetch_type: int = ...,
+    per_parent: int | Iterable[int | None] | Mapping[Any, int | None] | None = ...,
+): ...
 
 class Load(Node):
     def __init__(

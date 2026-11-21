@@ -5,6 +5,8 @@ All models in this module except Package/PackageItem are local (not from
 base_models), because prefetch tests need specific relational graph shapes
 that differ from the shared models.
 """
+import datetime
+
 from peewee import *
 
 from .base import requires_models
@@ -56,6 +58,22 @@ class Flag(TestModel):
 class Category(TestModel):
     name = TextField()
     parent = ForeignKeyField('self', backref='children', null=True)
+
+
+class Batch(TestModel):
+    name = TextField()
+    started = DateTimeField(null=True)
+
+
+class Anomaly(TestModel):
+    batch = ForeignKeyField(Batch, backref='anomalies')
+    status = TextField()
+    happened = DateTimeField(null=True)
+
+
+class Attachment(TestModel):
+    anomaly = ForeignKeyField(Anomaly, backref='attachments')
+    name = TextField()
 
 
 # ===========================================================================
@@ -719,6 +737,171 @@ class TestJoinTypePrefetchMultipleFKs(ModelTestCase):
             ('s1', [t1, t2], [], ['s2a', 's2b'], []),
             ('s2a', [t3], [t1], ['s3'], ['s1']),
             ('s2b', [t4], [t2], ['s3'], ['s1'])])
+
+
+class TestPrefetchPerParent(ModelTestCase):
+    requires = [Batch, Anomaly, Attachment]
+
+    def setUp(self):
+        super(TestPrefetchPerParent, self).setUp()
+        self.now = now = datetime.datetime(2026, 1, 1, 12, 0, 0)
+        hour = datetime.timedelta(hours=1)
+        self.attachments = {}
+
+        def anomaly(batch, status, happened):
+            a = Anomaly.create(batch=batch, status=status, happened=happened)
+            self.attachments[a.id] = Attachment.create(anomaly=a,
+                                                       name='a%d' % a.id)
+            return a
+
+        # Page one batches carry newer anomalies than anything on page two.
+        for i in range(3):
+            b = Batch.create(name='p1-%d' % i,
+                             started=now - datetime.timedelta(days=1, hours=i))
+            anomaly(b, 'pending', now + datetime.timedelta(days=2))
+        self.b1 = b1 = Batch.create(name='b1', started=now)
+        self.b2 = b2 = Batch.create(name='b2', started=now + hour)
+        self.b3 = b3 = Batch.create(name='b3', started=now + 2 * hour)
+
+        # b1: the latest row is closed and filtered; two pending rows tie on
+        # time and are split by primary key; one pending row has no time and
+        # sorts last.
+        self.b1_closed = anomaly(b1, 'closed', now + 6 * hour)
+        self.b1_sel = [anomaly(b1, 'pending', now + 5 * hour)]
+        tie = anomaly(b1, 'pending', now + 4 * hour)
+        tie2 = anomaly(b1, 'pending', now + 4 * hour)
+        self.b1_sel.append(max(tie, tie2, key=lambda a: a.id))
+        self.b1_skip = [a for a in (tie, tie2) if a.id != self.b1_sel[1].id]
+        self.b1_null = anomaly(b1, 'pending', None)
+
+        # b2: exactly two pending rows, one without a time.
+        self.b2_sel = [anomaly(b2, 'pending', now),
+                       anomaly(b2, 'pending', None)]
+        # b3 has no anomalies at all.
+
+        # The caller's filter and order are preserved by the prefetch.
+        self.query = (Anomaly.select()
+                      .where(Anomaly.status == 'pending')
+                      .order_by(Anomaly.happened.desc(nulls='last'),
+                                Anomaly.id.desc()))
+
+    def _export(self, pt, page=2):
+        # prefetch() executes eagerly, so build the query inside the counter.
+        with self.assertQueryCount(3):
+            batches = list(Batch.select()
+                           .order_by(Batch.started, Batch.id)
+                           .paginate(page, 3)
+                           .prefetch(self.query, Attachment, per_parent=2,
+                                     prefetch_type=pt))
+        return [(b.name, [(a.id, [att.name for att in a.attachments])
+                          for a in b.anomalies])
+                for b in batches]
+
+    def test_per_parent_both_strategies(self):
+        b1_ids = [a.id for a in self.b1_sel]
+        b2_ids = [a.id for a in self.b2_sel]
+        expected = [
+            ('b1', [(i, [self.attachments[i].name]) for i in b1_ids]),
+            ('b2', [(i, [self.attachments[i].name]) for i in b2_ids]),
+            ('b3', [])]
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            self.assertEqual(self._export(pt), expected)
+
+    def test_per_parent_skips_filtered_and_unselected_rows(self):
+        excluded = set(a.id for a in self.b1_skip)
+        excluded.add(self.b1_closed.id)
+        excluded.add(self.b1_null.id)
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            rows = dict(self._export(pt))['b1']
+            loaded = set(a for a, _ in rows)
+            self.assertFalse(loaded & excluded)
+
+    def test_per_parent_tie_by_primary_key(self):
+        # The higher primary key wins when timestamps are equal.
+        self.assertGreater(self.b1_sel[1].id, self.b1_skip[0].id)
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            rows = dict(self._export(pt))['b1']
+            self.assertEqual([i for i, _ in rows],
+                             [a.id for a in self.b1_sel])
+
+    def test_per_parent_only_selected_attachments(self):
+        # The child query's IN list contains only the selected anomalies, so
+        # attachments of dropped rows are never fetched.
+        excluded = set(a.id for a in self.b1_skip)
+        excluded.update((self.b1_closed.id, self.b1_null.id))
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            with self.assertQueryCount(3):
+                batches = list(Batch.select()
+                               .order_by(Batch.started, Batch.id)
+                               .paginate(2, 3)
+                               .prefetch(self.query, Attachment, per_parent=2,
+                                         prefetch_type=pt))
+            loaded = set(a.id for b in batches for a in b.anomalies)
+            selected = set(a.id for a in self.b1_sel + self.b2_sel)
+            self.assertEqual(loaded, selected)
+            self.assertFalse(loaded & excluded)
+            # And attachments are attached only to loaded anomalies.
+            for b in batches:
+                for a in b.anomalies:
+                    self.assertEqual([x.name for x in a.attachments],
+                                     [self.attachments[a.id].name])
+
+    def test_per_parent_query_rounds_do_not_grow(self):
+        # More batches, unrelated anomalies and attachments must not add
+        # query rounds; neither does moving between pages.
+        other = Batch.create(name='b0',
+                             started=self.now - datetime.timedelta(days=3))
+        for i in range(4):
+            a = Anomaly.create(batch=other, status='pending',
+                               happened=self.now + datetime.timedelta(days=9))
+            for j in range(3):
+                Attachment.create(anomaly=a, name='extra-%d-%d' % (i, j))
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            for page in (1, 2, 3):
+                with self.assertQueryCount(3):
+                    list(Batch.select().order_by(Batch.started, Batch.id)
+                         .paginate(page, 3)
+                         .prefetch(self.query, Attachment, per_parent=2,
+                                   prefetch_type=pt))
+
+    def test_per_parent_not_requested_is_unchanged(self):
+        # Without per_parent the legacy prefetch returns every related row.
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            with self.assertQueryCount(3):
+                batches = list(Batch.select()
+                               .order_by(Batch.started, Batch.id)
+                               .paginate(2, 3)
+                               .prefetch(self.query, Attachment,
+                                         prefetch_type=pt))
+            b1, b2, b3 = batches
+            self.assertEqual(len(b1.anomalies), 4)  # 5 rows, 1 closed.
+            self.assertEqual(len(b2.anomalies), 2)
+            self.assertEqual(b3.anomalies, [])
+
+    def test_per_parent_nested_limit(self):
+        # A second per-parent limit applies to the attachments of the
+        # anomalies selected above, not to every attachment row.
+        a = self.b1_sel[0]
+        for i in range(3):
+            Attachment.create(anomaly=a, name='more-%d' % i)
+        for pt in SUBQUERY_PREFETCH_TYPES:
+            with self.assertQueryCount(3):
+                batches = list(Batch.select()
+                               .order_by(Batch.started, Batch.id)
+                               .paginate(2, 3)
+                               .prefetch(self.query,
+                                         Attachment.select()
+                                         .order_by(Attachment.id.desc()),
+                                         per_parent=[2, 1],
+                                         prefetch_type=pt))
+            loaded = {x.id: x for b in batches for x in b.anomalies}
+            self.assertEqual(len(loaded[a.id].attachments), 1)
+            self.assertEqual(len(loaded[self.b1_sel[1].id].attachments), 1)
+            self.assertIn('more-2', [x.name for x in loaded[a.id].attachments])
+
+    def test_per_parent_rejects_forward_fk(self):
+        with self.assertRaisesRegex(ValueError, 'single foreign key'):
+            prefetch(Note.select(), Person.select(), per_parent=2)
 
 
 class TestPrefetchErrorPaths(ModelTestCase):

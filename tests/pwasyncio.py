@@ -1106,6 +1106,14 @@ class IntegrationTests(object):
         tweet = users[0].tweets[0]
         self.assertIn('user', tweet.__rel__)
 
+        # aprefetch forwards the same keyword arguments as prefetch.
+        for i in range(3):
+            await ATweet.acreate(user=u, message='m%d' % (i + 4))
+        users = await self.db.aprefetch(
+            AUser.select().where(AUser.username == 'af3'),
+            ATweet.select().order_by(ATweet.id.desc()), per_parent=2)
+        self.assertEqual([t.message for t in users[0].tweets], ['m6', 'm5'])
+
         real_db = ATweet._meta.database
         ATweet._meta.database = Mock(spec=[])
         try:

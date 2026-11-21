@@ -442,8 +442,8 @@ class AsyncDatabaseMixin(object):
     async def exists(self, query):
         return await self.run(query.exists)
 
-    async def aprefetch(self, query, *subqueries):
-        return await self.run(prefetch, query, *subqueries)
+    async def aprefetch(self, query, *subqueries, **kwargs):
+        return await self.run(prefetch, query, *subqueries, **kwargs)
 
     async def iterate(self, query, buffer_size=None):
         # Use similar approach to postgres_ext server-side query impl.

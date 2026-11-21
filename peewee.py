@@ -9323,7 +9323,80 @@ def _relate(query, parent_query, pairs, strategy):
     return query.where(expr)
 
 
-def prefetch_add_subquery(sq, subqueries, prefetch_type):
+def _rank_term(term, pks, field):
+    # Aggregate non-grouped order terms (MIN asc / MAX desc) so a to-many
+    # join cannot rank one child twice.
+    o = term if isinstance(term, Ordering) else Asc(term)
+    node = o.node.unwrap()
+    if isinstance(node, SQL):
+        raise ValueError('per_parent cannot rank by a SQL() literal, '
+                         'order by a field or expression instead.')
+    if node is field or any(node is pk for pk in pks):
+        return term
+    agg = fn.MAX(node) if 'DESC' in o.direction.upper() else fn.MIN(node)
+    return Ordering(agg, o.direction, o.collation, o.nulls)
+
+
+def _ranked_query(base, link, per_parent, field, name):
+    # Top-N children per parent via a ranking CTE. The outer joins back for
+    # full rows and orders by rank, so the relation's joins stay inside.
+    rel_model = field.model
+    if base._group_by is not None:
+        raise ValueError('per_parent is not supported with a grouped or '
+                         'aggregate relation query.')
+    pks = rel_model._meta.get_primary_keys()
+    order = [_rank_term(o, pks, field)
+             for o in (base._order_by or pks)]
+    rn = (fn.ROW_NUMBER()
+          .over(partition_by=[field], order_by=order)
+          .alias('_rn'))
+    # Collapse row-multiplying joins to one row per child before ranking.
+    inner = (base.select(*pks, rn).order_by().limit(None).offset(None)
+             .group_by(*pks, field))
+    cte = link(inner).cte(name)
+    on = reduce(operator.and_,
+                [pk == getattr(cte.c, pk.column_name) for pk in pks])
+    # A custom projection keeps the relation's joins so selected instances
+    # hydrate. A to-many join there multiplies rows.
+    if getattr(base, '_is_default', False):
+        outer = rel_model.select()
+    else:
+        outer = base.limit(None).offset(None).switch(rel_model)
+    return (outer.join(cte, on=on)
+            .where(cte.c._rn <= per_parent)
+            .with_cte(cte)
+            .order_by(cte.c._rn))
+
+
+def _prefetch_ranked(subquery, parent_query, pairs, per_parent, strategy,
+                     name):
+    # A flat prefetch subquery has no Load node, so relate its ranking CTE
+    # directly to the already-built parent query.
+    field = pairs[0][0]
+
+    def link(inner):
+        return _relate(inner, parent_query, pairs, strategy)
+
+    return _ranked_query(subquery, link, per_parent, field, name)
+
+
+def _per_parent_limit(per_parent, index, model, keys=()):
+    # A scalar applies to the first subquery, a sequence maps positionally,
+    # and a mapping is keyed by the target model or relation (with None as
+    # the default). None at a position leaves that relation unlimited.
+    if per_parent is None:
+        return None
+    if isinstance(per_parent, dict):
+        for key in (model, model._meta.name, model.__name__) + tuple(keys):
+            if key in per_parent:
+                return per_parent[key]
+        return per_parent.get(None)
+    if isinstance(per_parent, (list, tuple)):
+        return per_parent[index] if index < len(per_parent) else None
+    return per_parent if index == 0 else None
+
+
+def prefetch_add_subquery(sq, subqueries, prefetch_type, per_parent=None):
     fixed_queries = [PrefetchQuery(sq)]
     for i, subquery in enumerate(subqueries):
         if isinstance(subquery, tuple):
@@ -9358,6 +9431,23 @@ def prefetch_add_subquery(sq, subqueries, prefetch_type):
 
         dest = (target_model,) if target_model else None
 
+        relation_keys = ()
+        if fks and len(fks) == 1:
+            relation_keys = (fks[0].backref or fks[0].name,
+                             getattr(last_obj, '__name__', None))
+        limit = _per_parent_limit(per_parent, i, subquery_model,
+                                  relation_keys)
+        if limit is not None:
+            if not fks or len(fks) != 1:
+                raise ValueError('prefetch() per_parent requires a single '
+                                 'foreign key from the prefetched query to '
+                                 'its parent, e.g. Note.person.')
+            subquery = _prefetch_ranked(
+                subquery, last_query, list(zip(fks, pks)), limit,
+                prefetch_type, '_prefetch_ranked_%d' % i)
+            fixed_queries.append(PrefetchQuery(subquery, fks, False, dest))
+            continue
+
         if fks:
             subquery = _relate(subquery, last_query, list(zip(fks, pks)),
                                prefetch_type)
@@ -9375,6 +9465,7 @@ def prefetch(sq, *subqueries, **kwargs):
     if not subqueries:
         return sq
     prefetch_type = kwargs.pop('prefetch_type', PREFETCH_TYPE.WHERE)
+    per_parent = kwargs.pop('per_parent', None)
     if kwargs:
         raise ValueError('Unrecognized arguments: %s' % kwargs)
     if prefetch_type == PREFETCH_TYPE.MATERIALIZE:
@@ -9384,7 +9475,8 @@ def prefetch(sq, *subqueries, **kwargs):
     elif prefetch_type not in PREFETCH_TYPE.values():
         raise ValueError('prefetch_type must be a PREFETCH_TYPE value.')
 
-    fixed_queries = prefetch_add_subquery(sq, subqueries, prefetch_type)
+    fixed_queries = prefetch_add_subquery(sq, subqueries, prefetch_type,
+                                          per_parent)
     deps = {}
     rel_map = {}
     for pq in reversed(fixed_queries):
@@ -9519,53 +9611,13 @@ class Load(Node):
         _bucket(field, self._is_backref, children, parents)
         return children, child_query
 
-    @staticmethod
-    def _rank_term(term, pks, field):
-        # Aggregate non-grouped order terms (MIN asc / MAX desc) so a to-many
-        # join cannot rank one child twice.
-        o = term if isinstance(term, Ordering) else Asc(term)
-        node = o.node.unwrap()
-        if isinstance(node, SQL):
-            raise ValueError('per_parent cannot rank by a SQL() literal, '
-                             'order by a field or expression instead.')
-        if node is field or any(node is pk for pk in pks):
-            return term
-        agg = fn.MAX(node) if 'DESC' in o.direction.upper() else fn.MIN(node)
-        return Ordering(agg, o.direction, o.collation, o.nulls)
-
     def _windowed(self, parent_query, parents, depth=0):
-        # Top-N children per parent via a ranking CTE. The outer joins back for
-        # full rows and orders by rank, so the relation's joins stay inside.
         field = self._field
-        rel_model = field.model
-        base = self._base(rel_model)
-        if base._group_by is not None:
-            raise ValueError('per_parent is not supported with a grouped or '
-                             'aggregate relation query.')
-        pks = rel_model._meta.get_primary_keys()
-        order = [self._rank_term(o, pks, field)
-                 for o in (base._order_by or pks)]
-        rn = (fn.ROW_NUMBER()
-              .over(partition_by=[field], order_by=order)
-              .alias('_rn'))
-        # Collapse row-multiplying joins to one row per child before ranking.
-        inner = (base.select(*pks, rn).order_by().limit(None).offset(None)
-                 .group_by(*pks, field))
         # Unique name per depth so a nested windowed parent doesn't collide.
-        cte = (self._link_children(inner, parent_query, parents)
-               .cte('_load_ranked_%d' % depth))
-        on = reduce(operator.and_,
-                    [pk == getattr(cte.c, pk.column_name) for pk in pks])
-        # A custom projection keeps the relation's joins so selected
-        # instances hydrate. A to-many join there multiplies rows.
-        if base._is_default:
-            outer = rel_model.select()
-        else:
-            outer = base.limit(None).offset(None).switch(rel_model)
-        return (outer.join(cte, on=on)
-                .where(cte.c._rn <= self._per_parent)
-                .with_cte(cte)
-                .order_by(cte.c._rn))
+        return _ranked_query(
+            self._base(field.model),
+            lambda inner: self._link_children(inner, parent_query, parents),
+            self._per_parent, field, '_load_ranked_%d' % depth)
 
 
 def _load_related(parents, parent_query, loads, depth=0, database=None):

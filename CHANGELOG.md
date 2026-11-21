@@ -7,6 +7,13 @@ https://github.com/coleifer/peewee/releases
 
 ## master
 
+* `prefetch()` accepts `per_parent` to truncate each parent's related rows in
+  the database, using the same windowed ranking as `Load(..., per_parent=n)`.
+  A scalar applies to the first subquery, a list positionally and a dict by
+  target model or relation. The subquery's filter, the outer page and empty
+  parents are preserved for both the WHERE and JOIN strategies; rows dropped
+  by the limit, and their attachments, never leave the database. Existing
+  calls without `per_parent` are unchanged.
 * Clear `after_commit` callbacks registered on a savepoint if that savepoint is
   then rolled-back.
 * Re-create triggers during sqlite migrator table rebuilds.

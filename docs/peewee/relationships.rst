@@ -1253,6 +1253,33 @@ The filter on ``Tweet`` applies only to the prefetched tweets, it does not
 affect which users are returned. ``prefetch`` accepts the ``WHERE`` and ``JOIN``
 strategies through its ``prefetch_type`` keyword (see :ref:`prefetch-strategy`).
 
+``prefetch`` also accepts ``per_parent``, which applies the same top-N-per-
+parent truncation as :class:`Load`. A scalar applies to the first subquery,
+a list applies positionally, and a dict is keyed by the target model or
+relation. The truncation happens in the database, after the subquery's own
+filter, so the outer page, ordering and empty parents are preserved:
+
+.. code-block:: python
+
+   # A page of users plus their two most-recent tweets, in three queries.
+   recent = Tweet.select().where(Tweet.published == True).order_by(
+       Tweet.timestamp.desc(nulls='last'), Tweet.id.desc())
+
+   query = (User.select()
+            .order_by(User.username)
+            .paginate(2, 20)
+            .prefetch(recent, Favorite,
+                      per_parent=[2, 1]))
+
+   for user in query:
+       for tweet in user.tweets:  # At most two, newest first.
+           print(user.username, tweet.content, len(tweet.favorites))
+
+A ``per_parent`` limit only applies to a subquery whose model has a single
+foreign key to its parent (the one-to-many direction). ``None`` at a position
+(or for a relation in a dict) leaves that relation unlimited. The limit
+requires window-function support (SQLite 3.25+, PostgreSQL, MySQL 8).
+
 Choosing between joins and eager loading
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

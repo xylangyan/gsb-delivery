@@ -881,12 +881,14 @@ API Reference
 
       Return boolean whether the query contains any results.
 
-   .. method:: aprefetch(query, *subqueries)
+   .. method:: aprefetch(query, *subqueries, **kwargs)
       :async:
 
       :param Query query: Query to use as starting-point.
       :param subqueries: One or more models or :class:`ModelSelect` queries
           to eagerly fetch.
+      :param kwargs: Forwarded to :func:`prefetch`, e.g. ``prefetch_type`` or
+          ``per_parent``.
       :return: a list of models with selected relations prefetched.
 
       Eagerly fetch related objects, allowing efficient querying of multiple
