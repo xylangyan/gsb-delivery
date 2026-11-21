@@ -264,11 +264,26 @@ class Rufus::Scheduler::CronJob < Rufus::Scheduler::RepeatJob
 
   attr_reader :cron_line
 
+  attr_reader :dst_overlap
+
+  DST_OVERLAP_POLICIES = {
+    'first' => :first,
+    'all' => :all,
+    'both' => :all }.freeze
+
   def initialize(scheduler, cronline, opts, block)
 
     super(scheduler, cronline, opts, block)
 
     @cron_line = opts[:_t] || ::Fugit::Cron.do_parse(cronline)
+
+    o = opts[:dst_overlap]
+    @dst_overlap = DST_OVERLAP_POLICIES[o.to_s]
+
+    fail ArgumentError.new(
+      "invalid :dst_overlap option #{o.inspect}, " +
+      "expected :first, :all or :both"
+    ) if o && @dst_overlap.nil?
 
     set_next_time(nil)
   end
@@ -300,10 +315,86 @@ class Rufus::Scheduler::CronJob < Rufus::Scheduler::RepeatJob
 
   def next_time_from(time)
 
-    @cron_line.next_time(time)
+    cron_next_time(time)
   end
 
   protected
+
+  # Returns the next cron occurrence after the given time.
+  #
+  # Without a :dst_overlap policy, this is simply
+  # Fugit::Cron#next_time (legacy behaviour).
+  #
+  # With a policy, the computation happens in the cron line
+  # timezone, not in the local timezone of this process, so that
+  # preview (#next_times, #occurrences) and actual triggering
+  # yield the same windows.
+  #
+  def cron_next_time(time)
+
+    return @cron_line.next_time(time) unless @dst_overlap
+
+    ztime = EoTime.make(time).translate(@cron_line.timezone)
+
+    if @dst_overlap == :all
+      t0 = @cron_line.next_time(ztime)
+      t1 = dst_second_occurrence(ztime)
+      t1 && t1 < t0 ? t1 : t0
+    else # :first
+      t = @cron_line.next_time(ztime)
+      t = @cron_line.next_time(t) while dst_second_occurrence?(t)
+      t
+    end
+  end
+
+  # Given a time (in the cron line timezone) that matches this cron
+  # line, returns the second occurrence (as an EoTime) of its wall
+  # time if it falls in a DST "fall back" overlap, else returns nil.
+  #
+  def dst_second_occurrence(ztime)
+
+    return nil unless @cron_line.match?(ztime)
+
+    tz, periods = dst_ambiguous_periods(ztime)
+    return nil unless periods
+    return nil unless ztime.utc_offset == periods.first.utc_total_offset
+
+    wall = Time.utc(
+      ztime.year, ztime.month, ztime.day,
+      ztime.hour, ztime.min, ztime.sec)
+
+    EoTime.new(wall - periods.last.utc_total_offset, tz)
+  end
+
+  # Returns true if the given time (in the cron line timezone) is the
+  # second occurrence of an ambiguous wall time (DST "fall back").
+  #
+  def dst_second_occurrence?(ztime)
+
+    tz, periods = dst_ambiguous_periods(ztime)
+
+    periods && ztime.utc_offset == periods.last.utc_total_offset
+  end
+
+  # Returns [ timezone, periods ] if the wall time of the given zoned
+  # time is ambiguous (occurs twice), periods sorted so that the
+  # first (earlier in UTC) occurrence comes first; else nil.
+  #
+  def dst_ambiguous_periods(ztime)
+
+    tz = @cron_line.timezone
+
+    return nil unless tz
+
+    wall = Time.utc(
+      ztime.year, ztime.month, ztime.day,
+      ztime.hour, ztime.min, ztime.sec)
+
+    periods = tz.periods_for_local(wall)
+    return nil unless periods.size == 2
+
+    [ tz, periods.sort_by { |p| -p.utc_total_offset } ]
+  end
 
   def set_next_time(trigger_time, is_post=false, now=nil)
 
@@ -318,7 +409,7 @@ class Rufus::Scheduler::CronJob < Rufus::Scheduler::RepeatJob
       if @first_at && @first_at > t
         @first_at
       else
-        @cron_line.next_time(t)
+        cron_next_time(t)
       end
   end
 end

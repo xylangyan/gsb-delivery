@@ -1613,6 +1613,29 @@ Rufus::Scheduler.parse("2013-12-12 14:00 Pacific/Saipan")
   # => #<Rufus::Scheduler::ZoTime:0x007fb424abf4e8 @seconds=1386820800.0, @zone=#<TZInfo::DataTimezone: Pacific/Saipan>, @time=nil>
 ```
 
+### DST overlaps and cron jobs
+
+When a cron line carries a timezone that observes daylight saving time, some local wall times occur twice ("fall back") and some never occur ("spring forward").
+
+Cron jobs accept a `:dst_overlap` option that makes the overlap policy explicit. The policy applies identically to the preview (`#next_times`, `#occurrences`) and to the actual triggering, and the computation happens in the timezone declared in the cron line, not in the local timezone of the process.
+
+```ruby
+# 2025-11-02 01:30 happens twice in New York
+# (05:30 UTC with -0400 and 06:30 UTC with -0500)
+
+scheduler.cron '30 1 * * * America/New_York', dst_overlap: :all do
+  # fires twice on 2025-11-02, once per UTC instant
+end
+
+scheduler.cron '30 1 * * * America/New_York', dst_overlap: :first do
+  # fires only on the first occurrence (05:30 UTC, -0400)
+end
+```
+
+`:all` (alias `:both`) schedules both occurrences of an ambiguous wall time, `:first` keeps only the first one. In both cases, a wall time that does not exist ("spring forward", like `2025-03-09 02:30` in New York) is simply skipped, it is not moved to a neighbouring wall time.
+
+Jobs scheduled without `:dst_overlap` keep the historical (fugit) time rules.
+
 ### I get "zotime.rb:41:in `initialize': cannot determine timezone from nil"
 
 For when you see an error like:
