@@ -2,6 +2,12 @@ name: pyexcel
 organisation: pyexcel
 releases:
 - changes:
+  - action: Added
+    details:
+    - publish_sheets() streams selected workbook sheets into independent csv targets transactionally, restoring the output directory on conversion or publication failure
+  version: 0.7.8
+  date: tbd
+- changes:
   - action: Fixed
     details:
     - "`#310`: fix broken indentation in iget_records memory-reduction patch"

@@ -26,6 +26,13 @@ from .core import (
     get_book_dict,
     isave_book_as,
 )
+from .publisher import (
+    SheetPublication,
+    PublicationError,
+    publish_sheets,
+    STAGE_CONVERSION,
+    STAGE_PUBLICATION,
+)
 from .sheet import Sheet
 
 # flake8: noqa
