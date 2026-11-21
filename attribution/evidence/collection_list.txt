@@ -1,0 +1,5 @@
+# 采集清单 (collection list) — states ONLY the two physical boundaries
+# of the parcel. No class semantics, no pixel semantics.
+type=boundaries
+width_m=0.08
+height_m=0.01

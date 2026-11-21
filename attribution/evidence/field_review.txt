@@ -1,0 +1,6 @@
+# 现场复核 (field review) — states ONLY whether two specific points
+# are valid ground. No scale, no boundaries.
+# point = x,y,verdict   (verdict: valid | invalid)
+type=field_review
+point=0,0,valid
+point=7,0,invalid
