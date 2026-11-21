@@ -233,7 +233,7 @@ class Rufus::Scheduler::Job
     m.is_a?(Mutex) ? m : (@scheduler.mutexes[m.to_s] ||= Mutex.new)
   end
 
-  def do_call(time, do_rescue)
+  def do_call(time, do_rescue, on_error=nil)
 
     args = [ self, time ][0, @callable.arity]
 
@@ -242,6 +242,8 @@ class Rufus::Scheduler::Job
     end
 
   rescue StandardError => se
+
+    on_error.call(se) if on_error
 
     fail se unless do_rescue
 
@@ -254,14 +256,24 @@ class Rufus::Scheduler::Job
 
   def do_trigger(time)
 
-    return if (
-      opts[:overlap] == false &&
-      running?
-    )
-    return if (
+    record_event(:due, time)
+
+    if opts[:overlap] == false && running?
+
+      record_event(:skipped, time, :reason => :overlap)
+
+      return
+    end
+
+    if (
       callback(:confirm_lock, time) &&
       callback(:on_pre_trigger, time)
     ) == false
+
+      record_event(:skipped, time, :reason => :trigger_denied)
+
+      return
+    end
 
     @count += 1
 
@@ -285,20 +297,46 @@ class Rufus::Scheduler::Job
 
     @last_time = t
 
-    do_call(time, true)
+    error = nil
 
-  ensure
+    record_event(:started, time)
 
-    @last_work_time =
-      EoTime.now - ct[:rufus_scheduler_time]
-    @mean_work_time =
-      ((@count - 1) * @mean_work_time + @last_work_time) / @count
+    begin
 
-    post_trigger(time)
+      do_call(time, true, lambda { |se| error ||= se })
 
-    ct[:rufus_scheduler_job] = nil
-    ct[:rufus_scheduler_time] = nil
-    ct[:rufus_scheduler_timeout] = nil
+    ensure
+
+      err = error || $!
+
+      if err
+        record_event(:failed, time, failure_detail(err))
+      else
+        record_event(:finished, time)
+      end
+
+      @last_work_time =
+        EoTime.now - ct[:rufus_scheduler_time]
+      @mean_work_time =
+        ((@count - 1) * @mean_work_time + @last_work_time) / @count
+
+      post_trigger(time)
+
+      ct[:rufus_scheduler_job] = nil
+      ct[:rufus_scheduler_time] = nil
+      ct[:rufus_scheduler_timeout] = nil
+    end
+  end
+
+  def failure_detail(err)
+
+    reason =
+      if err.is_a?(KillSignal) then :killed
+      elsif err.is_a?(Rufus::Scheduler::TimeoutError) then :timeout
+      else :error
+      end
+
+    { :error => err, :reason => reason }
   end
 
   def post_trigger(time)
@@ -371,7 +409,18 @@ class Rufus::Scheduler::Job
 
     start_work_thread if vac - que < 1 && cur < max
 
+    record_event(:enqueued, time)
+
     @scheduler.work_queue << [ self, time ]
+  end
+
+  def record_event(kind, time, detail={})
+
+    journal = @scheduler.respond_to?(:journal) ? @scheduler.journal : nil
+
+    journal.record_event(self, kind, time, detail) if journal
+
+    nil
   end
 
   # Scheduler level < Job level < this resume()'s level

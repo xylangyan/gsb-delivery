@@ -19,6 +19,7 @@ class Rufus::Scheduler
   require 'rufus/scheduler/jobs_repeat'
   require 'rufus/scheduler/job_array'
   require 'rufus/scheduler/locks'
+  require 'rufus/scheduler/event_journal'
 
   #
   # A common error class for rufus-scheduler
@@ -54,6 +55,7 @@ class Rufus::Scheduler
   attr_accessor :stderr
 
   attr_reader :work_queue
+  attr_reader :journal
 
   def initialize(opts={})
 
@@ -91,6 +93,11 @@ class Rufus::Scheduler
       end
 
     @trigger_lock = opts[:trigger_lock] || Rufus::Scheduler::NullLock.new
+
+    @journal =
+      Rufus::Scheduler::EventJournal.new(
+        self,
+        capacity: opts[:event_capacity] || opts[:event_journal_capacity])
 
     # If we can't grab the @scheduler_lock, don't run.
     lock || return
@@ -411,6 +418,19 @@ class Rufus::Scheduler
   def running_jobs(opts={})
 
     jobs(opts.merge(:running => true))
+  end
+
+  # Returns a passive subscription to this scheduler's run events.
+  #
+  #   sub = scheduler.subscribe(tag: 'collect', capacity: 8)
+  #
+  # Events are recorded in a bounded, per-subscription log. Recording never
+  # waits on the subscriber, so a slow or offline observer cannot delay a
+  # job. Read them with #since(cursor) or #state.
+  #
+  def subscribe(opts={})
+
+    @journal.subscribe(opts)
   end
 
   def occurrences(time0, time1, format=:per_job)

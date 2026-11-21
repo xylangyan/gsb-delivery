@@ -2,6 +2,13 @@
 # CHANGELOG.md
 
 
+### unreleased
+
+* Introduce Scheduler#subscribe, a bounded, replayable run event journal
+  (due / enqueued / started / failed / finished / skipped) with gap
+  reporting and atomic continuation snapshots
+
+
 ### rufus-scheduler 3.9.2 - released 2024-09-04
 
 * For fugit >= 1.11.1

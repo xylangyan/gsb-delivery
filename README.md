@@ -1083,6 +1083,70 @@ Returns the list of Job instance that have currently running instances.
 Whereas other "_jobs" method scan the scheduled job list, this method scans the thread list to find the job. It thus comprises jobs that are running but are not scheduled anymore (that happens for at and in jobs).
 
 
+## run events
+
+A scheduler keeps a bounded, replayable journal of what happens to its jobs.
+It is meant for an operator or a collection pipeline that must be told what
+happened while it was away, without ever being able to slow the scheduler
+down.
+
+```ruby
+sub = scheduler.subscribe(tag: 'collect', capacity: 8)
+
+page = sub.read
+  # => all still-retained events, plus an atomic snapshot of the state
+
+cursor = page.next_seq
+  # the sequence number to come back with
+
+# ... subscriber goes away for a while ...
+
+page = sub.read(after: cursor)
+page.gap?
+  # => true when some events after `cursor` were already discarded
+page.gap.from / page.gap.to
+  # the inclusive range that is no longer available
+page.events
+  # the retained events after `cursor`
+page.state
+  # the current state of every matched job, bound to page.seq
+```
+
+The event kinds are:
+
+- `:due`, a scheduled time was reached
+- `:enqueued`, the run went into the work queue
+- `:started`, the job's block is about to be called
+- `:failed`, the block raised (an error is attached)
+- `:finished`, the block returned
+- `:skipped`, a due run did not happen (`reason: :overlap` for
+  `overlap: false`, `:trigger_denied` when a pre-trigger callback said no)
+
+A `blocking: true` job has no `:enqueued` event since it never enters the
+work queue.
+
+Each subscription owns its own ring buffer of `capacity` events (default 64,
+configurable at subscription time or via the scheduler's `:event_capacity`
+option). Sequence numbers are per subscription and contiguous. When the
+buffer overflows, the oldest events are dropped and `#dropped` grows; a
+reader whose cursor is older than `#oldest_seq` gets a `Gap` telling exactly
+which sequence numbers were lost.
+
+Recording is a plain in-memory append. A subscription is never called back
+from the scheduler and its absence never delays a run. `#state` and
+`#since` copy what they need under the subscriber's lock, so a slow reader
+does not hold up the job threads.
+
+The snapshot returned with a page is taken under the same lock as the
+events, so a `:started` or `:failed` that commits while the snapshot is
+being read is either already reflected in `page.state` (with a
+`status_seq <= page.seq`) or is present in the page's subsequent events,
+never missing from both.
+
+Two jobs may carry the same tag. They remain distinct: every event carries
+its `job_id`, and the state is keyed by `job_id`.
+
+
 ## misc Scheduler methods
 
 ### Scheduler#unschedule(job_or_job_id)
