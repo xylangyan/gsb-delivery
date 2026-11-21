@@ -42,6 +42,24 @@ Version 0.8
 
 TBC
 
+Event identity regression
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Added ``unittests/test_odata2_event_identity.py`` with an independent
+event model (composite key ``Source`` + ``Effective`` where Source may
+contain commas and quotes).  The same records are written to the memory
+and SQLite backends, the stored keys are checked, a ``$select`` response
+is followed through the links the service actually returned, and the
+result is cross-checked with a separately written equivalent-UTC key and
+a narrow time interval.
+
+The current SQLite backend stores ``Edm.DateTimeOffset`` as a
+``CHARACTER(27)`` string at microsecond precision.  A seventh declared
+decimal place is therefore lost on write, causing adjacent event keys to
+collide with a UNIQUE constraint.  That case is recorded as a running
+expected failure at the write stage rather than fixed in this change;
+the memory backend passes all stages.
+
 
 Version 0.7.20170805
 --------------------

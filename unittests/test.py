@@ -28,6 +28,7 @@ import test_iso8601
 import test_odata2_core
 import test_odata2_client
 import test_odata2_csdl
+import test_odata2_event_identity
 import test_odata2_edmx
 import test_odata2_memds
 import test_odata2_metadata
@@ -74,6 +75,7 @@ all_tests.addTest(test_iso8601.suite())
 all_tests.addTest(test_odata2_core.suite())
 all_tests.addTest(test_odata2_client.suite())
 all_tests.addTest(test_odata2_csdl.suite())
+all_tests.addTest(test_odata2_event_identity.suite())
 all_tests.addTest(test_odata2_edmx.suite())
 all_tests.addTest(test_odata2_memds.suite())
 all_tests.addTest(test_odata2_metadata.suite())
