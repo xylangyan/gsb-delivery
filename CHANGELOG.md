@@ -3,6 +3,16 @@
 The `pycldf` package adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+- Added `Wordlist.review_alignment`, an entry point for reviewing and editing the
+  alignment of a cognateset: columns can be inserted and segments moved while column
+  identity and per-cell segment provenance are preserved; corrections addressed by
+  original or current column number or by source coordinates (morpheme, segment
+  within morpheme) are applied atomically, reporting conflicting or unresolvable
+  coordinates.
+
+
 ## [2.2.0] - 2026-11-11
 
 - Fixed bug where missing words in glossed examples would lead to downstream

@@ -879,6 +879,69 @@ class Wordlist(Dataset):
             cognate[self['CognateTable', "http://cldf.clld.org/v1.0/terms.rdf#segmentSlice"].name],
         )
 
+    def _get_cognate_form(self, cognate: RowType) -> RowType:
+        """Resolve the form a cognate judgement refers to via the formReference."""
+        form_col = self['CognateTable', TERMS['formReference']]
+        key = cognate[form_col.name]
+        # The formReference may point to a local key of the FormTable which is
+        # different from the CLDF id, so the foreign key must be resolved properly.
+        ref = self.get_foreign_key_reference('CognateTable', TERMS['formReference'])
+        if ref:
+            table, col = ref
+            for row in self[table]:
+                if row[col.name] == key:
+                    return row
+            raise ValueError(key)
+        return self.get_row('FormTable', key)
+
+    def review_alignment(self, cognateset, forms=None) -> 'AlignmentReview':
+        """
+        Open a review session for the alignment of the cognate judgements in a
+        cognateset.
+
+        :param cognateset: A cognateset ID, selecting the rows of the `CognateTable` \
+        which reference it, or an iterable of `CognateTable` rows.
+        :param forms: An optional list of `FormTable` rows, parallel to the cognate \
+        judgements. If omitted, forms are resolved via the `formReference` foreign key.
+        :return: An :class:`pycldf.alignment.AlignmentReview` instance.
+        """
+        from pycldf.alignment import AlignmentReview
+        cs_col = self['CognateTable', TERMS['cognatesetReference']]
+        al_col = self['CognateTable', TERMS['alignment']]
+        seg_col = self['FormTable', TERMS['segments']]
+        try:
+            id_col = self['CognateTable', TERMS['id']]
+        except KeyError:
+            id_col = None
+        if isinstance(cognateset, str):
+            cognates = [
+                row for row in self['CognateTable']
+                if row[cs_col.name] == cognateset
+                or (isinstance(row[cs_col.name], list) and cognateset in row[cs_col.name])]
+        else:
+            cognates = list(cognateset)
+        if forms is None:
+            forms = [self._get_cognate_form(cognate) for cognate in cognates]
+        else:
+            forms = list(forms)
+            if len(forms) != len(cognates):
+                raise ValueError('number of forms does not match number of cognate judgements')
+        rows = []
+        for cognate, form in zip(cognates, forms):
+            sounds = form[seg_col.name]
+            if isinstance(sounds, str):
+                # This may be the case when no morpheme boundaries are provided.
+                sounds = [sounds]
+            morphemes = [s.split() for s in sounds]
+            alignment = cognate[al_col.name]
+            if isinstance(alignment, str):
+                alignment = alignment.split()
+            rows.append((
+                cognate, form, morphemes, alignment,
+                cognate[id_col.name] if id_col is not None else None))
+        return AlignmentReview(
+            rows, cognateset=cognateset if isinstance(cognateset, str) else None)
+
 
 class ParallelText(Dataset):
     """Implements the CLDF ParallelText module."""
