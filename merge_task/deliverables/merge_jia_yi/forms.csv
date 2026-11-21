@@ -1,0 +1,5 @@
+ID,Language_ID,Parameter_ID,Form,Segments,Comment,Source,Source_Batch,Source_ID
+jia-F1,L-jia,param-shared-hand-P1,hant,,,,jia,F1
+jia-F2,L-jia,jia-P2,arum,,,,jia,F2
+yi-F1,L-yi,param-shared-hand-P1,hant,,,,yi,F1
+yi-F3,L-yi,yi-P3,hant,,,,yi,F3

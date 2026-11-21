@@ -1,0 +1,4 @@
+ID,Name,Description,ColumnSpec,Source_Batch,Source_ID
+jia-P2,arm,arm (body part),,jia,P2
+param-shared-hand-P1,hand,hand (body part),,jia;yi,P1;P1
+yi-P3,hand,"hand-like concept, NOT confirmed as shared with jia P1",,yi,P3

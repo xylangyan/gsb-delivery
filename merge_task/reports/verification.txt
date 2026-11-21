@@ -1,0 +1,101 @@
+## delivery jia_yi
+[PASS] cldf validate() passes
+[PASS] jia-F1 and yi-F1 are distinct output forms
+[PASS] both F1 forms keep their own spelled form
+[PASS] jia-C1 and yi-C1 are distinct cognate judgements
+[PASS] P1 merges into the single mapped concept
+[PASS] yi P3 keeps its own concept identity
+[PASS] yi-P3 stays named "hand" but separate
+[PASS] jia P2 keeps its own concept identity
+[PASS] yi-F1 points at the shared P1 concept
+[PASS] jia-F1 points at the shared P1 concept
+[PASS] yi-F3 points at the unconfirmed separate concept
+[PASS] cognate sets stay batch-specific
+[PASS] FK walk jia-C1: cognate -> form -> parameter (jia-C1 -> jia-F1 -> param-shared-hand-P1)
+[PASS] FK walk jia-C1: cognate -> cognateset (jia-C1 -> jia-S1)
+[PASS] jia-C1 stays inside its source batch jia
+[PASS] FK walk jia-C2: cognate -> form -> parameter (jia-C2 -> jia-F2 -> jia-P2)
+[PASS] FK walk jia-C2: cognate -> cognateset (jia-C2 -> jia-S2)
+[PASS] jia-C2 stays inside its source batch jia
+[PASS] FK walk yi-C1: cognate -> form -> parameter (yi-C1 -> yi-F1 -> param-shared-hand-P1)
+[PASS] FK walk yi-C1: cognate -> cognateset (yi-C1 -> yi-S1)
+[PASS] yi-C1 stays inside its source batch yi
+[PASS] FK walk yi-C3: cognate -> form -> parameter (yi-C3 -> yi-F3 -> yi-P3)
+[PASS] FK walk yi-C3: cognate -> cognateset (yi-C3 -> yi-S3)
+[PASS] yi-C3 stays inside its source batch yi
+[PASS] provenance covers every output row (shared concept twice)
+[PASS] traceback jia-F1 -> jia:F1
+[PASS] traceback jia-F2 -> jia:F2
+[PASS] traceback yi-F1 -> yi:F1
+[PASS] traceback yi-F3 -> yi:F3
+[PASS] missing-reference count matches expectation
+
+## delivery yi_jia
+[PASS] cldf validate() passes
+[PASS] jia-F1 and yi-F1 are distinct output forms
+[PASS] both F1 forms keep their own spelled form
+[PASS] jia-C1 and yi-C1 are distinct cognate judgements
+[PASS] P1 merges into the single mapped concept
+[PASS] yi P3 keeps its own concept identity
+[PASS] yi-P3 stays named "hand" but separate
+[PASS] jia P2 keeps its own concept identity
+[PASS] yi-F1 points at the shared P1 concept
+[PASS] jia-F1 points at the shared P1 concept
+[PASS] yi-F3 points at the unconfirmed separate concept
+[PASS] cognate sets stay batch-specific
+[PASS] FK walk jia-C1: cognate -> form -> parameter (jia-C1 -> jia-F1 -> param-shared-hand-P1)
+[PASS] FK walk jia-C1: cognate -> cognateset (jia-C1 -> jia-S1)
+[PASS] jia-C1 stays inside its source batch jia
+[PASS] FK walk jia-C2: cognate -> form -> parameter (jia-C2 -> jia-F2 -> jia-P2)
+[PASS] FK walk jia-C2: cognate -> cognateset (jia-C2 -> jia-S2)
+[PASS] jia-C2 stays inside its source batch jia
+[PASS] FK walk yi-C1: cognate -> form -> parameter (yi-C1 -> yi-F1 -> param-shared-hand-P1)
+[PASS] FK walk yi-C1: cognate -> cognateset (yi-C1 -> yi-S1)
+[PASS] yi-C1 stays inside its source batch yi
+[PASS] FK walk yi-C3: cognate -> form -> parameter (yi-C3 -> yi-F3 -> yi-P3)
+[PASS] FK walk yi-C3: cognate -> cognateset (yi-C3 -> yi-S3)
+[PASS] yi-C3 stays inside its source batch yi
+[PASS] provenance covers every output row (shared concept twice)
+[PASS] traceback jia-F1 -> jia:F1
+[PASS] traceback jia-F2 -> jia:F2
+[PASS] traceback yi-F1 -> yi:F1
+[PASS] traceback yi-F3 -> yi:F3
+[PASS] missing-reference count matches expectation
+[PASS] provenance identical after loading-order swap
+
+## delivery damaged
+[PASS] cldf validate() passes
+[PASS] jia-F1 is absent from the damaged delivery
+[PASS] yi-F1 still present and never fills the jia gap
+[PASS] jia-C1 judgement skipped, yi-C1 intact
+[PASS] P1 merges into the single mapped concept
+[PASS] yi P3 keeps its own concept identity
+[PASS] yi-P3 stays named "hand" but separate
+[PASS] jia P2 keeps its own concept identity
+[PASS] yi-F1 points at the shared P1 concept
+[PASS] yi-F3 points at the unconfirmed separate concept
+[PASS] cognate sets stay batch-specific
+[PASS] FK walk jia-C2: cognate -> form -> parameter (jia-C2 -> jia-F2 -> jia-P2)
+[PASS] FK walk jia-C2: cognate -> cognateset (jia-C2 -> jia-S2)
+[PASS] jia-C2 stays inside its source batch jia
+[PASS] FK walk yi-C1: cognate -> form -> parameter (yi-C1 -> yi-F1 -> param-shared-hand-P1)
+[PASS] FK walk yi-C1: cognate -> cognateset (yi-C1 -> yi-S1)
+[PASS] yi-C1 stays inside its source batch yi
+[PASS] FK walk yi-C3: cognate -> form -> parameter (yi-C3 -> yi-F3 -> yi-P3)
+[PASS] FK walk yi-C3: cognate -> cognateset (yi-C3 -> yi-S3)
+[PASS] yi-C3 stays inside its source batch yi
+[PASS] provenance covers every output row (shared concept twice)
+[PASS] traceback jia-F2 -> jia:F2
+[PASS] traceback yi-F1 -> yi:F1
+[PASS] traceback yi-F3 -> yi:F3
+[PASS] missing-reference count matches expectation
+[PASS] missing report contains jia CognateTable C1 -> FormTable F1
+
+## damaged-delivery gap handling
+[PASS] jia-F1 absent from damaged delivery
+[PASS] yi-F1 still present, not used as replacement
+[PASS] jia-C1 judgement skipped, not rewired to yi-F1
+[PASS] yi-C1 judgement intact
+
+## cross-delivery stability
+[PASS] every damaged-delivery provenance row uses the same source->output ID mapping

@@ -1,0 +1,12 @@
+{
+  "comment": "Explicit, human-confirmed cross-batch concept equivalences. Only concepts listed here are merged into one output ParameterTable row. Same-spelling IDs that are not listed keep their per-batch identity.",
+  "shared_parameters": [
+    {
+      "output_id": "param-shared-hand-P1",
+      "members": [
+        {"batch": "jia", "id": "P1"},
+        {"batch": "yi", "id": "P1"}
+      ]
+    }
+  ]
+}
