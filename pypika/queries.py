@@ -78,10 +78,18 @@ class Selectable(Node):
 
 
 class AliasedQuery(Selectable):
-    def __init__(self, name: str, query: Selectable | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        query: Selectable | None = None,
+        columns: Sequence[str] | None = None,
+        recursive: bool = False,
+    ) -> None:
         super().__init__(alias=name)
         self.name = name
         self.query = query
+        self.columns = tuple(columns) if columns else None
+        self.recursive = recursive
 
     def get_sql(self, **kwargs: Any) -> str:
         if self.query is None:
@@ -93,6 +101,48 @@ class AliasedQuery(Selectable):
 
     def __hash__(self) -> int:
         return hash(str(self.name))
+
+
+def _recursive_cte_branch_selects(selectable: Selectable) -> list[tuple[str, list]]:
+    """
+    Returns the select lists of each branch of a recursive CTE body, labeled so validation errors can point at the
+    offending branch. The anchor of a set operation is labeled "anchor branch"; subsequent branches are numbered in
+    order of appearance.
+    """
+    if isinstance(selectable, _SetOperation):
+        branches = [("anchor branch", selectable.base_query._selects)]
+        for position, (_, set_operation_query) in enumerate(selectable._set_operation, start=2):
+            selects = (
+                set_operation_query.base_query._selects
+                if isinstance(set_operation_query, _SetOperation)
+                else set_operation_query._selects
+            )
+            branches.append(("branch %d" % position, selects))
+        return branches
+    if isinstance(selectable, QueryBuilder):
+        return [("anchor branch", selectable._selects)]
+    return []
+
+
+def _validate_recursive_cte_columns(selectable: Selectable, name: str, columns: Sequence[str]) -> None:
+    """
+    Checks each branch of a recursive CTE body against the declared column list. Raises a QueryException naming the
+    branch and the expected column count when a branch selects a different number of columns, and refuses to guess
+    when a branch selects a star whose width cannot be confirmed at construction time.
+    """
+    expected = len(columns)
+    for label, selects in _recursive_cte_branch_selects(selectable):
+        if any(isinstance(term, Star) for term in selects):
+            raise QueryException(
+                "Cannot confirm the column count of the {label} of recursive CTE '{name}': it selects '*' with an "
+                "unknown column width. Select explicit columns instead.".format(label=label, name=name)
+            )
+        if len(selects) != expected:
+            raise QueryException(
+                "Recursive CTE '{name}' declares {expected} columns, but the {label} selects {actual} columns.".format(
+                    name=name, expected=expected, label=label, actual=len(selects)
+                )
+            )
 
 
 class Schema:
@@ -525,6 +575,10 @@ class Query:
         return cls._builder(**kwargs).with_(table, name)
 
     @classmethod
+    def with_recursive(cls, table: str | Selectable, name: str, *columns: str, **kwargs: Any) -> QueryBuilder:
+        return cls._builder(**kwargs).with_recursive(table, name, *columns)
+
+    @classmethod
     def select(cls, *terms: int | float | str | bool | Term, **kwargs: Any) -> QueryBuilder:
         """
         Query builder entry point.  Initializes query building without a table and selects fields.  Useful when testing
@@ -759,6 +813,7 @@ class QueryBuilder(Selectable, Term):
     ALIAS_QUOTE_CHAR = None
     QUERY_ALIAS_QUOTE_CHAR = None
     QUERY_CLS = Query
+    RECURSIVE_CTE_SUPPORTED = True
 
     def __init__(
         self,
@@ -905,6 +960,32 @@ class QueryBuilder(Selectable, Term):
     @builder
     def with_(self, selectable: Selectable, name: str) -> None:
         t = AliasedQuery(name, selectable)
+        self._with.append(t)
+
+    @builder
+    def with_recursive(self, selectable: Selectable, name: str, *columns: str) -> None:
+        """
+        Adds a recursive common table expression to the query, rendering the WITH clause as ``WITH RECURSIVE`` and
+        declaring the given column names on the CTE. Each branch of the CTE body must select exactly as many columns
+        as are declared; branches selecting a star cannot be validated and are rejected.
+
+        :param selectable:
+            The CTE body, typically an anchor query combined with a recursive branch via ``union_all``.
+        :param name:
+            The name of the CTE.
+        :param columns:
+            The column names declared on the recursive CTE.
+        """
+        if not self.RECURSIVE_CTE_SUPPORTED:
+            raise QueryException(
+                "Recursive CTEs are not supported by {builder} (dialect: {dialect}); 'with_recursive' cannot be "
+                "used to build the '{name}' CTE here.".format(
+                    builder=type(self).__name__, dialect=self.dialect, name=name
+                )
+            )
+        if columns:
+            _validate_recursive_cte_columns(selectable, name, columns)
+        t = AliasedQuery(name, selectable, columns=columns, recursive=True)
         self._with.append(t)
 
     @builder
@@ -1446,10 +1527,15 @@ class QueryBuilder(Selectable, Term):
         return querystring
 
     def _with_sql(self, **kwargs: Any) -> str:
-        return "WITH " + ",".join(
-            clause.name + " AS (" + clause.get_sql(subquery=False, with_alias=False, **kwargs) + ") "
-            for clause in self._with
-        )
+        recursive = any(getattr(clause, "recursive", False) for clause in self._with)
+        clauses = []
+        for clause in self._with:
+            name = clause.name
+            columns = getattr(clause, "columns", None)
+            if columns:
+                name += "(" + ",".join(columns) + ")"
+            clauses.append(name + " AS (" + clause.get_sql(subquery=False, with_alias=False, **kwargs) + ") ")
+        return ("WITH RECURSIVE " if recursive else "WITH ") + ",".join(clauses)
 
     def _distinct_sql(self, **kwargs: Any) -> str:
         distinct = 'DISTINCT ' if self._distinct else ''

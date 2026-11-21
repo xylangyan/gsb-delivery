@@ -259,6 +259,7 @@ class VerticaQuery(Query):
 
 class VerticaQueryBuilder(QueryBuilder):
     QUERY_CLS = VerticaQuery
+    RECURSIVE_CTE_SUPPORTED = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(dialect=Dialects.VERTICA, **kwargs)
@@ -384,6 +385,7 @@ class OracleQuery(Query):
 class OracleQueryBuilder(FetchNextAndOffsetRowsQueryBuilder):
     QUOTE_CHAR = None
     QUERY_CLS = OracleQuery
+    RECURSIVE_CTE_SUPPORTED = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(dialect=Dialects.ORACLE, **kwargs)
@@ -706,6 +708,7 @@ class MSSQLQuery(Query):
 
 class MSSQLQueryBuilder(FetchNextAndOffsetRowsQueryBuilder):
     QUERY_CLS = MSSQLQuery
+    RECURSIVE_CTE_SUPPORTED = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(dialect=Dialects.MSSQL, **kwargs)
@@ -803,6 +806,7 @@ class ClickHouseQuery(Query):
 
 class ClickHouseQueryBuilder(QueryBuilder):
     QUERY_CLS = ClickHouseQuery
+    RECURSIVE_CTE_SUPPORTED = False
 
     _distinct_on: list[Term]
     _limit_by: tuple[int, int, list[Term]] | None
@@ -1017,6 +1021,7 @@ class JiraQueryBuilder(QueryBuilder):
     QUOTE_CHAR = ""
     SECONDARY_QUOTE_CHAR = '"'
     QUERY_CLS = JiraQuery
+    RECURSIVE_CTE_SUPPORTED = False
 
     def __init__(self, **kwargs) -> None:
         super().__init__(dialect=Dialects.JIRA, **kwargs)

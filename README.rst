@@ -895,6 +895,37 @@ You can use as much as `.with_()` as you want.
     WITH an_alias AS (SELECT * FROM "customers") SELECT * FROM an_alias
 
 
+Recursive common table expressions are supported through `.with_recursive()`, which renders the WITH clause as
+``WITH RECURSIVE`` and declares the column names of the recursive CTE. Each branch of the CTE body must select
+exactly as many columns as are declared; branches selecting ``*`` cannot be validated and are rejected. Dialects
+whose databases do not support recursive declarations raise an error when `.with_recursive()` is called.
+
+.. code-block:: python
+
+    from pypika import Table, AliasedQuery, Query
+
+    location = Table('location')
+    shelf = AliasedQuery('shelf')
+
+    anchor = (Query
+              .from_(location)
+              .select(location.id, location.parent_id, 0))
+
+    recursive = (Query
+                .from_(location)
+                .join(shelf).on(location.parent_id == shelf.id)
+                .select(location.id, location.parent_id, shelf.depth + 1))
+
+    test_query = (Query
+                .with_recursive(anchor.union_all(recursive), "shelf", "id", "parent_id", "depth")
+                .from_(shelf)
+                .select(shelf.id, shelf.parent_id, shelf.depth))
+
+.. code-block:: sql
+
+    WITH RECURSIVE shelf(id,parent_id,depth) AS ((SELECT "id","parent_id",0 FROM "location") UNION ALL (SELECT "location"."id","location"."parent_id","shelf"."depth"+1 FROM "location" JOIN shelf ON "location"."parent_id"="shelf"."id")) SELECT "shelf"."id","shelf"."parent_id","shelf"."depth" FROM shelf
+
+
 Inserting Data
 ^^^^^^^^^^^^^^
 
