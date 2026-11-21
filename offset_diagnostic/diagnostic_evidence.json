@@ -1,0 +1,2132 @@
+{
+  "environment": {
+    "pycel": "1.0b30",
+    "python": "3.12.13",
+    "openpyxl": "3.1.5",
+    "workbook": "offset_zero_diagnostic.xlsx",
+    "active_sheet": "Active",
+    "max_column": 16384,
+    "anchor_column": "XFC",
+    "edge_column": "XFD"
+  },
+  "width_sweep": {
+    "W=1": {
+      "Formula!D1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC1",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "real zero at anchor; multi-cell ref truncated to start"
+      },
+      "Formula!E1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC1",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC1",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": 1101,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC1",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!I1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC1",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC1",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!D2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": null,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC2",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "blank target read as None (real empty, not zero)"
+      },
+      "Formula!E2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC2",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC2",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": null,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC2",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "blank target read as None (real empty, not zero)"
+      },
+      "Formula!I2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC2",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC2",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!D3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": 5,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC3",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!E3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC3",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC3",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": 1303,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC3",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!I3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC3",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC3",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!D4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": 3333,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC4",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!E4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC4",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Tgt",
+              "rectangle": "XFC4",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Tgt!XFC4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 1,
+        "return": 1403,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC4",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!I4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC4",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 1,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 1,
+            "resolved": {
+              "status": "cell",
+              "sheet": "Formula",
+              "rectangle": "XFC4",
+              "size": [
+                1,
+                1
+              ]
+            },
+            "raw_result": "Formula!XFC4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      }
+    },
+    "W=2": {
+      "Formula!D1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC1:XFD1",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC1:XFD1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!D1 evaluated to 'Tgt!XFC1:XFD1', truncating to 'Tgt!XFC1'"
+        ],
+        "verdict": "real zero at anchor; multi-cell ref truncated to start"
+      },
+      "Formula!E1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC1:XFD1",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC1:XFD1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC1:XFD1",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC1:XFD1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": 1101,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC1:XFD1",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC1:XFD1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!H1 evaluated to 'Formula!XFC1:XFD1', truncating to 'Formula!XFC1'"
+        ],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!I1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC1:XFD1",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC1:XFD1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC1:XFD1",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC1:XFD1"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!D2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": null,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC2:XFD2",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC2:XFD2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!D2 evaluated to 'Tgt!XFC2:XFD2', truncating to 'Tgt!XFC2'"
+        ],
+        "verdict": "blank target read as None (real empty, not zero)"
+      },
+      "Formula!E2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC2:XFD2",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC2:XFD2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC2:XFD2",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC2:XFD2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": null,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC2:XFD2",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC2:XFD2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!H2 evaluated to 'Formula!XFC2:XFD2', truncating to 'Formula!XFC2'"
+        ],
+        "verdict": "blank target read as None (real empty, not zero)"
+      },
+      "Formula!I2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC2:XFD2",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC2:XFD2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC2:XFD2",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC2:XFD2"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!D3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": 5,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC3:XFD3",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC3:XFD3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!D3 evaluated to 'Tgt!XFC3:XFD3', truncating to 'Tgt!XFC3'"
+        ],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!E3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC3:XFD3",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC3:XFD3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC3:XFD3",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC3:XFD3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": 1303,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC3:XFD3",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC3:XFD3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!H3 evaluated to 'Formula!XFC3:XFD3', truncating to 'Formula!XFC3'"
+        ],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!I3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC3:XFD3",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC3:XFD3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC3:XFD3",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC3:XFD3"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!D4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": 3333,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC4:XFD4",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC4:XFD4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!D4 evaluated to 'Tgt!XFC4:XFD4', truncating to 'Tgt!XFC4'"
+        ],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!E4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC4:XFD4",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC4:XFD4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!F4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Tgt",
+              "rectangle": "XFC4:XFD4",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Tgt!XFC4:XFD4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      },
+      "Formula!H4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 2,
+        "return": 1403,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC4:XFD4",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC4:XFD4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [
+          "Cell Formula!H4 evaluated to 'Formula!XFC4:XFD4', truncating to 'Formula!XFC4'"
+        ],
+        "verdict": "anchor value returned (range truncated to start)"
+      },
+      "Formula!I4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC4:XFD4",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC4:XFD4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "dynamic range never dereferenced; SUM sees no numerics -> 0"
+      },
+      "Formula!J4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 2,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 2,
+            "resolved": {
+              "status": "range",
+              "sheet": "Formula",
+              "rectangle": "XFC4:XFD4",
+              "size": [
+                1,
+                2
+              ]
+            },
+            "raw_result": "Formula!XFC4:XFD4"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": ""
+      }
+    },
+    "W=3": {
+      "Formula!D1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!E1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!F1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!H1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!I1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!J1": {
+        "scenario": "A real zero at anchor, non-zero later (legal rectangle)",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!D2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!E2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!F2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!H2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!I2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!J2": {
+        "scenario": "B anchor itself blank, neighbouring region legal",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!D3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!E3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!F3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!H3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!I3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!J3": {
+        "scenario": "C first cell legal, width 3 runs past the last column (XFD)",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!D4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!E4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!F4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "explicit Tgt!",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Tgt",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Tgt",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      },
+      "Formula!H4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "bare OFFSET",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!I4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "SUM(OFFSET)",
+        "width": 3,
+        "return": "#REF!",
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun -> raw #REF! (not absorbed here)"
+      },
+      "Formula!J4": {
+        "scenario": "control legal prominent non-zero target",
+        "context": "formula-sheet unqualified",
+        "expression": "IFERROR(SUM(OFFSET),0)",
+        "width": 3,
+        "return": 0,
+        "offset_resolutions": [
+          {
+            "base_sheet": "Formula",
+            "row_inc": 0,
+            "col_inc": 0,
+            "height": 1,
+            "width": 3,
+            "resolved": {
+              "status": "REF",
+              "sheet": "Formula",
+              "rectangle": null,
+              "size": null
+            },
+            "raw_result": "#REF!"
+          }
+        ],
+        "range_reads": [],
+        "truncation_logs": [],
+        "verdict": "overrun #REF! swallowed by IFERROR -> 0"
+      }
+    }
+  },
+  "direct_region_reads": {
+    "Tgt!XFC1:XFD1": {
+      "region_values": [
+        0,
+        4242
+      ],
+      "anchor_value": 0
+    },
+    "Tgt!XFC2:XFD2": {
+      "region_values": [
+        null,
+        77
+      ],
+      "anchor_value": null
+    },
+    "Tgt!XFC3:XFD3": {
+      "region_values": [
+        5,
+        9
+      ],
+      "anchor_value": 5
+    },
+    "Tgt!XFC4:XFD4": {
+      "region_values": [
+        3333,
+        4444
+      ],
+      "anchor_value": 3333
+    }
+  },
+  "sheet_context_probes": {
+    "top-level unqualified 'R4' (active default)": {
+      "address_entered": "R4",
+      "resolved_sheet": "Active",
+      "value": 222
+    },
+    "explicit Formula!R4": {
+      "address_entered": "Formula!R4",
+      "resolved_sheet": "Formula",
+      "value": 111
+    },
+    "unqualified =OFFSET(R4,0,0) living on Formula (L2)": {
+      "address_entered": "Formula!L2",
+      "resolved_sheet": "Formula",
+      "value": 111
+    },
+    "qualified bare OFFSET to Tgt row 1 anchor (D1)": {
+      "address_entered": "Formula!D1",
+      "resolved_sheet": "Tgt",
+      "value": 0
+    }
+  },
+  "single_cause_controls": {
+    "literal SUM(Tgt!XFC4:XFD4) vs SUM(OFFSET) on same cells": {
+      "width_W": 2,
+      "literal_static_sum_G4": 7777,
+      "dynamic_sum_offset_E4": 0,
+      "note": "both target the same 3333/4444 cells; only the literal range is dereferenced, so the dynamic OFFSET form still shows 0"
+    },
+    "fill only the blank anchor Tgt!XFC2 with a real zero": {
+      "before": {
+        "width_W": 1,
+        "anchor_direct": null,
+        "bare_D2": null,
+        "sum_offset_E2": 0
+      },
+      "after": {
+        "anchor_direct": 0,
+        "bare_D2": 0,
+        "sum_offset_E2": 0
+      },
+      "note": "bare OFFSET flips None -> 0, proving the earlier result was an empty cell, not a stored zero; SUM(OFFSET) stays 0 because the dynamic range is never dereferenced in this pycel build"
+    },
+    "width 3 overrun vs width 2 legal on scenario C": {
+      "at_W3_bare_D3": "#REF!",
+      "at_W2_bare_D3": 5,
+      "at_W2_iferror_F3": 0,
+      "note": "only the width changes; legal width clears the reference error"
+    }
+  }
+}
