@@ -672,6 +672,37 @@ class SystemTimeValue(LiteralValue):
         super().__init__("SYSTEM_TIME", alias)
 
 
+class Snapshot(Term):
+    """
+    Placeholder for a snapshot moment inside a query template.
+
+    Used in place of a concrete moment, e.g. ``SYSTEM_TIME.as_of(Snapshot())`` or
+    ``table.valid_from <= Snapshot()``. The moment is supplied per query reference via
+    ``QueryBuilder.as_of(moment)`` / ``_SetOperation.as_of(moment)`` and travels through
+    the ``snapshot_moment`` render keyword, so a single template can be referenced several
+    times in one report with a different moment for each reference. When the query is
+    rendered without an enclosing ``as_of`` binding, the ``default`` moment is used; if no
+    default was given, a ``?`` placeholder is rendered, so a template rendered standalone
+    never silently reuses a moment bound by a previous report.
+    """
+
+    is_aggregate = None
+
+    def __init__(self, default: Any = None, alias: str | None = None) -> None:
+        super().__init__(alias)
+        self.default = default
+
+    def get_sql(self, **kwargs: Any) -> str:
+        moment = kwargs.get("snapshot_moment", self.default)
+        if moment is None:
+            return format_alias_sql("?", self.alias, **kwargs)
+        if isinstance(moment, Term):
+            sql = moment.get_sql(**kwargs)
+        else:
+            sql = ValueWrapper(moment).get_sql(**kwargs)
+        return format_alias_sql(sql, self.alias, **kwargs)
+
+
 class Criterion(Term):
     @overload
     def _compare(self, comparator: Comparator, other: EmptyCriterion) -> Self: ...

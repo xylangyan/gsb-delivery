@@ -103,6 +103,7 @@ from pypika.terms import (
     PyformatParameter,
     QmarkParameter,
     Rollup,
+    Snapshot,
     SystemTimeValue,
     Tuple,
 )
@@ -167,6 +168,7 @@ __all__ = (
     'FormatParameter',
     'PyformatParameter',
     'Rollup',
+    'Snapshot',
     'Tuple',
     'CustomFunction',
     'CaseException',

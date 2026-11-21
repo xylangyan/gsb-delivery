@@ -6,9 +6,10 @@ from copy import copy
 from functools import reduce
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from pypika.enums import Dialects, JoinType, ReferenceOption, SetOperation
+from pypika.enums import Dialects, JoinType, Matching, ReferenceOption, SetOperation
 from pypika.terms import (
     ArithmeticExpression,
+    BasicCriterion,
     Criterion,
     EmptyCriterion,
     Field,
@@ -132,6 +133,21 @@ class Database(Schema):
         return Schema(item, parent=self)
 
 
+class OfflineHistory:
+    """
+    Declares how a system-versioned table is mirrored by an offline history table on stores
+    without native temporal support (e.g. SQLite). The history table is expected to carry
+    half-open version periods: a row is valid at moment ``t`` when
+    ``valid_from <= t AND t < valid_to``, so a version whose end equals the next version's
+    start is superseded exactly at that boundary.
+    """
+
+    def __init__(self, table_name: str, valid_from: str, valid_to: str) -> None:
+        self.table_name = table_name
+        self.valid_from = valid_from
+        self.valid_to = valid_to
+
+
 class Table(Selectable):
     @staticmethod
     def _init_schema(schema: str | list | tuple | Schema | None) -> str | list | tuple | Schema | None:
@@ -158,6 +174,7 @@ class Table(Selectable):
         self._query_cls = query_cls or Query
         self._for = None
         self._for_portion = None
+        self._offline_history = None
         if not issubclass(self._query_cls, Query):
             raise TypeError("Expected 'query_cls' to be subclass of Query")
 
@@ -172,6 +189,8 @@ class Table(Selectable):
             table_sql = "{schema}.{table}".format(schema=self._schema.get_sql(**kwargs), table=table_sql)
 
         if self._for:
+            if kwargs.get("dialect") == Dialects.SQLLITE and self._is_system_time_as_of(self._for):
+                return self._get_offline_history_sql(**kwargs)
             table_sql = "{table} FOR {criterion}".format(table=table_sql, criterion=self._for.get_sql(**kwargs))
         elif self._for_portion:
             table_sql = "{table} FOR PORTION OF {criterion}".format(
@@ -179,6 +198,45 @@ class Table(Selectable):
             )
 
         return format_alias_sql(table_sql, self.alias, **kwargs)
+
+    @staticmethod
+    def _is_system_time_as_of(criterion: Criterion) -> bool:
+        return isinstance(criterion, BasicCriterion) and criterion.comparator == Matching.as_of
+
+    def _get_offline_history_sql(self, **kwargs: Any) -> str:
+        if self._offline_history is None:
+            raise QueryException(
+                'Cannot emulate "FOR SYSTEM_TIME AS OF" on table "{table}" for the SQLite dialect: '
+                "no offline history table declared. Declare one with .with_offline_history() so the "
+                "read can be reproduced against the history table.".format(table=self._table_name)
+            )
+
+        history = Table(self._offline_history.table_name)
+        moment = self._for.right
+        criterion = (Field(self._offline_history.valid_from, table=history) <= moment) & (
+            Field(self._offline_history.valid_to, table=history) > moment
+        )
+        subquery = Query.from_(history).select("*").where(criterion)
+        inner_kwargs = {key: value for key, value in kwargs.items() if key not in ("with_alias", "subquery")}
+        subquery_sql = "({})".format(subquery.get_sql(**inner_kwargs))
+
+        return format_alias_sql(subquery_sql, self.alias or self._table_name, **kwargs)
+
+    @builder
+    def with_offline_history(self, table_name: str, valid_from: str, valid_to: str) -> None:
+        """
+        Declares the offline history table backing this (system-versioned) table on stores
+        without native temporal support. ``valid_from``/``valid_to`` are the names of the
+        version period start/end columns on the history table.
+
+        :param table_name:
+            The name of the history table holding all versions.
+        :param valid_from:
+            The column marking the start (inclusive) of each version's validity.
+        :param valid_to:
+            The column marking the end (exclusive) of each version's validity.
+        """
+        self._offline_history = OfflineHistory(table_name, valid_from, valid_to)
 
     @builder
     def for_(self, temporal_criterion: Criterion) -> None:
@@ -612,6 +670,8 @@ class _SetOperation(Selectable, Term):
         self._limit = None
         self._offset = None
 
+        self._snapshot_moment = None
+
         self._wrapper_cls = wrapper_cls
 
     @builder
@@ -653,6 +713,14 @@ class _SetOperation(Selectable, Term):
     def minus(self, other: Selectable) -> None:
         self._set_operation.append((SetOperation.minus, other))
 
+    @builder
+    def as_of(self, moment: Any) -> None:
+        """
+        Binds a snapshot moment to every ``Snapshot`` placeholder in this query reference.
+        See ``QueryBuilder.as_of`` for details.
+        """
+        self._snapshot_moment = moment
+
     def __add__(self, other: Selectable) -> _SetOperation:
         return self.union(other)
 
@@ -672,14 +740,21 @@ class _SetOperation(Selectable, Term):
         # This initializes the quote char based on the base query, which could be a dialect specific query class
         # This might be overridden if quote_char is set explicitly in kwargs
         kwargs.setdefault("quote_char", self.base_query.QUOTE_CHAR)
+        if self._snapshot_moment is not None:
+            kwargs["snapshot_moment"] = self._snapshot_moment
 
-        base_querystring = self.base_query.get_sql(subquery=self.base_query.wrap_set_operation_queries, **kwargs)
+        # SQLite does not accept parenthesised operands in a set operation
+        wrap_set_operation_queries = (
+            self.base_query.wrap_set_operation_queries and kwargs.get("dialect") != Dialects.SQLLITE
+        )
+
+        base_querystring = self.base_query.get_sql(subquery=wrap_set_operation_queries, **kwargs)
 
         querystring = base_querystring
         for set_operation, set_operation_query in self._set_operation:
             # A nested set operation is always parenthesised so that it keeps its grouping
             set_operation_querystring = set_operation_query.get_sql(
-                subquery=isinstance(set_operation_query, _SetOperation) or self.base_query.wrap_set_operation_queries,
+                subquery=isinstance(set_operation_query, _SetOperation) or wrap_set_operation_queries,
                 **kwargs,
             )
 
@@ -811,6 +886,8 @@ class QueryBuilder(Selectable, Term):
         self._subquery_count = 0
         self._foreign_table = False
 
+        self._snapshot_moment = None
+
         self.dialect = dialect
         self.as_keyword = as_keyword
         self.wrap_set_operation_queries = wrap_set_operation_queries
@@ -901,6 +978,23 @@ class QueryBuilder(Selectable, Term):
         if current_table in self._select_star_tables:
             self._select_star_tables.remove(current_table)
             self._select_star_tables.add(new_table)
+
+    @builder
+    def as_of(self, moment: Any) -> None:
+        """
+        Binds a snapshot moment to every ``Snapshot`` placeholder in this query reference.
+
+        The binding is a property of the returned copy, not of the template it was made from,
+        so the same template query can be referenced multiple times in one report with a
+        different moment per reference, and rendering the template itself afterwards is
+        unaffected. Temporal clauses built with a fixed moment (e.g.
+        ``SYSTEM_TIME.as_of('2020-01-01')``) are left untouched.
+
+        :param moment:
+            The snapshot moment. May be a raw value (rendered as a literal, or collected when
+            a ``parameter`` is supplied to ``get_sql``) or a ``Term`` such as ``Parameter``.
+        """
+        self._snapshot_moment = moment
 
     @builder
     def with_(self, selectable: Selectable, name: str) -> None:
@@ -1311,6 +1405,8 @@ class QueryBuilder(Selectable, Term):
 
     def get_sql(self, with_alias: bool = False, subquery: bool = False, **kwargs: Any) -> str:
         self._set_kwargs_defaults(kwargs)
+        if self._snapshot_moment is not None:
+            kwargs["snapshot_moment"] = self._snapshot_moment
         if not (self._selects or self._insert_table or self._delete_from or self._update_table):
             return ""
         if self._insert_table and not (self._selects or self._values):

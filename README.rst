@@ -1374,6 +1374,53 @@ This produces:
 
     SELECT * FROM "abc" FOR "valid_period" BETWEEN '2020-01-01' AND '2020-02-01'
 
+Snapshot placeholders
+"""""""""""""""""""""
+
+A query that is kept as a template can use ``Snapshot()`` instead of a concrete moment.
+Each reference of the template then binds its own moment with ``.as_of()``, without
+rebuilding the query. Temporal clauses built with a fixed moment are left untouched.
+
+.. code-block:: python
+
+    prices = Table("prices").for_(SYSTEM_TIME.as_of(Snapshot()))
+    template = Query.from_(prices).select("*")
+
+    opening = template.as_of('2026-11-01')
+    closing = template.as_of('2026-11-30')
+    report = MSSQLQuery.with_(opening, "opening").with_(closing, "closing").from_("opening").select("*")
+
+Each reference renders its own ``FOR SYSTEM_TIME AS OF`` clause, and rendering the
+template itself afterwards is unaffected (an unbound ``Snapshot()`` renders as a ``?``
+placeholder, or as its ``default`` moment when one was given).
+
+Offline history tables
+""""""""""""""""""""""
+
+On stores without native system-versioned tables (SQLite), an ``AS OF`` read can be
+emulated against a history table with version period columns. Declare the mapping on the
+table; a read at moment ``t`` then selects the version with
+``valid_from <= t AND t < valid_to``, so a version ending exactly where the next one
+starts is superseded at that boundary.
+
+.. code-block:: python
+
+    prices = (
+        Table("prices")
+        .for_(SYSTEM_TIME.as_of(Snapshot()))
+        .with_offline_history("prices_history", "valid_from", "valid_to")
+    )
+    q = SQLLiteQuery.from_(prices).select("*").as_of('2026-11-01')
+
+This produces:
+
+.. code-block:: sql
+
+    SELECT * FROM (SELECT * FROM "prices_history" WHERE "valid_from"<='2026-11-01' AND "valid_to">'2026-11-01') "prices"
+
+If no offline history table is declared for a temporal read, a ``QueryException`` is
+raised naming the table whose read cannot be reproduced.
+
 Joins
 """""
 
