@@ -24,11 +24,16 @@ from pypika.terms import (
     _StarWithExclusions,
 )
 from pypika.utils import (
+    AliasException,
     JoinException,
     QueryException,
     RollupException,
     SetOperationException,
+    TableReplacement,
+    active_table_replacement,
+    begin_table_replacement,
     builder,
+    end_table_replacement,
     format_alias_sql,
     format_quotes,
     ignore_copy,
@@ -853,6 +858,7 @@ class QueryBuilder(Selectable, Term):
         """
 
         self._from.append(Table(selectable) if isinstance(selectable, str) else selectable)
+        self._validate_scope_aliases()
 
         if isinstance(selectable, (QueryBuilder, _SetOperation)) and selectable.alias is None:
             if isinstance(selectable, QueryBuilder):
@@ -870,6 +876,11 @@ class QueryBuilder(Selectable, Term):
         Replaces all occurrences of the specified table with the new table. Useful when reusing fields across
         queries.
 
+        When the same physical table is bound more than once (for example an ordering warehouse and a
+        delivery warehouse), the replacement targets the binding that was passed in.  Nested queries are
+        rewritten under their own replacement, so an inner alias that shadows an outer alias is never
+        captured by the outer replacement.
+
         :param current_table:
             The table instance to be replaces.
         :param new_table:
@@ -877,9 +888,74 @@ class QueryBuilder(Selectable, Term):
         :return:
             A copy of the query with the tables replaced.
         """
-        self._from = [new_table if table == current_table else table for table in self._from]
-        self._insert_table = new_table if self._insert_table == current_table else self._insert_table
-        self._update_table = new_table if self._update_table == current_table else self._update_table
+        replacement = active_table_replacement()
+        if replacement is None:
+            # Choose identity or structural matching once, for the whole query tree.  A table that is
+            # actually bound somewhere (including a nested scope) is replaced by binding identity;
+            # a table object that is not bound anywhere keeps the historical structural behaviour.
+            replacement = TableReplacement(current_table, new_table, identity_mode=self._binds(current_table))
+        token = begin_table_replacement(replacement)
+        try:
+            self._replace_bindings(replacement)
+        finally:
+            end_table_replacement(token)
+
+    def _binds(self, table: Table | None, _seen: set[int] | None = None) -> bool:
+        """Whether ``table`` is one of the bindings in this query tree (by identity)."""
+        if table is None:
+            return False
+        if _seen is None:
+            _seen = set()
+        if id(self) in _seen:
+            return False
+        _seen.add(id(self))
+
+        bindings = [*self._from, self._insert_table, self._update_table]
+        bindings += [join.item for join in self._joins]
+        if any(binding is table for binding in bindings):
+            return True
+
+        for clause in self._with:
+            query = getattr(clause, "query", None)
+            if isinstance(query, QueryBuilder) and query._binds(table, _seen):
+                return True
+
+        return any(subquery._binds(table, _seen) for subquery in self._nested_queries())
+
+    def _nested_queries(self):
+        for item in self._from:
+            if isinstance(item, QueryBuilder):
+                yield item
+        for join in self._joins:
+            if isinstance(join.item, QueryBuilder):
+                yield join.item
+            criterion = getattr(join, "criterion", None)
+            if criterion is not None:
+                for node in criterion.nodes_():
+                    if isinstance(node, QueryBuilder):
+                        yield node
+
+        terms = [*self._selects, self._wheres, self._prewheres, self._havings, self._qualifys, *self._groupbys]
+        terms += [field for field, _ in self._orderbys]
+        terms += [value for values in self._values for value in values]
+        terms += self._columns
+        for term in terms:
+            if isinstance(term, QueryBuilder):
+                yield term
+            elif isinstance(term, Node):
+                for node in term.nodes_():
+                    if isinstance(node, QueryBuilder):
+                        yield node
+
+    def _replace_bindings(self, replacement: TableReplacement) -> None:
+        current_table, new_table = replacement.current_table, replacement.new_table
+
+        def rebind(table):
+            return new_table if replacement.matches(table) else table
+
+        self._from = [rebind(table) for table in self._from]
+        self._insert_table = rebind(self._insert_table)
+        self._update_table = rebind(self._update_table)
 
         self._with = [alias_query.replace_table(current_table, new_table) for alias_query in self._with]
         self._selects = [select.replace_table(current_table, new_table) for select in self._selects]
@@ -898,9 +974,9 @@ class QueryBuilder(Selectable, Term):
         ]
         self._joins = [join.replace_table(current_table, new_table) for join in self._joins]
 
-        if current_table in self._select_star_tables:
-            self._select_star_tables.remove(current_table)
-            self._select_star_tables.add(new_table)
+        replaced_stars = {table for table in self._select_star_tables if replacement.matches(table)}
+        if replaced_stars:
+            self._select_star_tables = (self._select_star_tables - replaced_stars) | {new_table}
 
     @builder
     def with_(self, selectable: Selectable, name: str) -> None:
@@ -1228,13 +1304,61 @@ class QueryBuilder(Selectable, Term):
         base_tables = self._from + [self._update_table] + self._with
         join.validate(base_tables, self._joins)
 
-        table_in_query = any(isinstance(clause, Table) and join.item in base_tables for clause in base_tables)
-        if isinstance(join.item, Table) and join.item.alias is None and table_in_query:
-            # On the odd chance that we join the same table as the FROM table and don't set an alias
-            # FIXME only works once
-            join.item.alias = join.item._table_name + "2"
+        if isinstance(join.item, Table) and join.item.alias is None:
+            holders = self._alias_holders(join.item.get_table_name())
+            if holders and all(holder is not join.item for holder in holders):
+                # Joining a *different* table whose display name is already bound in this scope needs a
+                # distinct implicit name.  Re-joining the very same object cannot be named apart; leave it
+                # for scope validation to report as ambiguous.
+                join.item.alias = self._next_implicit_alias(join.item)
 
         self._joins.append(join)
+        self._validate_scope_aliases()
+
+    def _alias_holders(self, name: str) -> list[Any]:
+        bindings = [*self._from, self._update_table, *[join.item for join in self._joins]]
+        return [binding for binding in bindings if self._binding_alias(binding) == name]
+
+    def _next_implicit_alias(self, table: Table) -> str:
+        base = table._table_name
+        used = {self._binding_alias(binding) for binding in self._from}
+        used |= {self._binding_alias(join.item) for join in self._joins}
+        used.add(base)
+        index = 2
+        while f"{base}{index}" in used:
+            index += 1
+        return f"{base}{index}"
+
+    def _binding_alias(self, binding: Any) -> str | None:
+        if isinstance(binding, Table):
+            return binding.get_table_name()
+        if isinstance(binding, (QueryBuilder, AliasedQuery)):
+            return binding.alias
+        return getattr(binding, "alias", None)
+
+    def _validate_scope_aliases(self) -> None:
+        """Reject two bindings that would expose the same name at *this* query level.
+
+        Reusing a name in a nested query is legal: the nested query is its own name scope and shadows
+        the outer binding.  Only collisions within one FROM/JOIN list are unresolvable, so they raise
+        before SQL is generated instead of silently producing ambiguous SQL.
+        """
+        bindings = [*self._from, self._update_table, *[join.item for join in self._joins]]
+        seen: set[str] = set()
+        for binding in bindings:
+            if binding is None:
+                continue
+            alias = self._binding_alias(binding)
+            if alias is None:
+                continue
+            if alias in seen:
+                raise AliasException(
+                    'Duplicate table alias "{alias}" in the same query scope. '
+                    "Two JOIN/FROM entries with the same display alias ("
+                    '"{alias}") make field references ambiguous; give one of them a distinct alias. '
+                    "Reusing an alias in a nested subquery is allowed.".format(alias=alias)
+                )
+            seen.add(alias)
 
     def is_joined(self, table: Table) -> bool:
         return any(table == join.item for join in self._joins)
@@ -1317,6 +1441,8 @@ class QueryBuilder(Selectable, Term):
             return ""
         if self._update_table and not self._updates:
             return ""
+
+        self._validate_scope_aliases()
 
         has_joins = bool(self._joins)
         has_multiple_from_clauses = 1 < len(self._from)
@@ -1747,7 +1873,25 @@ class Join:
         :return:
             A copy of the join with the tables replaced.
         """
-        self.item = self.item.replace_table(current_table, new_table)
+        _rebind_join_item(self, current_table, new_table)
+
+
+def _rebind_join_item(join: Join, current_table: Table | None, new_table: Table | None) -> None:
+    """Rebind a join item, honouring the active replacement binding.
+
+    ``Table`` exposes ``__getattr__`` (for column access), so calling ``Table.replace_table`` on the item
+    would silently produce a ``Field`` instead.  The join item is therefore rebound explicitly.
+    """
+    if isinstance(join.item, QueryBuilder):
+        join.item = join.item.replace_table(current_table, new_table)
+        return
+
+    replacement = active_table_replacement()
+    if replacement is not None:
+        if replacement.matches(join.item):
+            join.item = replacement.new_table
+    elif join.item == current_table:
+        join.item = new_table
 
 
 class JoinOn(Join):
@@ -1789,7 +1933,7 @@ class JoinOn(Join):
         :return:
             A copy of the join with the tables replaced.
         """
-        self.item = new_table if self.item == current_table else self.item
+        _rebind_join_item(self, current_table, new_table)
         self.criterion = self.criterion.replace_table(current_table, new_table)
 
 
@@ -1821,7 +1965,7 @@ class JoinUsing(Join):
         :return:
             A copy of the join with the tables replaced.
         """
-        self.item = new_table if self.item == current_table else self.item
+        _rebind_join_item(self, current_table, new_table)
         self.fields = [field.replace_table(current_table, new_table) for field in self.fields]
 
 

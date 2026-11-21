@@ -17,6 +17,7 @@ from pypika.utils import (
     CaseException,
     FunctionException,
     QueryException,
+    active_table_replacement,
     builder,
     escape_backslashes,
     format_alias_sql,
@@ -763,7 +764,11 @@ class Field(Criterion, JSON):
         :return:
             A copy of the field with the tables replaced.
         """
-        if self.table == current_table:
+        replacement = active_table_replacement()
+        if replacement is not None:
+            if replacement.matches(self.table):
+                self.table = replacement.new_table
+        elif self.table == current_table:
             self.table = new_table
 
     def get_sql(self, **kwargs: Any) -> str:

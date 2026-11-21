@@ -1,6 +1,8 @@
+import sqlite3
 import unittest
 
-from pypika import Case, Field, Query, Tables, Tuple, functions
+from pypika import Case, Field, JoinException, JoinType, Query, QueryException, Table, Tables, Tuple, functions
+from pypika.utils import AliasException
 from pypika.dialects import (
     ClickHouseQuery,
     ClickHouseQueryBuilder,
@@ -24,7 +26,7 @@ from pypika.dialects import (
     VerticaQuery,
     VerticaQueryBuilder,
 )
-from pypika.queries import CreateQueryBuilder, DropQueryBuilder, QueryBuilder
+from pypika.queries import CreateQueryBuilder, DropQueryBuilder, JoinOn, QueryBuilder
 
 
 class QueryTablesTests(unittest.TestCase):
@@ -156,6 +158,170 @@ class QueryTablesTests(unittest.TestCase):
 
         self.assertTrue(q.is_joined(self.table_b))
         self.assertFalse(q.is_joined(self.table_c))
+
+
+class ScopedTableReplacementTests(unittest.TestCase):
+    """Self-joins of one physical table, plus a nested query that reuses an outer alias.
+
+    The order warehouse (A) and delivery warehouse (B) are two bindings of ``warehouse`` with different
+    addresses and validity.  The nested query looks up warehouse settings but is scoped to B only.  Its
+    display alias intentionally equals the ordering warehouse's alias to prove inner references are not
+    captured by the outer binding.
+    """
+
+    def setUp(self):
+        self.fact = Table("orders")
+        self.order_warehouse = Table("warehouse", alias="order_wh")
+        self.delivery_warehouse = Table("warehouse", alias="delivery_wh")
+        self.settings = Table("warehouse", alias="order_wh")
+        self.lookup = (
+            Query.from_(self.settings)
+            .select(self.settings.config)
+            .where(self.settings.id == self.delivery_warehouse.id)
+            .where(self.settings.enabled == 1)
+        )
+        self.query = (
+            Query.from_(self.fact)
+            .join(self.order_warehouse)
+            .on(self.fact.order_wh_id == self.order_warehouse.id)
+            .join(self.delivery_warehouse)
+            .on(self.fact.delivery_wh_id == self.delivery_warehouse.id)
+            .select(
+                self.order_warehouse.address.as_("order_address"),
+                self.delivery_warehouse.address.as_("delivery_address"),
+                self.lookup.as_("delivery_config"),
+            )
+        )
+
+    def execute(self, query):
+        with sqlite3.connect(":memory:") as connection:
+            connection.executescript(
+                "CREATE TABLE orders (id INTEGER, order_wh_id INTEGER, delivery_wh_id INTEGER);"
+                "CREATE TABLE warehouse (id INTEGER, address TEXT, enabled INTEGER, config TEXT);"
+                "INSERT INTO orders VALUES (1, 10, 20), (2, 10, 30);"
+                "INSERT INTO warehouse VALUES "
+                "(10, 'A-address', 1, 'A-config'),"
+                "(20, 'B-address', 0, 'B-config'),"
+                "(30, 'C-address', 1, 'C-config');"
+            )
+            return connection.execute(str(query)).fetchall()
+
+    def test_original_query_uses_distinct_warehouse_addresses(self):
+        sql = str(self.query)
+
+        self.assertIn('"order_wh"."address" "order_address"', sql)
+        self.assertIn('"delivery_wh"."address" "delivery_address"', sql)
+        self.assertEqual(
+            self.execute(self.query),
+            [('A-address', 'B-address', None), ('A-address', 'C-address', 'C-config')],
+        )
+
+    def test_copied_delivery_binding_rebinds_its_projection_join_and_correlation(self):
+        copy = self.delivery_warehouse.as_("delivery_wh_copy")
+        copied = self.query.replace_table(self.delivery_warehouse, copy)
+        sql = str(copied)
+
+        self.assertIn('"delivery_wh_copy"."address" "delivery_address"', sql)
+        self.assertIn('JOIN "warehouse" "delivery_wh_copy"', sql)
+        self.assertIn('"order_wh"."id"="delivery_wh_copy"."id"', sql)
+        # The ordering warehouse binding is a different binding and must be untouched.
+        self.assertIn('JOIN "warehouse" "order_wh"', sql)
+        self.assertNotIn('"delivery_wh"."', sql)
+        self.assertEqual(self.execute(copied), self.execute(self.query))
+
+    def test_render_order_does_not_change_aliases_or_criteria(self):
+        copy = self.delivery_warehouse.as_("delivery_wh_copy")
+        original_sql = (
+            'SELECT "order_wh"."address" "order_address",'
+            '"delivery_wh"."address" "delivery_address",'
+            '(SELECT "order_wh"."config" FROM "warehouse" "order_wh" '
+            'WHERE "order_wh"."id"="delivery_wh"."id" AND "order_wh"."enabled"=1) "delivery_config" '
+            'FROM "orders" JOIN "warehouse" "order_wh" ON "orders"."order_wh_id"="order_wh"."id" '
+            'JOIN "warehouse" "delivery_wh" ON "orders"."delivery_wh_id"="delivery_wh"."id"'
+        )
+        self.assertEqual(str(self.query), original_sql)
+
+        copied = self.query.replace_table(self.delivery_warehouse, copy)
+        copied_sql = (
+            'SELECT "order_wh"."address" "order_address",'
+            '"delivery_wh_copy"."address" "delivery_address",'
+            '(SELECT "order_wh"."config" FROM "warehouse" "order_wh" '
+            'WHERE "order_wh"."id"="delivery_wh_copy"."id" AND "order_wh"."enabled"=1) "delivery_config" '
+            'FROM "orders" JOIN "warehouse" "order_wh" ON "orders"."order_wh_id"="order_wh"."id" '
+            'JOIN "warehouse" "delivery_wh_copy" ON "orders"."delivery_wh_id"="delivery_wh_copy"."id"'
+        )
+        self.assertEqual(str(copied), copied_sql)
+        self.assertEqual(self.execute(copied), self.execute(self.query))
+        # Rendering the copy first must not rewrite the original's aliases or criteria.
+        self.assertEqual(str(self.query), original_sql)
+
+    def test_renaming_the_inner_alias_keeps_outer_bindings(self):
+        renamed_settings = self.settings.as_("replenish_wh")
+        renamed = self.query.replace_table(self.settings, renamed_settings)
+        sql = str(renamed)
+
+        self.assertIn('FROM "warehouse" "replenish_wh"', sql)
+        self.assertIn('"replenish_wh"."id"="delivery_wh"."id"', sql)
+        # Outer ordering warehouse and delivery warehouse keep their own aliases.
+        self.assertIn('"order_wh"."address" "order_address"', sql)
+        self.assertIn('JOIN "warehouse" "order_wh"', sql)
+        self.assertIn('JOIN "warehouse" "delivery_wh"', sql)
+        self.assertNotIn('"replenish_wh"."address"', sql)
+        self.assertEqual(self.execute(renamed), self.execute(self.query))
+
+    def test_renaming_the_outer_alias_leaves_inner_shadow_alias_alone(self):
+        renamed = self.query.replace_table(self.order_warehouse, self.order_warehouse.as_("buy_wh"))
+        sql = str(renamed)
+
+        self.assertIn('"buy_wh"."address" "order_address"', sql)
+        self.assertIn('JOIN "warehouse" "buy_wh"', sql)
+        self.assertIn('FROM "warehouse" "order_wh"', sql)
+        self.assertIn('"order_wh"."id"="delivery_wh"."id"', sql)
+        self.assertEqual(self.execute(renamed), self.execute(self.query))
+
+    def test_duplicate_alias_in_one_scope_is_reported_before_generating_sql(self):
+        first = Table("warehouse", alias="wh")
+        second = Table("warehouse", alias="wh")
+
+        with self.assertRaises(AliasException) as context:
+            (
+                Query.from_(self.fact)
+                .join(first)
+                .on(self.fact.order_wh_id == first.id)
+                .join(second)
+                .on(self.fact.delivery_wh_id == second.id)
+                .select(first.address, second.address)
+            )
+        self.assertIn('Duplicate table alias "wh"', str(context.exception))
+        # It is also a join/query error so existing handlers keep working.
+        self.assertIsInstance(context.exception, JoinException)
+        self.assertIsInstance(context.exception, QueryException)
+
+    def test_duplicate_alias_is_also_reported_when_only_rendering(self):
+        first = Table("warehouse", alias="wh")
+        second = Table("warehouse", alias="wh")
+        query = Query.from_(self.fact).select(first.address)
+        query._joins = [JoinOn(first, JoinType.inner, self.fact.order_wh_id == first.id)]
+        query._joins.append(JoinOn(second, JoinType.inner, self.fact.delivery_wh_id == second.id))
+
+        with self.assertRaises(AliasException):
+            str(query)
+
+    def test_duplicate_alias_is_detected_per_scope_not_globally(self):
+        outer = Table("warehouse", alias="wh")
+        inner_one, inner_two = Table("warehouse", alias="wh"), Table("warehouse", alias="wh")
+        first = Query.from_(inner_one).select(inner_one.id).where(inner_one.region == outer.region)
+        second = Query.from_(inner_two).select(inner_two.id).where(inner_two.region == outer.region)
+
+        query = Query.from_(outer).select(outer.address, first.as_("a"), second.as_("b"))
+
+        self.assertEqual(
+            str(query),
+            'SELECT "wh"."address",'
+            '(SELECT "wh"."id" FROM "warehouse" "wh" WHERE "wh"."region"="wh"."region") "a",'
+            '(SELECT "wh"."id" FROM "warehouse" "wh" WHERE "wh"."region"="wh"."region") "b" '
+            'FROM "warehouse" "wh"',
+        )
 
 
 class QueryBuilderTests(unittest.TestCase):

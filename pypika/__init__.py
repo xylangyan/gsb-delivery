@@ -109,6 +109,7 @@ from pypika.terms import (
 
 # noinspection PyUnresolvedReferences
 from pypika.utils import (
+    AliasException,
     CaseException,
     FunctionException,
     GroupingException,
@@ -169,6 +170,7 @@ __all__ = (
     'Rollup',
     'Tuple',
     'CustomFunction',
+    'AliasException',
     'CaseException',
     'GroupingException',
     'JiraQuery',

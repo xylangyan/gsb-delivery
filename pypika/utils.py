@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any, TypeVar, overload
 
@@ -39,6 +40,10 @@ class SetOperationException(Exception):
 
 class RollupException(Exception):
     pass
+
+
+class AliasException(QueryException, JoinException):
+    """Raised when a table alias cannot be resolved unambiguously within one query scope."""
 
 
 class DialectNotSupported(Exception):
@@ -163,6 +168,49 @@ def format_alias_sql(
     return "{sql}{_as}{alias}".format(
         sql=sql, _as=' AS ' if as_keyword else ' ', alias=format_quotes(alias, alias_quote_char or quote_char)
     )
+
+
+_current_replacement: ContextVar = ContextVar("pypika_table_replacement", default=None)
+
+
+class TableReplacement:
+    """The binding selected by a ``replace_table`` call.
+
+    A query may join the same physical table twice under different aliases, and a nested query may
+    reuse an outer alias.  Replacement therefore targets one Python binding.  When ``identity_mode``
+    is set, only the exact table object is rebound: structurally equal aliases of the same physical
+    table, and same-named aliases in nested scopes, are left alone.  The structural comparison is kept
+    as a fallback for expressions that are rewritten standalone (outside any query) and for the
+    historical ``replace_table(Table(...), ...)`` usage where no identity match exists.
+    """
+
+    __slots__ = ("current_table", "new_table", "identity_mode")
+
+    def __init__(self, current_table, new_table, identity_mode: bool) -> None:
+        self.current_table = current_table
+        self.new_table = new_table
+        self.identity_mode = identity_mode
+
+    def matches(self, table) -> bool:
+        if self.current_table is None:
+            return table is None
+        if table is None:
+            return False
+        if self.identity_mode:
+            return table is self.current_table
+        return table == self.current_table
+
+
+def active_table_replacement() -> TableReplacement | None:
+    return _current_replacement.get()
+
+
+def begin_table_replacement(replacement: TableReplacement):
+    return _current_replacement.set(replacement)
+
+
+def end_table_replacement(token) -> None:
+    _current_replacement.reset(token)
 
 
 def validate(*args: Any, exc: Exception | None = None, type: type | None = None) -> None:
