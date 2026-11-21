@@ -8,6 +8,8 @@ Excel book
 :license: New BSD License, see LICENSE for more details
 """
 
+import copy
+
 from pyexcel.sheet import Sheet
 from pyexcel._compact import OrderedDict
 from pyexcel.internal.meta import BookMeta
@@ -37,6 +39,7 @@ class Book(BookMeta):
         self.filename = None
         self.__path = None
         self.__sheets = OrderedDict()
+        self.__auto_names = {}
         self.init(sheets=sheets, filename=filename, path=path)
 
     def init(self, sheets=None, filename="memory", path=None):
@@ -66,6 +69,7 @@ class Book(BookMeta):
             self.__sheets.update({name: sheet})
             # this provide the convenience of access the sheet
             self.__dict__[name.replace(" ", "_")] = sheet
+            self._adopt(sheet, name)
 
     def __iter__(self):
         return SheetIterator(self)
@@ -117,12 +121,12 @@ class Book(BookMeta):
             sheet_names = self.sheet_names()
             if sheet < len(sheet_names):
                 sheet_name = sheet_names[sheet]
-                del self.__sheets[sheet_name]
+                self._detach(sheet_name)
             else:
                 raise IndexError
         elif isinstance(sheet, str):
             if sheet in self.__sheets:
-                del self.__sheets[sheet]
+                self._detach(sheet)
             else:
                 raise KeyError
         else:
@@ -151,29 +155,9 @@ class Book(BookMeta):
             book3 = book1 + book2["Sheet 1"]
 
         """
-        content = OrderedDict()
-        current_dict = self.to_dict()
-        if len(current_dict) == 1:
-            for single_key in current_dict.keys():
-                new_key = f"{self.filename}_{single_key}"
-                content[new_key] = current_dict[single_key]
-        else:
-            content.update(current_dict)
-        if isinstance(other, Book):
-            other_dict = other.to_dict()
-            for key in other_dict.keys():
-                preferred = (
-                    f"{other.filename}_{key}" if len(other_dict) == 1 else key
-                )
-                new_key = _unique_key(preferred, content, base=key)
-                content[new_key] = other_dict[key]
-        elif isinstance(other, Sheet):
-            new_key = _unique_key(other.name, content)
-            content[new_key] = other.array
-        else:
-            raise TypeError
         output = Book()
-        output.load_from_sheets(content)
+        output._absorb(self)
+        output += other
         return output
 
     def __iadd__(self, other):
@@ -187,16 +171,91 @@ class Book(BookMeta):
 
         """
         if isinstance(other, Book):
-            names = other.sheet_names()
-            for name in names:
-                preferred = other.filename if len(names) == 1 else name
-                new_key = _unique_key(preferred, self.__sheets, base=name)
-                self.__sheets[new_key] = Sheet(other[name].array, new_key)
+            self._merge_book(other)
         elif isinstance(other, Sheet):
             self._add_a_sheet(other)
         else:
             raise TypeError
         return self
+
+    def _absorb(self, source):
+        """
+        Copy all sheets from the source book into this one
+
+        The naming rules of operator + are applied: the sheet of a
+        single sheet book is renamed after the book's file name.
+        """
+        names = source.sheet_names()
+        single_sheet = len(names) == 1
+        for name in names:
+            sheet = source.sheet_by_name(name)
+            auto_base = source._auto_base(name)
+            if single_sheet:
+                new_name = f"{source.filename}_{name}"
+                self._insert_sheet(
+                    new_name,
+                    sheet,
+                    genuine=False,
+                    base=auto_base if auto_base else name,
+                )
+            elif auto_base is not None:
+                self._insert_sheet(
+                    name, sheet, genuine=False, base=auto_base
+                )
+            else:
+                self._insert_sheet(name, sheet)
+
+    def _merge_book(self, other):
+        """
+        Merge another book into this one, in place
+
+        Genuine sheet names, i.e. the original ones and the ones
+        chosen by the user, are reserved up front and win over
+        auto-assigned ones, so that a fixed sequence of source
+        books always yields the same sheet names.
+        """
+        names = other.sheet_names()
+        single_sheet = len(names) == 1
+        preferred = {}
+        genuine = {}
+        for name in names:
+            auto_base = other._auto_base(name)
+            if single_sheet:
+                preferred[name] = f"{other.filename}_{name}"
+                genuine[name] = False
+            else:
+                preferred[name] = name
+                genuine[name] = auto_base is None
+        reserved = set(preferred[name] for name in names if genuine[name])
+        for existing in list(self.__sheets.keys()):
+            if existing in reserved and existing in self.__auto_names:
+                base = self.__auto_names[existing]
+                taken = (set(self.__sheets.keys()) - {existing}) | reserved
+                new_name = _free_name(base, taken)
+                self._rekey_sheet(existing, new_name, auto_base=base)
+        for name in names:
+            desired = preferred[name]
+            reserved.discard(desired)
+            taken = set(self.__sheets.keys()) | reserved
+            auto_base = other._auto_base(name)
+            base = auto_base if auto_base else name
+            if desired in taken:
+                new_name = _free_name(name, taken)
+                self._insert_sheet(
+                    new_name,
+                    other.sheet_by_name(name),
+                    genuine=False,
+                    base=base,
+                )
+            elif genuine[name]:
+                self._insert_sheet(desired, other.sheet_by_name(name))
+            else:
+                self._insert_sheet(
+                    desired,
+                    other.sheet_by_name(name),
+                    genuine=False,
+                    base=base,
+                )
 
     def _add_a_sheet(self, sheet):
         """
@@ -204,8 +263,85 @@ class Book(BookMeta):
 
         :param sheet: an instance of Sheet
         """
-        new_key = _unique_key(sheet.name, self.__sheets)
-        self.__sheets[new_key] = Sheet(sheet.array, new_key)
+        new_key = _free_name(sheet.name, set(self.__sheets.keys()))
+        if new_key == sheet.name:
+            self._insert_sheet(new_key, sheet)
+        else:
+            self._insert_sheet(
+                new_key, sheet, genuine=False, base=sheet.name
+            )
+
+    def _insert_sheet(self, name, sheet, genuine=True, base=None):
+        """
+        Insert an independent copy of the sheet under the given name
+        """
+        new_sheet = Sheet(copy.deepcopy(sheet.array), name)
+        self.__sheets[name] = new_sheet
+        self.__dict__[name.replace(" ", "_")] = new_sheet
+        self._adopt(new_sheet, name, genuine=genuine, base=base)
+
+    def _adopt(self, sheet, name, genuine=True, base=None):
+        """
+        Register a sheet so that later renames stay in sync
+        """
+        sheet._parent_book = self
+        if genuine:
+            self.__auto_names.pop(name, None)
+        else:
+            self.__auto_names[name] = base if base is not None else name
+
+    def _detach(self, name):
+        """
+        Remove the named sheet from the book's index
+        """
+        removed = self.__sheets.pop(name)
+        self.__auto_names.pop(name, None)
+        if getattr(removed, "_parent_book", None) is self:
+            removed._parent_book = None
+
+    def _auto_base(self, name):
+        """
+        Return the original name of an auto-assigned sheet name
+        """
+        return self.__auto_names.get(name)
+
+    def _rename_sheet(self, sheet, new_name):
+        """
+        Keep the book's index in sync with a sheet's new name
+        """
+        old_name = None
+        for key, value in self.__sheets.items():
+            if value is sheet:
+                old_name = key
+                break
+        if old_name is None or old_name == new_name:
+            return
+        if new_name in self.__sheets:
+            raise ValueError(f"Sheet name '{new_name}' already exists")
+        self._rekey_sheet(old_name, new_name)
+
+    def _rekey_sheet(self, old_name, new_name, auto_base=None):
+        """
+        Rename a sheet in the book's index, keeping the sheet order
+        """
+        sheet = self.__sheets[old_name]
+        renamed = OrderedDict()
+        for key, value in self.__sheets.items():
+            if key == old_name:
+                renamed[new_name] = value
+            else:
+                renamed[key] = value
+        self.__sheets = renamed
+        old_attribute = old_name.replace(" ", "_")
+        if self.__dict__.get(old_attribute) is sheet:
+            del self.__dict__[old_attribute]
+        self.__dict__[new_name.replace(" ", "_")] = sheet
+        sheet._name = new_name
+        self.__auto_names.pop(old_name, None)
+        if auto_base is None:
+            self.__auto_names.pop(new_name, None)
+        else:
+            self.__auto_names[new_name] = auto_base
 
     def to_dict(self):
         """Convert the book to a dictionary"""
@@ -233,11 +369,15 @@ def local_uuid():
     return LOCAL_UUID
 
 
-def _unique_key(preferred, existing, base=None):
-    """Return preferred if not in existing, else return base (or preferred) s
-    uffixed with a local uuid."""
-    if base is None:
-        base = preferred
-    if preferred in existing:
-        return f"{base}_{local_uuid()}"
-    return preferred
+def _free_name(base, taken):
+    """Return base if not taken, else the first free base_N name.
+
+    The outcome depends only on the given names, so that a fixed
+    sequence of source books always yields the same sheet names.
+    """
+    if base not in taken:
+        return base
+    index = 1
+    while f"{base}_{index}" in taken:
+        index += 1
+    return f"{base}_{index}"

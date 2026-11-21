@@ -168,10 +168,24 @@ class Sheet(Matrix):
     def clone(self):
         new_sheet = Sheet(
             copy.deepcopy(self.get_internal_array()),
+            name=self.name,
             name_columns_by_row=self.__row_index,
             name_rows_by_column=self.__column_index,
         )
         return new_sheet
+
+    @property
+    def name(self):
+        """The sheet name. It is kept in sync with the parent book"""
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        parent = self.__dict__.get("_parent_book")
+        old_name = self.__dict__.get("_name")
+        if parent is not None and old_name != value:
+            parent._rename_sheet(self, value)
+        self._name = value
 
     def __deepcopy__(self, memo):
         return self.clone()

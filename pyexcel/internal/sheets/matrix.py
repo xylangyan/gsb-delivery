@@ -853,7 +853,7 @@ def transpose(in_array):
 
 
 def _add(name, left, right):
-    from pyexcel.book import Book, local_uuid
+    from pyexcel.book import Book, _free_name
 
     content = {}
     content[name] = left
@@ -864,14 +864,12 @@ def _add(name, left, right):
             if len(right_in_dict.keys()) == 1:
                 new_key = right.filename
             if new_key in content:
-                uid = local_uuid()
-                new_key = f"{key}_{uid}"
+                new_key = _free_name(key, content)
             content[new_key] = right_in_dict[key]
     elif isinstance(right, Matrix):
         new_key = right.name
         if new_key in content:
-            uid = local_uuid()
-            new_key = f"{right.name}_{uid}"
+            new_key = _free_name(right.name, content)
         content[new_key] = copy.deepcopy(right.get_internal_array())
     else:
         raise TypeError

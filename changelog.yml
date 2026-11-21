@@ -2,6 +2,15 @@ name: pyexcel
 organisation: pyexcel
 releases:
 - changes:
+  - action: updated
+    details:
+    - book merging (+ and +=) assigns deterministic sheet names for a fixed
+      sequence of source books, regardless of merge grouping or prior merges.
+      Genuine sheet names, including user chosen ones, win over auto-assigned
+      ones, and merged books no longer share data with their source books.
+  version: 0.7.8
+  date: tbd
+- changes:
   - action: Fixed
     details:
     - "`#310`: fix broken indentation in iget_records memory-reduction patch"
