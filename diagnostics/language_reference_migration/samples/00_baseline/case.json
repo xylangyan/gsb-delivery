@@ -1,0 +1,21 @@
+{
+  "case": "00_baseline",
+  "description": "Normal baseline: renamed reference column stores the current local LanguageTable primary key; metadata FK points to the current table.",
+  "reference_property": "http://cldf.clld.org/v1.0/terms.rdf#languageReference",
+  "fk_resource": "languages.csv",
+  "legacy_table_defined": false,
+  "legacy_file_present": null,
+  "current_rows": [
+    [
+      "lang-deu",
+      "deu",
+      "German (modern)"
+    ],
+    [
+      "deu",
+      "other-pk",
+      "Another language"
+    ]
+  ],
+  "legacy_rows": null
+}

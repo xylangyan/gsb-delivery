@@ -1,0 +1,117 @@
+{
+  "@context": [
+    "http://www.w3.org/ns/csvw",
+    {
+      "@language": "en"
+    }
+  ],
+  "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#Wordlist",
+  "dialect": {
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "header": true
+  },
+  "tables": [
+    {
+      "url": "forms.csv",
+      "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#FormTable",
+      "tableSchema": {
+        "columns": [
+          {
+            "name": "ID",
+            "datatype": "string",
+            "required": true,
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#id"
+          },
+          {
+            "name": "Language_PK",
+            "datatype": "string",
+            "required": true,
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#languageReference"
+          },
+          {
+            "name": "Parameter_ID",
+            "datatype": "string",
+            "required": true,
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#parameterReference"
+          },
+          {
+            "name": "Form",
+            "datatype": "string",
+            "required": true,
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#form"
+          }
+        ],
+        "primaryKey": [
+          "ID"
+        ],
+        "foreignKeys": [
+          {
+            "columnReference": [
+              "Language_PK"
+            ],
+            "reference": {
+              "resource": "languages.csv",
+              "columnReference": [
+                "Local_PK"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "url": "languages.csv",
+      "tableSchema": {
+        "columns": [
+          {
+            "name": "ID",
+            "datatype": "string",
+            "required": true,
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#id"
+          },
+          {
+            "name": "Local_PK",
+            "datatype": "string",
+            "required": true
+          },
+          {
+            "name": "Name",
+            "datatype": "string",
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#name"
+          }
+        ],
+        "primaryKey": [
+          "Local_PK"
+        ]
+      },
+      "dc:conformsTo": "http://cldf.clld.org/v1.0/terms.rdf#LanguageTable"
+    },
+    {
+      "url": "languages-legacy.csv",
+      "tableSchema": {
+        "columns": [
+          {
+            "name": "ID",
+            "datatype": "string",
+            "required": true,
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#id"
+          },
+          {
+            "name": "Local_PK",
+            "datatype": "string",
+            "required": true
+          },
+          {
+            "name": "Name",
+            "datatype": "string",
+            "propertyUrl": "http://cldf.clld.org/v1.0/terms.rdf#name"
+          }
+        ],
+        "primaryKey": [
+          "Local_PK"
+        ]
+      }
+    }
+  ]
+}

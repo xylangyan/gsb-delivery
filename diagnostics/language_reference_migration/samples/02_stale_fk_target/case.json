@@ -1,0 +1,27 @@
+{
+  "case": "02_stale_fk_target",
+  "description": "Post-migration LanguageTable lives at languages.csv, but metadata FK still points at a readable legacy table. The legacy table is an ordinary table whose Local_PK=deu row is a historical language.",
+  "reference_property": "http://cldf.clld.org/v1.0/terms.rdf#languageReference",
+  "fk_resource": "languages-legacy.csv",
+  "legacy_table_defined": true,
+  "legacy_file_present": true,
+  "current_rows": [
+    [
+      "lang-deu",
+      "deu",
+      "German (modern)"
+    ],
+    [
+      "deu",
+      "other-pk",
+      "Another language"
+    ]
+  ],
+  "legacy_rows": [
+    [
+      "deu-1900",
+      "deu",
+      "German (historical)"
+    ]
+  ]
+}

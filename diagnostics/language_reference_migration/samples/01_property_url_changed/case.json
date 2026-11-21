@@ -1,0 +1,21 @@
+{
+  "case": "01_property_url_changed",
+  "description": "Only the reference column CLDF property URL is changed (languageReference -> metaLanguageReference). The FK is unchanged.",
+  "reference_property": "http://cldf.clld.org/v1.0/terms.rdf#metaLanguageReference",
+  "fk_resource": "languages.csv",
+  "legacy_table_defined": false,
+  "legacy_file_present": null,
+  "current_rows": [
+    [
+      "lang-deu",
+      "deu",
+      "German (modern)"
+    ],
+    [
+      "deu",
+      "other-pk",
+      "Another language"
+    ]
+  ],
+  "legacy_rows": null
+}

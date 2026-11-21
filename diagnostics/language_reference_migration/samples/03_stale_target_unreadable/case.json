@@ -1,0 +1,27 @@
+{
+  "case": "03_stale_target_unreadable",
+  "description": "Same stale FK as 02, but the legacy path is unreadable (file removed; table definition retained).",
+  "reference_property": "http://cldf.clld.org/v1.0/terms.rdf#languageReference",
+  "fk_resource": "languages-legacy.csv",
+  "legacy_table_defined": true,
+  "legacy_file_present": false,
+  "current_rows": [
+    [
+      "lang-deu",
+      "deu",
+      "German (modern)"
+    ],
+    [
+      "deu",
+      "other-pk",
+      "Another language"
+    ]
+  ],
+  "legacy_rows": [
+    [
+      "deu-1900",
+      "deu",
+      "German (historical)"
+    ]
+  ]
+}
