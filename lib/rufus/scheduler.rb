@@ -19,6 +19,7 @@ class Rufus::Scheduler
   require 'rufus/scheduler/jobs_repeat'
   require 'rufus/scheduler/job_array'
   require 'rufus/scheduler/locks'
+  require 'rufus/scheduler/batch_collector'
 
   #
   # A common error class for rufus-scheduler

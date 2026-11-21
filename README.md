@@ -1154,6 +1154,96 @@ Please note that, for interval jobs, the ```#mean_work_time``` is used, so the r
 Like `#occurrences` but returns a list ```[ [ t0, job0 ], [ t1, job1 ], ... ]``` of time + job pairs.
 
 
+## collecting and merging batch artifacts
+
+`Rufus::Scheduler::BatchCollector` coordinates pairs of collection artifacts
+that arrive independently, for example from two scheduled jobs collecting the
+same logical batch.
+
+```ruby
+require 'rufus-scheduler'
+
+merger = lambda do |batch, inputs, work_dir|
+
+  # inputs is [ { 'source' => 'a', 'snapshot_path' => '...', ... }, ... ]
+  File.write(File.join(work_dir, 'merged.csv'), merge(inputs))
+
+  { 'rows' => 900 }
+end
+
+collector = Rufus::Scheduler::BatchCollector.new(
+  root: 'var/batches', merger: merger, scheduler: scheduler)
+
+scheduler.every '1h', tag: 'collect_a' do
+  collector.report(batch: 17, source: 'a', path: 'in/a.csv', summary: '900 rows')
+end
+
+scheduler.every '1h', tag: 'collect_b' do
+  collector.report(batch: 17, source: 'b', path: 'in/b.csv', summary: '880 rows')
+end
+```
+
+Each report names its batch, its source job, the artifact location and a
+summary. Both reports of a batch are verified (the file must exist and, when a
+digest is given, match it) before the batch is queued. A batch waiting for its
+second artifact creates no job and holds no worker; ordinary scheduling keeps
+running.
+
+The first two distinct sources accepted for a batch are its inputs. A repeated
+delivery of the same report is counted once. A later file with the same name is
+never substituted for an accepted input.
+
+Everything lives under `root`:
+
+* `batches/<batch>/state.json` - the durable per-batch record
+* `batches/<batch>/inputs/` - content-addressed snapshots of the accepted bytes
+* `published/<batch>/manifest.json` - the single published manifest, listing the
+  result digest and the identities of both inputs
+* `published/<batch>/result.json` - the published result
+
+### collector.report(batch:, source:, path:, digest: nil, summary: nil)
+
+Reports one artifact. Raises
+`Rufus::Scheduler::BatchCollector::RejectedReport` when the artifact is missing
+or its digest does not match; the batch is then sealed as failed and later
+notifications, including an older same-named file, do not re-open it.
+
+A report for a source that was already accepted with another digest is not
+accepted either; the accepted artifact stays the input of the batch. When a
+batch already has its two sources, a third source is not mixed into it.
+
+For a batch that is already published, the report returns
+`'accepted' => false, 'reason' => 'already published'`; the published manifest
+stays authoritative.
+
+### collector.recover
+
+Re-reads `root` after a process restart and finishes what was interrupted:
+
+* a batch whose two inputs were recorded but whose merge was never queued is
+  queued and merged
+* a batch whose result and manifest were published but whose completion was not
+  recorded is finalized from the manifest, without merging again
+* a publication path without a valid manifest is not considered complete
+* a batch whose state was lost but whose manifest survived is rebuilt as
+  published from that manifest
+
+The worker queue is never used as a recovery source.
+
+### collector.drain
+
+Runs queued merges synchronously. Without an attached scheduler this is how
+merges are executed; with one, a complete batch gets a single `at` job.
+
+### collector.manifest(batch) / collector.result(batch)
+
+Read back the one verified result manifest (and its result) of a batch, or nil.
+
+A merge that fails before anything is published is left queued and may be redone
+by a later `#drain` or `#recover`. Once the manifest is in place the batch is
+never merged again.
+
+
 ## dealing with job errors
 
 The easy, job-granular way of dealing with errors is to rescue and deal with them immediately. The two next sections show examples. Skip them for explanations on how to deal with errors at the scheduler level.
