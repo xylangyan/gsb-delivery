@@ -25,3 +25,21 @@ class UpgradePlugin(Exception):
     """Please upgrade your plugin"""
 
     pass
+
+
+class CatalogIncomplete(Exception):
+    """A group catalog was not completely scanned and cannot be delivered"""
+
+    pass
+
+
+class UnknownGroup(Exception):
+    """The requested group is not present in the catalog"""
+
+    pass
+
+
+class GroupNotFound(KeyError):
+    """The requested group is not present in a recovery report"""
+
+    pass

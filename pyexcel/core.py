@@ -68,6 +68,17 @@ def iget_book(**keywords):
     return sources.get_book_stream(on_demand=True, **keywords)
 
 
+def iget_groups(catalog_path, group_by, **keywords):
+    """Group a source once and return its durable catalog.
+
+    This is a thin wrapper around :func:`pyexcel.grouping.build_catalog`
+    so that grouping fits the other on-demand ``iget_*`` functions.
+    """
+    from pyexcel.grouping import build_catalog
+
+    return build_catalog(catalog_path, group_by, **keywords)
+
+
 @append_doc(docs.SAVE_AS)
 def save_as(**keywords):
     """

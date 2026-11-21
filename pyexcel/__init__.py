@@ -20,6 +20,7 @@ from .core import (
     get_sheet,
     iget_book,
     iget_array,
+    iget_groups,
     get_records,
     iget_records,
     save_book_as,
@@ -27,6 +28,13 @@ from .core import (
     isave_book_as,
 )
 from .sheet import Sheet
+from .grouping import (
+    build_catalog,
+    open_catalog,
+    Catalog,
+    GroupReader,
+    RecoveryReport,
+)
 
 # flake8: noqa
 from .cookbook import (

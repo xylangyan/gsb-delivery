@@ -32,6 +32,7 @@ Obtaining data from excel file
    iget_book
    iget_array
    iget_records
+   iget_groups
    free_resources
 
 .. _conversion-to:

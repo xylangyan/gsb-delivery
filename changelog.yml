@@ -6,6 +6,9 @@ releases:
     details:
     - "`#310`: fix broken indentation in iget_records memory-reduction patch"
     - "`#285`: display timedelta values as strings without JSON serialization errors"
+  - action: Added
+    details:
+    - "add single pass grouped catalogs: iget_groups consumes a source once and stores durable per-group rows for row by row delivery, acknowledgement and replay after restart; incomplete catalogs are rejected"
   version: 0.7.7
   date: 01.07.2026
 - changes:

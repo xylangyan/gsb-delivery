@@ -376,6 +376,7 @@ Old tutorial
    tutorial_data_conversion
    attributes.rst
    bigdata
+   grouping
    tutorial
    tutorial05
    tutorial02
