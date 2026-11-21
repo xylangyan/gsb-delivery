@@ -31,6 +31,10 @@ Added
 -----
 
 * Added SWITCH() function
+* Added per-compiler settlement clocks for TODAY()/NOW() so historical
+  periods can be replayed in their own timezone.  Clock dependent cached
+  values are selectively refreshed, and a time without a timezone is
+  rejected while the previous period stays usable.
 
 Changed
 -------

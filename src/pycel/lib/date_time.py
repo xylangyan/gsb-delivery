@@ -18,6 +18,7 @@ import math
 
 import dateutil.parser
 
+from pycel.clock import excel_date_serial, get_clock
 from pycel.excelutil import (
     coerce_to_number,
     ERROR_CODES,
@@ -551,8 +552,20 @@ def month(serial_number):
 def now():
     # Excel reference: https://support.microsoft.com/en-us/office/
     #   now-function-3337fd29-145a-4347-b2e6-20c904739c46
-    delta = dt.datetime.now() - DATE_ZERO
-    return delta.days + delta.seconds * SECOND
+    clock = get_clock()
+    if clock is None:
+        delta = dt.datetime.now() - DATE_ZERO
+        return delta.days + delta.seconds * SECOND
+    return clock.serial
+
+
+def today():
+    # Excel reference: https://support.microsoft.com/en-us/office/
+    #   today-function-5eb3078d-a82c-4736-8930-2f51a028fdd9
+    clock = get_clock()
+    if clock is not None:
+        return clock.today
+    return excel_date_serial(dt.date.today())
 
 
 @time_value_wrapper
@@ -615,12 +628,6 @@ def timevalue(value):
             return VALUE_ERROR
 
     return serial_number
-
-
-def today():
-    # Excel reference: https://support.microsoft.com/en-us/office/
-    #   today-function-5eb3078d-a82c-4736-8930-2f51a028fdd9
-    return (dt.date.today() - DATE_ZERO.date()).days
 
 
 # return_type -> (day numbered first, number it gets), Sunday is day 0

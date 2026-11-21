@@ -8,6 +8,7 @@
 #   https://www.gnu.org/licenses/gpl-3.0.en.html
 
 import collections
+import datetime as dt
 import hashlib
 import itertools as it
 import json
@@ -21,6 +22,14 @@ import networkx as nx
 import numpy as np
 from ruamel.yaml import YAML
 
+from pycel.clock import (
+    clock_dependencies,
+    is_naive,
+    reset_clock,
+    resolve_timezone,
+    SettlementClock,
+    set_clock as pin_clock,
+)
 from pycel.excelformula import ExcelFormula
 from pycel.excelutil import (
     AddressCell,
@@ -50,16 +59,43 @@ class ExcelCompiler:
 
     save_file_extensions = ('pkl', 'pickle', 'yml', 'yaml', 'json')
 
-    def __init__(self, filename=None, excel=None, plugins=None, cycles=None):
+    def __init__(self, filename=None, excel=None, plugins=None, cycles=None,
+                 clock=None, settlement_time=None, timezone=None):
         """ Build a compiler instance to organize the formula for a workbook
 
         :param filename: Excel filename to load from (xlsx or `to_file`)
         :param excel: Opened instance of ExcelWrapper or openpyxl workbook
         :param plugins: module paths for plugin lib functions
         :param cycles: Override workbook iterative calculation settings
+        :param clock: A SettlementClock (or timezone aware datetime) that
+            TODAY() and NOW() should see.  Without one the system clock is
+            used.
+        :param settlement_time: A timezone aware datetime (or ISO string with
+            an offset) used to build the settlement clock.
+        :param timezone: The accounting timezone (name such as
+            'Asia/Shanghai' or a tzinfo) for the settlement clock.
         """
 
         self._eval = None
+        self._settlement_clock = None
+        if clock is not None and settlement_time is not None:
+            raise ValueError(
+                'Specify either clock or settlement_time, not both')
+        self._account_timezone = resolve_timezone(timezone)
+        if clock is not None or settlement_time is not None:
+            when = settlement_time or clock
+            if isinstance(clock, SettlementClock):
+                self._settlement_clock = clock
+            elif timezone is not None:
+                self._settlement_clock = SettlementClock(when, timezone)
+            elif is_naive(when) and self._account_timezone is not None:
+                # A wall time with an explicit accounting timezone.
+                self._settlement_clock = SettlementClock(
+                    when, self._account_timezone)
+            else:
+                self._settlement_clock = SettlementClock(when)
+            if self._account_timezone is None:
+                self._account_timezone = self._settlement_clock.timezone
 
         if excel:
             # if we are running as an excel addin, this gets passed to us
@@ -124,7 +160,7 @@ class ExcelCompiler:
         # code objects are not serializable
         state = dict(self.__dict__)
         to_removes = '_eval excel log graph_todos range_todos ' \
-                     'conditional_formats'.split()
+                     'conditional_formats _settlement_clock'.split()
         for to_remove in to_removes:
             if to_remove in state:    # pragma: no branch
                 state[to_remove] = None
@@ -133,6 +169,163 @@ class ExcelCompiler:
     def __setstate__(self, d):
         self.__dict__.update(d)
         self.log = pycel_logger
+
+    @property
+    def settlement_clock(self):
+        """The clock used for TODAY() and NOW(), or None for system time."""
+        return self._settlement_clock
+
+    @settlement_clock.setter
+    def settlement_clock(self, clock):
+        if clock is None:
+            self.clear_settlement_clock()
+            return
+        if not isinstance(clock, SettlementClock):
+            if isinstance(clock, (int, float)):
+                raise ValueError(
+                    'A settlement clock needs a timezone aware datetime, '
+                    'not a raw date serial')
+            clock = SettlementClock(clock)
+        self.set_settlement_clock(clock)
+
+    @property
+    def clock(self):
+        return self._settlement_clock
+
+    @clock.setter
+    def clock(self, clock):
+        self.settlement_clock = clock
+
+    @property
+    def settlement_time(self):
+        return (self._settlement_clock.instant
+                if self._settlement_clock is not None else None)
+
+    @settlement_time.setter
+    def settlement_time(self, when):
+        if when is None:
+            self.clear_settlement_clock()
+        else:
+            self.set_settlement_clock(when)
+
+    @property
+    def timezone(self):
+        """The accounting timezone of this ledger, if known."""
+        if self._settlement_clock is not None:
+            return self._settlement_clock.timezone
+        return self._account_timezone
+
+    @timezone.setter
+    def timezone(self, timezone):
+        self._account_timezone = resolve_timezone(timezone)
+
+    @property
+    def as_of(self):
+        return self.settlement_time
+
+    @as_of.setter
+    def as_of(self, when):
+        self.settlement_time = when
+
+    def set_settlement_clock(self, clock, timezone=None):
+        """Pin the instant that TODAY() and NOW() see for this compiler.
+
+        Values produced by clock dependent formulas are dropped from the
+        cache.  The clock is not evaluated until the next evaluate() call.
+        A settlement time without timezone information is rejected and the
+        previously active period remains usable.  When only a datetime is
+        given the ledger's accounting timezone is retained.
+        """
+        if isinstance(clock, SettlementClock):
+            new_clock = clock
+        elif timezone is not None:
+            new_clock = SettlementClock(clock, timezone)
+            self._account_timezone = resolve_timezone(timezone)
+        elif is_naive(clock):
+            # A bare clock time must say which zone it is in, even when the
+            # ledger already has an accounting timezone.
+            new_clock = SettlementClock(clock)
+        elif self._account_timezone is not None:
+            # Keep the ledger's accounting timezone for absolute instants.
+            new_clock = SettlementClock(clock, self._account_timezone)
+        else:
+            new_clock = SettlementClock(clock)
+        clock = new_clock
+        if timezone is None and self._account_timezone is None:
+            self._account_timezone = clock.timezone
+        previous = self._settlement_clock
+        self._settlement_clock = clock
+        self._invalidate_for_clock(previous, clock)
+        return clock
+
+    set_clock = set_settlement_clock
+    set_clock_time = set_settlement_clock
+    set_settlement_time = set_settlement_clock
+    set_as_of = set_settlement_clock
+
+    def use_clock(self, clock, timezone=None):
+        return self.set_settlement_clock(clock, timezone)
+
+    def clear_settlement_clock(self):
+        """Return this compiler to the system clock."""
+        previous = self._settlement_clock
+        self._settlement_clock = None
+        self._invalidate_for_clock(previous, None)
+        return previous
+
+    def _invalidate_for_clock(self, previous, current):
+        """Drop only cached values that the clock change can affect.
+
+        A moved time refreshes NOW() and its dependents.  A moved date also
+        refreshes TODAY() and its dependents.  Formulas with no clock
+        dependency keep their cached values.  Turning the clock off (or on)
+        is treated conservatively and refreshes both.
+        """
+        changed = set()
+        if previous is None or current is None:
+            changed.update(('now', 'today'))
+        else:
+            if not previous.close_enough(current):
+                changed.add('now')
+            if previous.today != current.today:
+                changed.add('today')
+        if not changed:
+            return
+
+        dirty = set()
+        pending = []
+        for address, deps in self._clock_dependencies().items():
+            if deps & changed:
+                dirty.add(address)
+                cell = self.cell_map.get(address)
+                if cell is not None:
+                    pending.append(cell)
+        if not dirty:
+            return
+
+        while pending:
+            node = pending.pop()
+            if node not in self.dep_graph:
+                continue
+            for child in self.dep_graph.successors(node):
+                child_address = child.address.address
+                if child_address not in dirty:
+                    dirty.add(child_address)
+                    pending.append(child)
+
+        for address in dirty:
+            cell = self.cell_map.get(address)
+            if cell is not None:
+                cell.value = None
+
+    def _clock_dependencies(self):
+        """Map each clock formula address to the clock functions it uses."""
+        dependencies = {}
+        for address, cell in self.cell_map.items():
+            deps = clock_dependencies(cell.python_code)
+            if deps:
+                dependencies[address] = deps
+        return dependencies
 
     @staticmethod
     def _compute_file_md5_digest(filename):
@@ -837,13 +1030,36 @@ class ExcelCompiler:
 
         return cell.value
 
-    def _evaluate_non_iterative(self, address):
+    def _evaluate_non_iterative(self, address, settlement_time=None):
         """ evaluate a cell or cells in the spreadsheet
 
         :param address: str, AddressRange, AddressCell or a tuple or list
             or iterable of these three
+        :param settlement_time: optional timezone aware instant to use for
+            TODAY() and NOW() for this evaluation only
         :return: evaluated value/values
         """
+        return self._evaluate_at(address, settlement_time)
+
+    def _evaluate_at(self, address, settlement_time=None):
+        clock = self._settlement_clock
+        if settlement_time is not None:
+            if isinstance(settlement_time, SettlementClock):
+                clock = settlement_time
+            else:
+                clock = SettlementClock(settlement_time)
+            self._invalidate_for_clock(self._settlement_clock, clock)
+        elif clock is None:
+            # A normal compiler still gives every clock formula in one
+            # evaluation the same instant, captured from the system clock.
+            clock = SettlementClock.system()
+        token = pin_clock(clock)
+        try:
+            return self._evaluate_non_iterative_locked(address)
+        finally:
+            reset_clock(token)
+
+    def _evaluate_non_iterative_locked(self, address):
         if str(address) not in self.cell_map:
             if list_like(address):
                 if not isinstance(address, (tuple, list)):
@@ -851,7 +1067,7 @@ class ExcelCompiler:
 
                 # process a tuple or list of addresses
                 return type(address)(
-                    self._evaluate_non_iterative(c) for c in address)
+                    self._evaluate_non_iterative_locked(c) for c in address)
 
             address = AddressRange.create(address)
 
@@ -872,7 +1088,8 @@ class ExcelCompiler:
                 result = result[0]
         return result
 
-    def _evaluate_iterative(self, address, iterations=None, tolerance=None):
+    def _evaluate_iterative(self, address, iterations=None, tolerance=None,
+                            settlement_time=None):
         """ evaluate a cell or cells in a spreadsheet with cycles
 
         reference: https://support.microsoft.com/en-us/office/
@@ -891,12 +1108,26 @@ class ExcelCompiler:
         iterations = iterations or self.cycles['iterations'] or 10000
         tolerance = tolerance or self.cycles['tolerance'] or 0.01
 
+        clock = self._settlement_clock
+        if settlement_time is not None:
+            if isinstance(settlement_time, SettlementClock):
+                clock = settlement_time
+            else:
+                clock = SettlementClock(settlement_time)
+            self._invalidate_for_clock(self._settlement_clock, clock)
+        elif clock is None:
+            clock = SettlementClock.system()
+
         progress_tracker = iterative_eval_tracker(iterations, tolerance)
-        while True:
-            progress_tracker.inc_iteration_number()
-            results = self._evaluate_non_iterative(address)
-            if progress_tracker.done:
-                return results
+        token = pin_clock(clock)
+        try:
+            while True:
+                progress_tracker.inc_iteration_number()
+                results = self._evaluate_non_iterative_locked(address)
+                if progress_tracker.done:
+                    return results
+        finally:
+            reset_clock(token)
 
     def _gen_graph(self, seed, recursed=False):
         """Given a starting point (e.g., A6, or A3:B7) on a particular sheet,

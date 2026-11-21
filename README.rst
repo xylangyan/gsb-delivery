@@ -72,6 +72,54 @@ graph plotting/export, trimming the graph down to only the cells needed
 for a given input/output, and validating compiled calculations against
 the values already stored in the workbook.
 
+**Replaying a historical period:**
+
+``TODAY()`` and ``NOW()`` normally read the system clock.  When replaying a
+settlement report it is often necessary to make them see a caller supplied
+instant in the timezone of the accounting period instead:
+
+.. code-block:: python
+
+    from zoneinfo import ZoneInfo
+    import datetime as dt
+    from pycel import ExcelCompiler, SettlementClock
+
+    instant = dt.datetime(2026, 11, 22, 0, 30, tzinfo=ZoneInfo('Asia/Shanghai'))
+
+    shanghai = ExcelCompiler(filename='a.xlsx')
+    shanghai.set_settlement_clock(instant, 'Asia/Shanghai')
+
+    los_angeles = ExcelCompiler(filename='b.xlsx')
+    los_angeles.set_settlement_clock(instant, 'America/Los_Angeles')
+
+The accounting timezone can also be set on its own; an absolute instant is
+then read in that zone, while a time without a zone is still rejected:
+
+.. code-block:: python
+
+    ledger = ExcelCompiler(filename='a.xlsx', timezone='Asia/Shanghai')
+    ledger.set_settlement_clock(instant)
+
+The same instant is just after midnight in Shanghai and still the previous
+day in Los Angeles.  Every value in one ``evaluate()`` call sees the same
+instant, and clocks of the two compilers are independent, so their
+evaluations can be interleaved.  Moving a clock drops only the cached values
+that depend on it: a same-day move refreshes ``NOW()`` and its dependents,
+while a move past midnight also refreshes ``TODAY()`` and its dependents.
+Unrelated formulas keep their cached values.  A settlement time without a
+timezone raises ``NaiveDatetimeError`` and leaves the previous clock (and
+its cached values) in place.  Compilers without a settlement clock keep
+using the system time.
+
+A time can also be supplied for a single evaluation:
+
+.. code-block:: python
+
+    value = shanghai.evaluate('Sheet1!D1', settlement_time=instant)
+
+Values are still Excel date serials for the 1900 date system, with the time
+of day as a fraction, and compiled workbooks do not store the runtime clock.
+
 **The good:**
 
 All the main mathematical functions (``SIN``, ``COS``, ``ATAN2``, ...) and
