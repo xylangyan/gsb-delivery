@@ -1,10 +1,52 @@
 from __future__ import annotations
 
+import heapq
 from collections.abc import Callable, ItemsView, Iterator, MutableMapping, ValuesView
 from itertools import chain
+from typing import Any, Generic, NamedTuple, cast
 
 from zict.common import KT, VT, ZictBase, close, discard, flush, locked
 from zict.lru import LRU
+
+
+def _inventory_sort_key(key: Any) -> Any:
+    """Sort keys in byte order; ``str`` keys are ordered by their UTF-8 encoding,
+    which matches the byte order of their binary representation.
+    """
+    return key.encode() if isinstance(key, str) else key
+
+
+def _iter_prefix(mapping: MutableMapping[KT, VT], prefix: KT) -> Iterator[KT]:
+    """Iterate over the keys of *mapping* that start with *prefix*.
+
+    If the mapping defines ``iter_prefix(prefix)`` (e.g. a partitioned or sorted
+    store), use it so that partitions that cannot contain the prefix are never
+    listed; otherwise fall back to scanning all keys and filtering by prefix.
+    """
+    iter_prefix = getattr(mapping, "iter_prefix", None)
+    if iter_prefix is not None:
+        return iter_prefix(prefix)
+    return (key for key in mapping if cast(Any, key).startswith(prefix))
+
+
+class InventoryPage(NamedTuple, Generic[KT, VT]):
+    """One page of a :class:`BufferInventory`.
+
+    Attributes
+    ----------
+    items: list[tuple[key, value]]
+        Matching key/value pairs, sorted by key in byte order. Values reflect
+        the state of the buffer when the inventory was opened.
+    next_cursor:
+        Opaque page credential to pass to :meth:`BufferInventory.page` in order
+        to fetch the next page, or ``None`` if the inventory is exhausted.
+        The credential that was used to obtain this page remains valid and may
+        be reused to fetch this same page again (e.g. after a client
+        disconnect); already confirmed pages are never reprocessed.
+    """
+
+    items: list[tuple[KT, VT]]
+    next_cursor: KT | None
 
 
 class Buffer(ZictBase[KT, VT]):
@@ -57,6 +99,8 @@ class Buffer(ZictBase[KT, VT]):
     fast_to_slow_callbacks: list[Callable[[KT, VT], None]]
     slow_to_fast_callbacks: list[Callable[[KT, VT], None]]
     _cancel_restore: dict[KT, bool]
+    _inventories: dict[int, BufferInventory[KT, VT]]
+    _inventory_token_counter: int
 
     def __init__(
         self,
@@ -88,6 +132,8 @@ class Buffer(ZictBase[KT, VT]):
         self.fast_to_slow_callbacks = fast_to_slow_callbacks or []
         self.slow_to_fast_callbacks = slow_to_fast_callbacks or []
         self._cancel_restore = {}
+        self._inventories = {}
+        self._inventory_token_counter = 0
 
     @property
     def n(self) -> float:
@@ -183,6 +229,7 @@ class Buffer(ZictBase[KT, VT]):
 
     def __setitem__(self, key: KT, value: VT) -> None:
         with self.lock:
+            self._inventory_retain(key)
             discard(self.slow, key)
             if key in self._cancel_restore:
                 self._cancel_restore[key] = True
@@ -193,6 +240,7 @@ class Buffer(ZictBase[KT, VT]):
         """Variant of ``__setitem__`` that does not move keys from fast to slow if the
         total weight exceeds n
         """
+        self._inventory_retain(key)
         discard(self.slow, key)
         if key in self._cancel_restore:
             self._cancel_restore[key] = True
@@ -208,6 +256,7 @@ class Buffer(ZictBase[KT, VT]):
     def __delitem__(self, key: KT) -> None:
         if key in self._cancel_restore:
             self._cancel_restore[key] = True
+        self._inventory_retain(key)
         try:
             del self.fast[key]
         except KeyError:
@@ -216,6 +265,139 @@ class Buffer(ZictBase[KT, VT]):
     @locked
     def _cancel_evict(self, key: KT, value: VT) -> None:
         discard(self.slow, key)
+
+    def open_inventory(self, prefix: KT) -> BufferInventory[KT, VT]:
+        """Open a point-in-time inventory of the keys matching *prefix*.
+
+        The returned :class:`BufferInventory` can be exported page by page, in
+        byte order of the keys, and reflects the state of the buffer at the
+        moment of this call:
+
+        - keys inserted afterwards never appear in the inventory;
+        - keys overwritten or deleted afterwards are exported with their old
+          value. To this end, the buffer retains the old values of the matching
+          keys affected by such changes - and only of those; an inventory never
+          holds a full key table nor a copy of all values;
+        - any number of inventories may be open at the same time on the same
+          buffer; they progress independently and may stop at different pages.
+
+        Opening an inventory is O(1): it does not list the keys of the fast or
+        slow mappings, nor does it read any value. Regular access, movement of
+        keys between the two mappings, and eviction remain available while
+        inventories are open.
+
+        Notes
+        -----
+        If the slow mapping (or the mapping wrapped by the fast LRU) defines
+        ``iter_prefix(prefix)``, it is used to enumerate only the keys that may
+        match the prefix, so that partitions of the slow mapping which cannot
+        contain matching keys are never listed. Otherwise, keys are scanned and
+        filtered by prefix on every page fetch.
+        """
+        with self.lock:
+            inv = BufferInventory(self, self._inventory_token_counter, prefix)
+            self._inventory_token_counter += 1
+            self._inventories[inv.token] = inv
+            return inv
+
+    def close_inventory(self, inventory: BufferInventory[KT, VT] | int) -> None:
+        """Close an inventory and release the history retained for it.
+        Other inventories of this buffer are unaffected.
+        """
+        token = inventory.token if isinstance(inventory, BufferInventory) else inventory
+        with self.lock:
+            inv = self._inventories.get(token)
+        if inv is not None:
+            inv.close()
+
+    def _inventory_retain(self, key: KT) -> None:
+        """Record the pre-mutation state of *key* for every open inventory whose
+        prefix matches. Must be called before the key is overwritten or deleted.
+        """
+        if not self._inventories:
+            return
+        for inv in self._inventories.values():
+            if (
+                key in inv.retained
+                or key in inv.excluded
+                or not cast(Any, key).startswith(inv.prefix)
+            ):
+                continue
+            try:
+                inv.retained[key] = self.fast.d[key]
+            except KeyError:
+                try:
+                    inv.retained[key] = self.slow[key]
+                except KeyError:
+                    # The key does not exist yet; it was inserted after the
+                    # inventory was opened and must never appear in it.
+                    inv.excluded.add(key)
+
+    def _read_inventory_page(
+        self, inv: BufferInventory[KT, VT], cursor: KT | None, limit: int
+    ) -> InventoryPage[KT, VT]:
+        if limit < 1:
+            raise ValueError(f"limit must be >= 1; got {limit}")
+        cursor_key = _inventory_sort_key(cursor) if cursor is not None else None
+
+        def candidates(mapping: MutableMapping[KT, VT]) -> Iterator[KT]:
+            for key in _iter_prefix(mapping, inv.prefix):
+                if key in inv.excluded:
+                    continue
+                if cursor_key is not None and _inventory_sort_key(key) <= cursor_key:
+                    continue
+                yield key
+
+        # Retry if a concurrent write mutates the underlying mappings or the
+        # retained history while scanning them. Never changes the LRU order of
+        # the fast mapping nor moves keys between fast and slow.
+        while True:
+            try:
+                fast_keys = heapq.nsmallest(
+                    limit, candidates(self.fast.d), key=_inventory_sort_key
+                )
+                slow_keys = heapq.nsmallest(
+                    limit, candidates(self.slow), key=_inventory_sort_key
+                )
+                # Keys deleted after the inventory was opened are still owed
+                # their old value, even if they were never re-inserted.
+                retained_keys = [
+                    key
+                    for key in inv.retained
+                    if cursor_key is None or _inventory_sort_key(key) > cursor_key
+                ]
+                break
+            except RuntimeError:
+                pass
+
+        merged = sorted(
+            set(fast_keys) | set(slow_keys) | set(retained_keys),
+            key=_inventory_sort_key,
+        )
+        exhausted = (
+            len(fast_keys) < limit
+            and len(slow_keys) < limit
+            and len(merged) <= limit
+        )
+        page_keys = merged[:limit]
+
+        items: list[tuple[KT, VT]] = []
+        for key in page_keys:
+            if key in inv.retained:
+                items.append((key, inv.retained[key]))
+                continue
+            try:
+                value = self.fast.d[key]
+            except KeyError:
+                try:
+                    value = self.slow[key]
+                except KeyError:
+                    # Key was deleted concurrently, bypassing the Buffer API
+                    continue
+            items.append((key, value))
+
+        next_cursor = None if exhausted else page_keys[-1]
+        return InventoryPage(items, next_cursor)
 
     def values(self) -> ValuesView[VT]:
         return BufferValuesView(self)
@@ -262,6 +444,8 @@ class Buffer(ZictBase[KT, VT]):
         flush(self.fast, self.slow)
 
     def close(self) -> None:
+        for inv in list(self._inventories.values()):
+            inv.close()
         close(self.fast, self.slow)
 
 
@@ -285,3 +469,86 @@ class BufferValuesView(ValuesView[VT]):
     def __iter__(self) -> Iterator[VT]:
         # Avoid changing the LRU
         return chain(self._mapping.fast.values(), self._mapping.slow.values())
+
+
+class BufferInventory(Generic[KT, VT]):
+    """Point-in-time, paginated inventory of the keys of a :class:`Buffer` that
+    match a given prefix. Create with :meth:`Buffer.open_inventory`.
+
+    Pages are fetched with :meth:`page` and are always sorted by key in byte
+    order. Every page returns an opaque credential (``next_cursor``) that
+    identifies the following page; fetching a page does not change the LRU
+    order of the fast mapping, nor does it move keys between the fast and slow
+    mappings.
+
+    See Also
+    --------
+    Buffer.open_inventory
+    InventoryPage
+    """
+
+    buffer: Buffer[KT, VT]
+    token: int
+    prefix: KT
+    #: Old values of matching keys overwritten or deleted since the inventory
+    #: was opened. Never holds more than the keys affected by such changes.
+    retained: dict[KT, VT]
+    #: Matching keys inserted after the inventory was opened; never exported.
+    excluded: set[KT]
+    closed: bool
+
+    def __init__(self, buffer: Buffer[KT, VT], token: int, prefix: KT):
+        self.buffer = buffer
+        self.token = token
+        self.prefix = prefix
+        self.retained = {}
+        self.excluded = set()
+        self.closed = False
+
+    def page(self, cursor: KT | None = None, limit: int = 100) -> InventoryPage[KT, VT]:
+        """Fetch one page of the inventory.
+
+        Parameters
+        ----------
+        cursor:
+            Page credential previously returned as ``next_cursor``, or ``None``
+            to fetch the first page. Passing the same cursor again always
+            returns the same page, so a client that disconnects before
+            receiving the acknowledgement of a page can retry with the
+            credential it already holds, and then keep turning pages without
+            reprocessing confirmed ones.
+        limit: int
+            Maximum number of items per page.
+
+        Returns
+        -------
+        :class:`InventoryPage` with up to ``limit`` items and the credential
+        for the next page (``None`` when the inventory is exhausted).
+
+        Notes
+        -----
+        If reading a value from the slow mapping fails (e.g. a transient
+        error), the exception is propagated and no state is consumed: retrying
+        with the same cursor returns the same batch of keys and values.
+        """
+        if self.closed:
+            raise ValueError("Inventory is closed")
+        return self.buffer._read_inventory_page(self, cursor, limit)
+
+    def close(self) -> None:
+        """Close the inventory and release the history retained for it.
+        Idempotent; does not affect other inventories of the same buffer.
+        """
+        if self.closed:
+            return
+        self.closed = True
+        with self.buffer.lock:
+            self.buffer._inventories.pop(self.token, None)
+        self.retained.clear()
+        self.excluded.clear()
+
+    def __enter__(self) -> BufferInventory[KT, VT]:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()

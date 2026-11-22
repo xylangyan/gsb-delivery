@@ -6,6 +6,9 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- New :meth:`Buffer.open_inventory`: paginated, prefix-filtered, point-in-time
+  inventories of a :class:`Buffer` with resumable page credentials
+  (:class:`BufferInventory`, :class:`InventoryPage`)
 
 
 3.0.0 - 2023-04-17

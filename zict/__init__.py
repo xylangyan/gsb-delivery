@@ -1,5 +1,7 @@
 from zict.async_buffer import AsyncBuffer as AsyncBuffer
 from zict.buffer import Buffer as Buffer
+from zict.buffer import BufferInventory as BufferInventory
+from zict.buffer import InventoryPage as InventoryPage
 from zict.cache import Cache as Cache
 from zict.cache import WeakValueMapping as WeakValueMapping
 from zict.file import File as File
