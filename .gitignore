@@ -1,0 +1,17 @@
+*.pyc
+*.pyo
+uv.lock
+_trial_temp/
+ldaptor.test.*/
+ldaptor/test/ldif/webtests.tmp
+docs/*.png
+ldaptor.egg-info
+.idea
+.coverage
+.coverage.*
+venv/
+build/
+dist/
+.cache
+tags
+.tox/
