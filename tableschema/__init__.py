@@ -13,6 +13,8 @@ from .cli import cli
 from .table import Table
 from .schema import Schema
 from .field import Field
+from .revisions import SchemaRevision
+from .revisions import merge_revisions
 from .storage import Storage
 from .validate import validate
 from .infer import infer
@@ -27,6 +29,8 @@ from .exceptions import UniqueKeyError
 from .exceptions import RelationError
 from .exceptions import UnresolvedFKError
 from .exceptions import StorageError
+from .exceptions import RevisionError
+from .exceptions import RevisionConflictError
 
 # Deprecated
 

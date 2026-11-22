@@ -312,6 +312,37 @@ schema.save('schema.json')
 schema = Schema('schema.json')
 ```
 
+### Working with Schema Revisions
+
+When a repository version renames fields, two maintainers can draft revisions against the same descriptor and have them merged. Edits are tracked by the *logical identity* of a field, so a rename follows the field instead of breaking references:
+
+```python
+schema = Schema(descriptor)
+
+# Two drafts taken from the same committed descriptor
+alpha = schema.draft()
+alpha.rename_field('owner', 'reviewer')
+alpha.rename_field('reviewer', 'owner')
+alpha.rename_field('store_id', 'shop_id')
+
+beta = schema.draft()
+beta.update_field('owner', {'constraints': {'enum': ['alice', 'bob']}})
+beta.move_field('owner', 2)
+beta.add_foreign_key({
+    'fields': ['owner'],
+    'reference': {'resource': '', 'fields': ['reviewer']},
+})
+
+# Merge in any order: field order, constraints and references end up identical
+schema.merge(alpha)
+schema.merge(beta)
+```
+
+- Renames update the composite `primaryKey` and self-referencing (`resource: ''`) foreign keys automatically; the reference fields of external resources keep their original names.
+- A new self foreign key is resolved through identities, so its source stays on the field the drafter selected even if that field was renamed by the other revision.
+- When both revisions change the same attribute differently, `merge` raises `RevisionConflictError` carrying the base field `position` and the field's current `names` in each revision, and the committed descriptor is left untouched. An unrelated revision (e.g. a title edit) can still be merged afterwards.
+- A `Table` iteration already running pins the schema it started with, so it keeps validating against the old headers until the stream ends; newly opened reads validate against the fully merged descriptor.
+
 ### Working with Field
 
 ```python

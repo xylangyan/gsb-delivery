@@ -5,6 +5,7 @@ from __future__ import absolute_import
 from __future__ import unicode_literals
 
 from copy import copy
+from copy import deepcopy
 from tabulator import Stream
 from functools import partial
 from collections import OrderedDict
@@ -196,22 +197,32 @@ class Table(object):
         exc_handler = helpers.default_exc_handler if exc_handler is None else \
             exc_handler
 
+        # Pin the schema for this iteration: an iteration that has already
+        # started reading the old headers keeps validating against its own
+        # snapshot even if the shared schema is committed to a new version
+        # meanwhile. New `iter()` calls pick up the committed version.
+        iter_schema = deepcopy(self.__schema) if self.__schema else None
+        expected_headers = (
+            list(iter_schema.field_names) if iter_schema else None)
+
         # Prepare unique checks
         if cast:
             unique_fields_cache = {}
-            if self.schema:
-                unique_fields_cache = _create_unique_fields_cache(self.schema)
+            if iter_schema:
+                unique_fields_cache = _create_unique_fields_cache(iter_schema)
         # Prepare relation checks
         if relations and not foreign_keys_values:
             # we have to test relations but the index has not been precomputed
             # prepare the index to boost validation process
-            foreign_keys_values = self.index_foreign_keys_values(relations)
+            foreign_keys_values = self.index_foreign_keys_values(
+                relations, schema=iter_schema)
 
         # Open/iterate stream
         with self.__stream as stream:
             iterator = stream.iter(extended=True)
             iterator = self.__apply_processors(
-                iterator, cast=cast, exc_handler=exc_handler)
+                iterator, schema=iter_schema, cast=cast,
+                exc_handler=exc_handler)
             for row_number, headers, row in iterator:
 
                 # Get headers
@@ -220,12 +231,12 @@ class Table(object):
 
                 # Check headers
                 if cast:
-                    if self.schema and self.headers:
-                        if self.headers != self.schema.field_names:
+                    if iter_schema and self.headers:
+                        if self.headers != expected_headers:
                             message = (
                                 'Table headers (%r) don\'t match '
                                 'schema field names (%r) in row %s' % (
-                                    self.headers, self.schema.field_names,
+                                    self.headers, expected_headers,
                                     row_number))
                             keyed_row = OrderedDict(zip(headers, row))
                             exc_handler(
@@ -256,9 +267,9 @@ class Table(object):
 
                 # Resolve relations
                 if relations:
-                    if self.schema:
+                    if iter_schema:
                         row_with_relations = dict(zip(headers, copy(row)))
-                        for foreign_key in self.schema.foreign_keys:
+                        for foreign_key in iter_schema.foreign_keys:
                             refValue = _resolve_relations(row, headers, foreign_keys_values,
                                                           foreign_key)
                             if refValue is None:
@@ -433,7 +444,7 @@ class Table(object):
             storage.write(target, self.iter(cast=False))
             return storage
 
-    def index_foreign_keys_values(self, relations):
+    def index_foreign_keys_values(self, relations, schema=None):
         """Creates a three-level dictionary of foreign key references
 
         We create them optimized to speed up validation process in a form of
@@ -478,9 +489,10 @@ class Table(object):
         # foreign_keys are sets of tuples of all possible values in the foreign table
         # foreign keys =
         # [reference] [foreign_keys tuple] = { (foreign_keys_values, ) : one_keyedrow, ... }
+        schema = schema or self.__schema
         foreign_keys = defaultdict(dict)
-        if self.schema:
-            for fk in self.schema.foreign_keys:
+        if schema:
+            for fk in schema.foreign_keys:
                 # load relation data
                 relation = fk['reference']['resource']
 
@@ -499,13 +511,13 @@ class Table(object):
 
     # Private
 
-    def __apply_processors(self, iterator, cast=True, exc_handler=None):
+    def __apply_processors(self, iterator, schema=None, cast=True, exc_handler=None):
 
         # Apply processors to iterator
         def builtin_processor(extended_rows):
             for row_number, headers, row in extended_rows:
-                if self.__schema and cast:
-                    row = self.__schema.cast_row(
+                if schema and cast:
+                    row = schema.cast_row(
                         row, row_number=row_number, exc_handler=exc_handler)
                 yield (row_number, headers, row)
         processors = [builtin_processor] + self.__post_cast

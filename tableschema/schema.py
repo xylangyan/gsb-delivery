@@ -12,6 +12,12 @@ from copy import deepcopy
 from six.moves import zip_longest
 from .profile import Profile
 from .field import Field
+from .revisions import SchemaRevision
+from .revisions import _Changeset
+from .revisions import build_descriptor
+from .revisions import combine_revisions
+from .revisions import names_from_changes
+from .revisions import normalize_revision
 from . import exceptions
 from . import helpers
 from . import config
@@ -51,6 +57,18 @@ class Schema(object):
         self.__profile = Profile('table-schema')
         self.__errors = []
         self.__fields = []
+
+        # Revision lineage: every merge rebuilds from the original base so
+        # drafts taken before the first merge can still be merged in order.
+        self.__revision_base = helpers.expand_schema_descriptor(
+            deepcopy(descriptor))
+        self.__merged_changes = []
+        if isinstance(self.__revision_base, dict):
+            base_fields = self.__revision_base.get('fields', [])
+        else:
+            base_fields = []
+        self.__merged_names = dict(enumerate(
+            field['name'] for field in base_fields))
 
         # Build instance
         self.__build()
@@ -187,6 +205,7 @@ class Schema(object):
         """
         self.__current_descriptor.setdefault('fields', [])
         self.__current_descriptor['fields'].append(descriptor)
+        self.__reset_revision_lineage()
         self.__build()
         return self.__fields[-1]
 
@@ -227,6 +246,7 @@ class Schema(object):
             predicat = lambda field: field.get('name') != name
             self.__current_descriptor['fields'] = list(filter(
                 predicat, self.__current_descriptor['fields']))
+            self.__reset_revision_lineage()
             self.__build()
         return field
 
@@ -378,6 +398,7 @@ class Schema(object):
 
         # Save descriptor
         self.__current_descriptor = descriptor
+        self.__reset_revision_lineage()
         self.__build()
 
         return descriptor
@@ -424,8 +445,22 @@ class Schema(object):
         elif self.__current_descriptor == self.__next_descriptor:
             return False
         self.__current_descriptor = deepcopy(self.__next_descriptor)
+        self.__reset_revision_lineage()
         self.__build()
         return True
+
+    def __reset_revision_lineage(self):
+        """Treat the current descriptor as the new revision base.
+        """
+        self.__revision_base = helpers.expand_schema_descriptor(
+            deepcopy(self.__current_descriptor))
+        self.__merged_changes = []
+        if isinstance(self.__revision_base, dict):
+            base_fields = self.__revision_base.get('fields', [])
+        else:
+            base_fields = []
+        self.__merged_names = dict(enumerate(
+            field['name'] for field in base_fields))
 
     def save(self, target, ensure_ascii=True):
         """Save schema descriptor to target destination.
@@ -448,6 +483,72 @@ class Schema(object):
         helpers.ensure_dir(target)
         with io.open(target, mode=mode, encoding=encoding) as file:
             json.dump(self.__current_descriptor, file, indent=4, ensure_ascii=ensure_ascii)
+
+    def draft(self):
+        """Start a revision of the currently committed descriptor.
+
+        Field edits inside the revision are tracked by field identity, so
+        renames follow primary keys, self-referencing foreign keys and
+        foreign keys added against the current field names. Revisions taken
+        here can be merged even after other revisions have been committed,
+        as their identities are translated back to the original fields.
+
+        # Returns
+            SchemaRevision: a draft based on the committed descriptor
+
+        """
+        return SchemaRevision(self.__current_descriptor, strict=self.__strict)
+
+    def merge(self, revision, other=None, strict=None):
+        """Merge one or two revisions into a new committed descriptor.
+
+        The current descriptor stays untouched until the merged result is
+        built and validated successfully, so a rejected edit never leaves a
+        half-applied descriptor.
+
+        Revisions may come either from the original descriptor or from the
+        currently committed one; their changes are translated back to the
+        original field identities, which makes sequential and simultaneous
+        merges produce identical field order, constraints and references.
+
+        # Arguments
+            revision (SchemaRevision): first draft
+            other (SchemaRevision): optional second draft
+
+        # Raises
+            RevisionConflictError: when the drafts change the same attribute
+            RevisionError: when the merged descriptor is not valid
+
+        # Returns
+            dict: the newly committed descriptor
+
+        """
+        if strict is not None:
+            self.__strict = strict
+        incoming = [revision] + ([other] if other is not None else [])
+        normalized = [
+            normalize_revision(
+                candidate,
+                self.__revision_base,
+                helpers.expand_schema_descriptor(
+                    deepcopy(self.__current_descriptor)),
+                self.__merged_names)
+            for candidate in incoming]
+
+        prior = _Changeset(self.__merged_changes, self.__merged_names)
+        combined, conflicts = combine_revisions([prior] + normalized)
+        if conflicts:
+            raise conflicts[0]
+        descriptor, _ = build_descriptor(
+            self.__revision_base, combined, strict=self.__strict)
+
+        # Commit only after the full descriptor was built and validated
+        self.__merged_changes = combined
+        self.__merged_names = names_from_changes(
+            self.__revision_base, combined)
+        self.__current_descriptor = deepcopy(descriptor)
+        self.__build()
+        return deepcopy(self.__current_descriptor)
 
     # Internal
 

@@ -104,6 +104,39 @@ class StorageError(TableSchemaException):
     pass
 
 
+class RevisionError(TableSchemaException):
+    """All schema descriptor revision (draft/merge) errors.
+    """
+    pass
+
+
+class RevisionConflictError(RevisionError):
+    """Two revisions of the same descriptor change the same attribute.
+
+    Carries the conflicting field position (based on the common base
+    descriptor) and the current names of the field as used by the two
+    revisions, so the conflict can be reported by logical identity rather
+    than by the raw text of the edits.
+    """
+
+    def __init__(self, message, errors=None, position=None, names=None):
+        super(RevisionConflictError, self).__init__(message, errors=errors)
+        self.__position = position
+        self.__names = tuple(names) if names else ()
+
+    @property
+    def position(self):
+        """Field position in the base (old) descriptor, or None.
+        """
+        return self.__position
+
+    @property
+    def names(self):
+        """Current field names used by the conflicting revisions.
+        """
+        return self.__names
+
+
 # Deprecated
 
 MultipleInvalid = TableSchemaException
