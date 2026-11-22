@@ -1,0 +1,371 @@
+# aggregate: reference
+
+Full reference for `numpy_groupies.aggregate`. For an introduction see the [README](../README.md). The few remaining exports of the package are small tools around `aggregate`, collected under [Helper functions](#helper-functions).
+
+**Contents:**
+[Signature and parameters](#signature-and-parameters) ·
+[Input forms in detail](#input-forms-in-detail) ·
+[Available functions](#available-functions) ·
+[Function × implementation matrix](#function--implementation-matrix) ·
+[Fill values](#fill-values) ·
+[Complex values](#complex-values) ·
+[Helper functions](#helper-functions) ·
+[More examples](#more-examples)
+
+## Signature and parameters
+
+```python
+aggregate(group_idx, a, func="sum", size=None, fill_value=DEFAULT_FILL_VALUE,
+          order="C", dtype=None, axis=None, ddof=0, dx=1.0, reverse=False)
+```
+
+| Parameter    | Description |
+| ------------ | ----------- |
+| `group_idx`  | Array of non-negative integers used as labels to group the values in `a`. Normally 1-D with the same length as `a`. It may also be 2-D (or nested sequences convertible to 2-D): then the size of the 0th dimension is the number of output dimensions, and `group_idx[i, j]` is the index into the *i*-th output dimension for `a[j]`. Nothing deeper than that names a group without an `axis`. |
+| `a`          | Array of values to aggregate. Normally 1-D; can be a scalar in some cases (see [forms](#input-forms-in-detail)). |
+| `func`       | Aggregation function. Default `'sum'`. A name from [Available functions](#available-functions), an alias, a NumPy function or builtin (`np.max`, `max`, `len`, …), or any callable. The aliases are defined in `registry.py`. The NumPy and the pure Python implementation call whatever callable they are given; the Numba one compiles its `func`, and a callable *object* (a `functools.partial`, a class instance with a `__call__`) is no function to a compiler, so those go to the NumPy implementation. |
+| `size`       | Shape of the output. `None` means: the maximum of `group_idx` (plus one) determines the size. For multi-dimensional output, give the size of every dimension (or `None`). |
+| `fill_value` | Value for output groups that never occur in `group_idx`. By default chosen per function, see [Fill values](#fill-values). The sentinel `DEFAULT_FILL_VALUE` stands for "use that default". `None` is a fill value of its own, taken for the object result of `array` and refused for every other function. |
+| `order`      | `'C'` (default) or `'F'`. Memory layout of multi-dimensional output. Hardly affects the speed of `aggregate`, but may matter for your downstream use of the result. |
+| `dtype`      | Output dtype. `None` chooses something sensible from `a`, `func` and `fill_value`: the sums and the running sums climb a ladder that widens with the number of the values (32, then 64 bits, never across the sign), the products and squared sums land in the wide accumulator of the input's own sign (`int64` for the signed values and bool, `uint64` for the unsigned ones), and the functions that hand the values of the group out (`min`, `max`, `sort`, `cummin`, `cummax`, `topk`, `mode`, `first`, `last`) keep the dtype of the values. An `int64` or `uint64` input wraps like numpy's own - except in the pure-Python implementation, whose accumulation in Python numbers does not wrap. Non-numeric output of custom functions needs `dtype=object`. |
+| `axis`       | Aggregate along one axis of a multi-dimensional `a`. See form 3 below. Not supported by the pure-Python implementation. |
+| `out`        | An array the result is copied into, which has to match its shape and its dtype. Only the Numba implementation supports it, the others raise `NotImplementedError`. |
+| `ddof`       | Delta degrees of freedom for `var` and `std`; the divisor is `N - ddof`. Default 0. |
+| `dx`         | Sample spacing for `trapezoid`. Default 1.0. |
+| `reverse`    | Only for `sort`: sort descending instead of ascending. |
+| `k`          | Only for `topk`: how many values of every group to keep. Default 5. |
+| `largest`    | Only for `topk`: keep the largest values of every group (`True`, the default) or the smallest ones (`False`). |
+
+Exceptions are raised in most cases where `fill_value` and `dtype` are incompatible, rather than silently coercing.
+
+### The function in the name
+
+Every function has a name of its own, with the function in the name instead of in the `func` argument. The name takes the arguments of its function - the `ddof` of the variance, the `q` of the quantile, the `dx` of the trapezoid, the `reverse` of the sort, the `k` and the `largest` of the topk - and the rest like `aggregate` itself:
+
+```python
+npg.mean(group_idx, a)                       # the best implementation available
+npg.quantile(group_idx, a, q=0.9)            # the same as func="quantile", q=0.9
+```
+
+The same names are the attributes of the module of every implementation, so an implementation can be chosen and used the same way:
+
+```python
+import numpy_groupies.npg_numpy as npg
+npg.mean(group_idx, a)                       # the numpy implementation
+```
+
+The kernels of the numba implementation - the compiled functions behind them, callable from jitted code and from python - are the attributes of its module, `numpy_groupies.npg_numba`, which is the one place jitted code can reach them (numba cannot reach the attributes of a python object):
+
+```python
+import numba as nb
+import numpy_groupies.npg_numba as npg
+
+@nb.njit
+def zscore(group_idx, a):
+    mean = npg.mean(group_idx, a)
+    std = npg.std(group_idx, a)
+    return (a - mean[group_idx]) / std[group_idx]
+```
+
+Calling a kernel from python is the very same call - the same arguments, the same compiled driver, only no jitted caller around it:
+
+```python
+npg.mean(group_idx, a)          # the mean of every group
+npg.var(group_idx, a, ddof=1)   # the argument the function has of its own, by its own name
+npg.array(group_idx, a)         # a list of the arrays of the groups
+```
+
+What the kernels gain by being lean they pay back in rules they do not question: they take two flat 1-D arrays of one length, of integer indices and of numeric values, the narrow integer sum always widens to `int64`, and `dtype`, `axis`, `order` and `out` are not their business. `aggregate()` is the entry point that knows all of that - a multidimensional `group_idx` is form 4 below rather than an error, and a scalar `a` is repeated over every label.
+
+An input a kernel cannot take is refused before its driver runs, once per call and in the words of the same sentence: jitted code by the typing function of the kernel, which knows the shape and the dtype and answers with a `TypingError`, a python call by the body of the kernel, which answers with a `ValueError` - a `TypeError` for labels that are not integers, which is the complaint the python-level call makes as well. The `fill_value` is checked against the output it fills in both worlds, in the words of the python-level call: a nan does not fit an integer output, and a boolean output takes the two booleans. A `float16` value array is the one input the typing function cannot name at all - numba has no type for it, so both worlds answer with a `NotImplementedError`.
+
+## Input forms in detail
+
+![The five input forms](diagrams/aggregate_dims.png)
+
+1. **1-D / 1-D.** `group_idx` and `a` are 1-D of equal length. Output is 1-D.
+2. **1-D / scalar.** `a` is broadcast to the length of `group_idx`. Mostly used for counting: `aggregate(group_idx, 1)`.
+3. **1-D (or broadcastable) / N-D with `axis`.** `group_idx` has the length `a.shape[axis]`; alternatively it has the same number of dimensions as `a` with a shape broadcastable to `a.shape` (e.g. to use separate labels for every row). The groups are broadcast along the other axes of `a`, and the result has the groups in place of `axis`:
+
+   ```python
+   a = np.zeros((3, 5))
+   aggregate(np.array([3, 3, 7, 0, 0]), a, axis=1).shape    # (3, 8)
+   aggregate(np.array([3, 3, 7, 0, 0]), a.T, axis=0).shape  # (8, 3)
+   ```
+
+4. **2-D / 1-D.** `a` is 1-D, `group_idx` is 2-D with shape `(d, n)` and `n == len(a)`. The output has `d` dimensions; `group_idx[:, 99]` gives the `(x, y, z)` position of `a[99]`. A `group_idx` of more than two dimensions names no group without an `axis` and is refused. Passing `axis` beside such a `group_idx` does not deepen form 4: the rows are then the broadcast labels of form 3, and the answer keeps the shape of `a` beside `axis` instead of becoming `d`-dimensional.
+5. **2-D / scalar.** Form 4 with a scalar `a`. Mostly used for N-D histograms.
+
+**Performance and memory layout.** In form 4, columns of `group_idx` should be contiguous in memory (`group_idx[:, 99]` should be one contiguous chunk). In form 3 all the data in `a` that belongs to one `group_idx[i]` should be contiguous — for `axis=1` that means `a[:, 55]` should be contiguous.
+
+## Available functions
+
+Not every implementation provides every function; see the [matrix](#function--implementation-matrix) below.
+
+### Reductions
+
+One value per group.
+
+| Function       | Result |
+| -------------- | ------ |
+| `sum`          | Sum of the items. (aliases: `add`, `plus`) |
+| `prod`         | Product. (aliases: `product`, `multiply`, `times`) |
+| `len`          | Number of items. (alias: `count`) Equivalent to `np.bincount(group_idx)` — which is how the NumPy implementation computes it. |
+| `nunique`      | Number of distinct items. The items that are equal count once — a zero and a minus zero are one item, an integer and the float of the same number as well. The NaNs of a group count once among themselves, like pandas counts them (and like polars, which counts the NaN as an item). |
+| `sumofsquares` | Sum of squares. |
+| `mean`         | Mean. |
+| `median`       | Median. |
+| `quantile`     | Quantile of the items; `q` says which one (0 to 1, 0.5 by default), `method` how to interpolate between the two values it falls between (`linear`, `lower`, `higher`, `midpoint` or `nearest`, as in `np.quantile`). On temporal input the answer follows numpy tick for tick: the interpolation runs on the ticks of the values, the way numpy runs it on the durations of the values. |
+| `percentile`   | Percentile of the items; the quantile in percent (`q` from 0 to 100, 50 by default). |
+| `skew`         | Skewness of the items — the third central moment over the second one to the three-halves power, corrected for the size of the group the way pandas corrects it. A group of fewer than three items has no skewness, and a group whose items are all the same has none either (the answer is then 0). |
+| `kurt`         | Excess kurtosis of the items — the fourth central moment over the square of the second one, minus the three of a normal distribution, corrected for the size of the group the way pandas corrects it. A group of fewer than four items has no kurtosis. (alias: `kurtosis`) |
+| `var`          | Variance; the divisor is `N - ddof` (`ddof=0` by default). A group with fewer items than the `ddof` asks for has no degrees of freedom, and therefore no variance: it answers `fill_value` (`nan`), like a group whose values cannot be compared. |
+| `std`          | Standard deviation; `ddof` as for `var`. |
+| `min`, `max`   | Minimum / maximum. (aliases: `amin`, `minimum`; `amax`, `maximum`) |
+| `mode`         | The most frequent value of every group — the smallest of the values that share the highest count, the way `scipy.stats.mode` breaks a tie. Like the `topk` the mode has no `nan…` variant: the missing values — the NaNs, the NaT of the temporal ones — are in no selection, so a missing value is never the mode, and a group that holds nothing but them has no mode at all and answers `fill_value`. |
+| `first`, `last` | First / last item of the group, in the order of appearance in `a`. |
+| `argmin`, `argmax` | Index *in `a`* of the minimum / maximum of each group. A group whose values include a NaN has no minimum or maximum to name and answers `fill_value` (`-1`), like a group without any item. For temporal input the NaT takes the place of the NaN, and here the plain forms do follow numpy: a group holding a NaT answers the position of its first NaT for the minimum and for the maximum alike (numpy made that its API in gh-14717). |
+| `trapezoid`    | Trapezoidal integral of the items, taken in the order they appear in `a`. `dx` sets the sample spacing. A group of fewer than two items integrates to 0. The callable `np.trapezoid` can be passed as `func` too. |
+
+### NaN-skipping variants
+
+Prefix with `nan` — `nansum`, `nanprod`, `nanlen`, `nansumofsquares`, `nanmean`, `nanmedian`, `nanquantile`, `nanpercentile`, `nanvar`, `nanstd`, `nanskew`, `nankurt`, `nanmin`, `nanmax`, `nanfirst`, `nanlast`, `nanargmin`, `nanargmax`, `nantrapezoid`, `nanall`, `nanany`, `nannunique`, and the cumulative `nancumsum`, `nancumprod`, `nancummin`, `nancummax` — to skip NaNs instead of propagating them. `nanlen` counts the non-NaN items, and `nannunique` counts the distinct items among the ones that are not NaN — the plain `nunique` counts the NaNs of a group as one item of their own. For `nantrapezoid` this means integrating over the remaining items, bridging the gap a NaN leaves. For `nanargmin` / `nanargmax` the two forms differ not in the value they return but in whether they return one at all: an index cannot *be* a NaN, so the plain forms have no answer for a group holding a NaN and give `fill_value`, while the skipping ones name the index of the extreme among the items that are left - unless every item of the group is a NaN, then nothing is left to name and the answer is the `fill_value` as well. On temporal input the NaT is the missing value the skipping forms leave out - again unlike numpy itself: `np.nanargmin` and `np.nanargmax` do not skip a NaT of `datetime64`, they answer its position like the plain forms, while `np.nanmin` and `np.nanmax` do skip it (numpy gh-5222 was closed as fixed in 2020 - the plain forms and the nan min/max were repaired, but the closing output of the issue still shows the nanarg forms of datetime64 answering the NaT position where the float nanarg skips, left unaddressed; reported upstream as numpy gh-33207). The contract of the nan forms says skip, and the package keeps it for every dtype.
+
+### Boolean
+
+Always return booleans. Their treatment of NaN differs from the above.
+
+| Function | Result |
+| -------- | ------ |
+| `all`    | `True` if all items are truthy. Note that `np.all(nan)` is `True`: NaN is truthy. (alias: `and`) |
+| `any`    | `True` if any item is truthy. (alias: `or`) |
+| `allnan` | `True` if all items are NaN. |
+| `anynan` | `True` if any item is NaN. |
+
+### Cumulative and sorting
+
+These do not reduce the data; the output has the size of the input. There are no empty groups in the output, so `fill_value` has no effect on them.
+
+| Function | Result |
+| -------- | ------ |
+| `cumsum`, `cumprod`, `cummin`, `cummax` | Cumulative sum / product / minimum / maximum within each group, in order of appearance. |
+| `sort`   | Sorts the items within each group, ascending; `reverse=True` for descending. The output is the input-sized array with each group's items sorted among the positions the group occupies. (aliases: `sorted`, `asort`, `asorted`, `dsort`, `rsorted` — note that despite the names, the last two do *not* reverse; use `reverse=True`) |
+
+### Collecting
+
+| Function | Result |
+| -------- | ------ |
+| `array`  | The grouped items themselves, in the order they appear in `a` — one sequence per group. (aliases: `split`, `splice`) |
+| `topk`  | The `k` largest values of every group (`largest=False` for the `k` smallest ones), in the order of their rank — the largest one first. The output is a matrix with one row per group and `k` columns; a group with fewer than `k` values fills the places it has none with the fill value. The missing values - the nans, the NaT of the temporal ones - are in no selection: they are neither the largest nor the smallest value of a group, the way the `sort` of a group puts them last. A group index of more than one dimension has no place in a matrix of groups, so the `topk` refuses it — and with it the `axis` of a multi-dimensional `a`, which is what makes such an index. The `axis` of a one-dimensional `a` leaves the labels flat and the answer a matrix, and is granted. |
+
+The NumPy and the Numba implementation hand out an object array whose entries are the arrays of the groups; the pure Python one a list of lists. The `topk` hands out a matrix in the NumPy and the Numba implementation, and a list of lists in the pure Python one.
+
+## Function × implementation matrix
+
+`x` = supported, `-` = raises `NotImplementedError` (checked by calling each implementation).
+The nan-variants are supported wherever the plain function is.
+
+| Function                       | numpy | numba | pure python |
+| ------------------------------ | :---: | :---: | :---------: |
+| `sum`, `prod`, `len`           |  x    |  x    |      x      |
+| `nunique`                      |  x    |  x    |      x      |
+| `min`, `max`                   |  x    |  x    |      x      |
+| `all`, `any`                   |  x    |  x    |      x      |
+| `allnan`, `anynan`             |  x    |  x    |      x      |
+| `mean`, `median`, `var`, `std` |  x    |  x    |      x      |
+| `skew`, `kurt`                 |  x    |  x    |      x      |
+| `quantile`, `percentile`        |  x    |  x    |      x      |
+| `first`, `last`                |  x    |  x    |      x      |
+| `argmin`, `argmax`             |  x    |  x    |      x      |
+| `sumofsquares`                 |  x    |  x    |      x      |
+| `trapezoid`                    |  x    |  x    |      x      |
+| `cumsum`                       |  x    |  x    |      x      |
+| `cumprod`, `cummin`, `cummax`  |  -    |  x    |      x      |
+| `sort`                         |  x    |  x    |      x      |
+| `array`                        |  x    |  x    |      x      |
+| `topk`                         |  x    |  x    |      x      |
+| `mode`                         |  x    |  x    |      x      |
+| `nan…` variants of the above   |  x¹   |  x¹   |     x¹      |
+| custom callables               |  x    |  x²   |      x      |
+
+¹ For the same functions as in the plain row. The `topk` and the `mode` have no nan-variant: the missing values are in no selection of theirs, the way the `sort` of a group puts them last.
+² Numba jit-compiles custom functions, so they must consist of numeric, Numba-compatible code, and the speed-up is modest. Anything else — for instance building strings with `dtype=object` — fails; use the NumPy implementation (`numpy_groupies.npg_numpy`) instead.
+
+Which implementation you get by default is explained in the [README](../README.md#implementations). When numba is installed, call the NumPy or the pure Python implementation for the functions the default implementation lacks.
+
+## Fill values
+
+Groups without any item are filled with `fill_value`. By default this matches what the corresponding NumPy function returns for empty input:
+
+| Functions                                              | Default fill value |
+| ------------------------------------------------------ | ------------------ |
+| `sum`, `len`, `nunique`, `sumofsquares` (and `nan`-forms) | `0`                |
+| `prod` (and `nanprod`)                                 | `1`                |
+| `all`, `any`, `allnan`, `anynan`                       | `False`            |
+| `mean`, `median`, `var`, `std`, `skew`, `kurt` (and `nan`-forms) | `nan`    |
+| `quantile`, `percentile` (and `nan`-forms)             | `nan`              |
+| `min`, `max`, `first`, `last` (and `nan`-forms)        | `nan` for floating or object input, `0` where the output is an integer type, which cannot hold `nan` |
+| `argmax`, `argmin` (and `nan`-forms)                   | `-1` — for a group without items, and for a group whose items include a NaN (an index cannot be a NaN, so there is nothing to name); `nanargmax` / `nanargmin` name an index for such a group, unless all of its items are NaN |
+| `trapezoid`, `nantrapezoid`                            | `0`, as for a single sample |
+| `array`, `sort`                                        | an empty sequence  |
+| `topk`                                                 | `nan` for floating or object input, `0` where the output is an integer type, which cannot hold `nan` |
+| `mode`                                                 | `nan` for floating or object input, `0` where the output is an integer type, which cannot hold `nan` |
+| a custom `func`                                        | `nan` for floating input, `0` otherwise |
+
+The cumulative functions and `sort` return one value per input item, so no group is ever empty in their output and `fill_value` has no effect.
+
+Query a default without repeating this table:
+
+```python
+npg.default_fill_value("prod")           # 1
+npg.default_fill_value("min", int)       # 0
+npg.default_fill_value("argmin")         # -1
+```
+
+## Temporal values
+
+`datetime64` and `timedelta64` input answers in the unit of the input, and its missing value is `NaT`.
+
+- **A fill value of the same kind** is read in the unit of the input: `np.timedelta64(5, "s")` fills five seconds where the values count seconds, and the same five seconds where they count days.
+- **A plain number** names the tick of that unit rather than a value of it: `0` fills the epoch instant or the zero duration, `1` the second tick.
+- **A `nan` and the unnamed default** answer the same value: `NaT` for the functions that fill with the missing value, the zero of the unit for the others.
+- **A fill of the other kind** raises a `TypeError` — a date is no duration and the other way round. NumPy would re-read the ticks of the one as the other, which fills nothing.
+- **A temporal fill of values that hold neither** — of numbers, of flags, of strings — raises a `TypeError` too: no number is a date. The rule is the same in the NumPy and the Numba implementation and on the bare kernels of the latter, which refuse with the `TypeError` of this package and not the `TypingError` of the compiler.
+- **The pure Python implementation** refuses `datetime64` and `timedelta64` values — it computes with Python objects and has no NumPy to reach their ticks.
+- **A fill for a position or a count** raises a `TypeError` as well: `argmin`, `argmax` and their `nan` counterparts answer an index, `len`, `nunique` and their `nan` counterparts a count, and a date names neither. Use a plain number for those.
+
+```python
+npg.aggregate(gi, td, func="sum", fill_value=np.timedelta64(5, "s"))   # five seconds for the empty group
+npg.aggregate(gi, dt, func="min", fill_value=0)                        # 1970-01-01T00:00:00 - the tick zero
+npg.aggregate(gi, td, func="len", fill_value=np.timedelta64(5, "s"))   # TypeError
+```
+
+## Complex values
+
+Complex input is supported wherever the result is well defined, following NumPy's conventions.
+
+- **Keep the complex dtype:** `sum`, `prod`, `mean`, `median`, `quantile`, `percentile`, `trapezoid`, `sort`, `topk`, `mode`, `first`, `last`, `array` and the `cumsum` functions. `median`, `quantile`, `sort`, `topk` and `mode` use NumPy's lexicographic ordering (real part first, then imaginary part) - the Numba implementation compares the two parts itself, since neither Python nor Numba orders complex numbers. (NumPy's own `np.quantile` takes real values only; the quantile of a complex group is the one of this package.)
+- **Return a real dtype:** `var`, `std` and `sumofsquares` measure squared magnitudes, like `np.var` on complex input.
+- **Not supported:** `skew` and `kurt` raise a `TypeError` on a complex input — the third and the fourth moment of the deviations from the mean have no meaning for a complex value.
+- **Order statistics** `min`, `max`, `argmin`, `argmax` and their `nan` counterparts follow the same lexicographic ordering everywhere — the real part decides, the imaginary part only breaks ties — including the Numba implementation, which compares the two parts itself since neither Python nor Numba orders complex numbers. As in NumPy, a value with a NaN in either part compares neither smaller nor greater.
+
+## Object columns
+
+An `object` column holds whatever it is given: the numbers of a mixed column, the strings of a text column, the `nan` of a float column wrapped in objects. Its dtype says nothing about the values, so the package asks the values themselves.
+
+- **The order statistics** `min`, `max`, `argmin`, `argmax` and their `nan` counterparts order the values the way Python orders them, in the NumPy and in the pure Python implementation alike.
+- **A `nan` of a group wins** over its other values, as in NumPy: `min` and `max` answer it, and the `nan` variants skip it. The `nan` is not compared with the other values, so a group of a text and a `nan` answers the `nan` and not a complaint of NumPy. A group that holds a `nan` has no extreme to point at, so `argmin` and `argmax` answer the fill value (`-1`) for it - the `nan` variants name an index, unless all of the items of the group are `nan`.
+- **A group without items** takes a `nan`: an object column holds one.
+- **The Numba implementation refuses** an object column with a `TypeError` - it compiles with the dtype of the values, and it has none for an object column. A call from compiled code never reaches that complaint: Numba has no object arrays at all and refuses the values itself. The collecting function `array` is the one call it hands to the NumPy implementation.
+- **The sums and the averages** need a dtype NumPy can cast to: the NumPy implementation refuses them, the pure Python one computes them.
+
+```python
+npg.aggregate_np(gi, np.array([3, 1, 2], dtype=object), func="min")   # 1 - the values are ordered like python orders them
+npg.aggregate_np(gi, np.array([3, 1, 2], dtype=object), func="argmin") # 1 - the position of the smallest value
+```
+
+## Helper functions
+
+Small tools around `aggregate`, all exported from the package root. They need NumPy; the ones marked *(Numba only)* exist only when Numba is installed. `purge_cache()` is the exception: it needs nothing but the standard library, so that it also works where NumPy is not installed.
+
+| Function                                     | Result |
+| -------------------------------------------- | ------ |
+| `uaggregate(group_idx, a, ...)`              | Same arguments as `aggregate`, but the result is broadcast back to the size of `a`, so every element carries the result of its own group. Equivalent to `unpack(group_idx, aggregate(...))`. |
+| `unpack(group_idx, ret)`                     | `ret[group_idx]` — expand a per-group result back to input length. |
+| `unpack_into(group_idx, ret, out)` *(Numba only)* | Same, but gathered into a caller-provided `out`, which has to match the shape of `ret[group_idx]` and the dtype of `ret`. A jitted loop, noticeably faster than fancy indexing for large contiguous 1-D inputs. |
+| `step_count(group_idx)`                       | Number of runs of equal, contiguous labels in `group_idx`. |
+| `step_indices(group_idx)`                     | The edges of those runs, `step_count(group_idx) + 1` values including the start and the end. |
+| `multi_arange(n)`                            | The concatenation of `arange(k)` for every `k` in `n` — a vectorised `np.hstack([np.arange(k) for k in n])`. |
+| `label_contiguous_1d(X)`                     | Labels consecutive blocks 1, 2, 3, …, leaving `0` or `False` as 0. |
+| `relabel_groups_unique(group_idx)`           | Closes gaps in sparse labels while keeping their order. |
+| `relabel_groups_masked(group_idx, keep_group)` | Drops the groups where `keep_group` is false and shifts the remaining ones down; the dropped items end up in group 0. |
+| `default_fill_value(func, dtype=None)`       | The `fill_value` `aggregate` would use for empty groups, see [Fill values](#fill-values). `func` may be a name, an alias or a callable; pass the `dtype` of your real output to get the value that would actually be used. |
+| `purge_cache()`                               | Removes the cached compiles of the Numba backend — the directory `$NUMBA_CACHE_DIR` (or `~/.cache/numba/numpy_groupies`) and the leftovers of the versions that cached next to their source. Returns the number of the files removed. Needs no NumPy. Pass `cache_dir` and `source_tree` to sweep other directories than the ones of the package. |
+
+`uaggregate` is the only one worth reaching for daily — it is `aggregate(...)[group_idx]` in one call, and a typical use is demeaning within groups:
+
+```python
+a - npg.uaggregate(group_idx, a, func="mean")
+```
+
+Since the output size of `aggregate` is `max(group_idx) + 1`, sparse labels waste memory. The two `relabel_…` functions close those gaps:
+
+```python
+group_idx = np.array([0, 3, 3, 3, 0, 2, 5, 2, 0, 1, 1, 0, 3, 5, 5])
+
+npg.relabel_groups_unique(group_idx)
+# array([0, 3, 3, 3, 0, 2, 4, 2, 0, 1, 1, 0, 3, 4, 4])     label 4 was unused, so 5 -> 4
+
+npg.relabel_groups_masked(group_idx, np.array([0, 1, 0, 1, 1, 1]))
+# array([0, 2, 2, 2, 0, 0, 4, 0, 0, 1, 1, 0, 2, 4, 4])     group 2 dropped, its items merged into group 0
+```
+
+`keep_group[0]` is ignored — group 0 is where the dropped items go.
+
+`step_count` and `step_indices` look for runs of equal values as they are stored, without sorting or hashing, so they assume a `group_idx` whose equal labels are contiguous, e.g. data sorted by group. Runs are counted as they appear, hence a label that shows up in two separate places counts as two runs:
+
+```python
+gi = np.array([0, 0, 0, 2, 2, 5, 5, 5, 5, 1])
+
+npg.step_count(gi)              # 4
+npg.step_indices(gi)            # array([ 0,  3,  5,  9, 10])
+
+edges = npg.step_indices(gi)
+[gi[i:j] for i, j in zip(edges[:-1], edges[1:])]      # the four runs
+```
+
+`label_contiguous_1d` labels the runs of a boolean array, where every block of `True` is one run, or of an array where every block of identical non-zero values is one. The result is a ready-made `group_idx` for "aggregate over each run of …" questions:
+
+```python
+npg.label_contiguous_1d(np.array([False, True, True, False, False, True]))
+# array([0, 1, 1, 0, 0, 2])
+npg.label_contiguous_1d(np.array([0, 3, 3, 0, 0, 5, 5, 5, 1, 1, 0, 2]))
+# array([0, 1, 1, 0, 0, 2, 2, 2, 3, 3, 0, 4])
+```
+
+`multi_arange` together with `np.bincount` gives the rank of each item *within* its group, again for data sorted by group:
+
+```python
+npg.multi_arange(np.bincount(np.array([0, 0, 0, 1, 1, 2])))
+# array([0, 1, 2, 0, 1, 0])
+```
+
+## More examples
+
+Sums and products of consecutive integers:
+
+```python
+group_idx = np.arange(5).repeat(3)
+# array([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4])
+a = np.arange(group_idx.size)
+npg.aggregate(group_idx, a)             # array([ 3, 12, 21, 30, 39])      (sum is the default)
+npg.aggregate(group_idx, a, "prod")     # array([   0,   60,  336,  990, 2184])
+```
+
+Trapezoidal integration, with a sample spacing:
+
+```python
+npg.aggregate(group_idx, a, func="trapezoid")                   # array([ 2.,  8., 14., 20., 26.])
+npg.aggregate(group_idx, a, func="trapezoid", dx=0.5)           # array([ 1.,  4.,  7., 10., 13.])
+```
+
+Cumulative sum — same length as input:
+
+```python
+group_idx = np.array([4, 3, 3, 4, 4, 1, 1, 1, 7, 8, 7, 4, 3, 3, 1, 1])
+a         = np.array([3, 4, 1, 3, 9, 9, 6, 7, 7, 0, 8, 2, 1, 8, 9, 8])
+npg.aggregate(group_idx, a, func="cumsum")
+# array([ 3,  4,  5,  6, 15,  9, 15, 22,  7,  0, 15, 17,  6, 14, 31, 39])
+```
+
+Custom function producing strings (NumPy implementation; Numba cannot compile this):
+
+```python
+import numpy_groupies.npg_numpy as npg
+
+group_idx = np.array([1, 0, 1, 4, 1])
+a = np.array([12.0, 3.2, -15, 88, 12.9])
+npg.aggregate(group_idx, a, func=lambda x: " or maybe ".join(str(item) for item in x),
+              fill_value="", dtype=object)
+# ['3.2', '12.0 or maybe -15.0 or maybe 12.9', '', '', '88.0']
+```

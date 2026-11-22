@@ -1,0 +1,216 @@
+from collections.abc import Callable, Sequence
+from functools import partial
+from typing import Any
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
+
+from numpy_groupies import aggregate_np
+from numpy_groupies.driver import (
+    _aggregate_wrap,
+    aliasing,
+)
+from numpy_groupies.dtypes import (
+    check_dtype,
+    iscomplexobj,
+)
+from numpy_groupies.fills import DEFAULT_FILL_VALUE
+from numpy_groupies.functions import aggregate_common_doc
+from numpy_groupies.registry import (
+    Registry,
+    Resolved,
+    custom_callable,
+    funcs_no_separate_nan,
+)
+from numpy_groupies.typing import AFillValue, AResult, AScalar, RavelOrder
+
+
+def allnan(x: npt.NDArray[np.inexact]) -> np.bool_:
+    """True where every value of the group is a nan - the kernel of allnan."""
+    return np.all(np.isnan(x))
+
+
+def anynan(x: npt.NDArray[np.inexact]) -> np.bool_:
+    """True where any value of the group is a nan - the kernel of anynan."""
+    return np.any(np.isnan(x))
+
+
+def _wrapper(
+    group_idx: npt.NDArray[np.integer],
+    a: npt.NDArray[np.number],
+    size: int | tuple[int, ...] | None,
+    fill_value: float,
+    func: str | Callable[..., AScalar] = "sum",
+    dtype: np.dtype | None = None,
+    ddof: int = 0,
+    **kwargs: Any,
+) -> npt.NDArray[np.number]:
+    if len(group_idx) == 0:
+        raise ValueError("group_idx must not be empty")
+    # scalar input needs broadcasting before anything group-based can run
+    a = a if np.ndim(a) else np.broadcast_to(a, len(group_idx))
+    if func is anynan or func is allnan:
+        # route through the cython any/all kernels on a precomputed isnan
+        # mask - pushing a python callable through groupby.aggregate is
+        # ~10x slower
+        a = np.isnan(a)
+        func = "any" if func is anynan else "all"
+    funcname = func.__name__ if callable(func) else func
+    # pandas skips NaN in median; the plain median has to poison its group
+    # afterwards (GroupBy.median() accepts no skipna argument)
+    poison_nan = kwargs.pop("_nan_poison", False)
+    if funcname == "nancumsum":
+        # pandas skipna-cumsum keeps NaN in place, whereas nancumsum
+        # semantics expect NaN treated as 0 (issues #79 and #91)
+        a = np.where(np.isnan(a), 0, a)
+        func = "cumsum"
+        funcname = "cumsum"
+    if funcname in ("var", "std"):
+        kwargs["ddof"] = ddof
+    # kwargs starting with "_" are internal flags (e.g. _nansqueeze injected by
+    # aggregate) that pandas does not understand - the rest is forwarded.
+    kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+    # grouping a Series over the raw arrays skips per-call DataFrame
+    # construction (~2ms) and direct method calls skip the generic
+    # aggregate-dispatch (~1ms)
+    #
+    # copy=False: the Series takes the buffer of the array instead of a copy
+    # of it (measured 0.009ms against 0.215ms for 500 000 float64 values).
+    # The benchmark goes from the array to the array, so a participant that
+    # copies the data pays for the copy - and this one does not have to.
+    grouped = pd.Series(a, copy=False).groupby(group_idx, sort=False)
+    if callable(func):
+        result = grouped.aggregate(func, **kwargs)
+    else:
+        result = getattr(grouped, funcname)(**kwargs)
+
+    # the sum overflow guess needs the maximum number of values that can be
+    # summed into a single group, i.e. the input length - not the output size
+    dtype = check_dtype(dtype, funcname, a, len(group_idx))
+    if funcname.startswith("cum"):
+        ret = result.to_numpy()
+    else:
+        ret = np.full(size, fill_value, dtype=dtype)
+        with np.errstate(invalid="ignore"):
+            ret[np.asarray(result.index)] = result.to_numpy()
+        if poison_nan:
+            poisoned = np.bincount(group_idx, weights=np.isnan(a), minlength=size) > 0
+            ret[poisoned] = np.nan
+    return ret
+
+
+_supported_funcs = [
+    "sum",
+    "prod",
+    "all",
+    "any",
+    "min",
+    "max",
+    "mean",
+    "median",
+    "quantile",
+    "var",
+    "std",
+    "skew",
+    "kurt",
+    "first",
+    "last",
+    "cumsum",
+    "cumprod",
+    "cummax",
+    "cummin",
+]
+_op_dict: dict[str, Callable[..., AResult]] = {fn: partial(_wrapper, func=fn) for fn in _supported_funcs}
+_op_dict.update(("nan" + fn, partial(_wrapper, func=fn)) for fn in _supported_funcs if fn not in funcs_no_separate_nan)
+# plain cumsum must propagate NaNs within their group (issue #91), which is
+# pandas skipna=False - nancumsum is handled inside _wrapper instead
+_op_dict["cumsum"] = partial(_wrapper, func="cumsum", skipna=False)
+_op_dict["nancumsum"] = partial(_wrapper, func="nancumsum")
+# plain median propagates NaNs like np.median - pandas skips them by default
+# and GroupBy.median() takes no skipna argument
+_op_dict["median"] = partial(_wrapper, func="median", _nan_poison=True)
+# the same for the quantile: GroupBy.quantile() skips the NaNs as well
+_op_dict["quantile"] = partial(_wrapper, func="quantile", _nan_poison=True)
+# the moments skip the NaNs as well - GroupBy.skew() and GroupBy.kurt() have
+# no skipna argument, so the plain functions poison their groups afterwards
+_op_dict["skew"] = partial(_wrapper, func="skew", _nan_poison=True)
+_op_dict["kurt"] = partial(_wrapper, func="kurt", _nan_poison=True)
+_op_dict.update(
+    allnan=partial(_wrapper, func=allnan),
+    anynan=partial(_wrapper, func=anynan),
+    len=partial(_wrapper, func="count"),
+    nanlen=partial(_wrapper, func="count"),
+    # pandas counts the nans as a value of their own with dropna=False, and
+    # leaves them out with dropna=True - the plain function counts them, the
+    # nan variant does not
+    nunique=partial(_wrapper, func="nunique", dropna=False),
+    nannunique=partial(_wrapper, func="nunique", dropna=True),
+    argmax=partial(_wrapper, func="idxmax"),
+    argmin=partial(_wrapper, func="idxmin"),
+    nanargmax=partial(_wrapper, func="idxmax"),
+    nanargmin=partial(_wrapper, func="idxmin"),
+)
+
+
+def _custom_operation(func: Callable[..., AScalar]) -> Resolved:
+    """The operation of a callable of the caller's own.
+
+    pandas' groupby machinery takes any callable, so the wrapper of this
+    backend runs it.
+    """
+    callable_ = custom_callable(func)
+    return Resolved(callable_, partial(_wrapper, func=callable_))
+
+
+_dispatch = Registry(_op_dict, aliasing, _custom_operation)
+
+
+def aggregate(
+    group_idx: npt.NDArray[np.integer],
+    a: npt.NDArray[np.number],
+    func: str | Callable[..., AScalar] = "sum",
+    size: int | Sequence[int] | None = None,
+    fill_value: AFillValue = DEFAULT_FILL_VALUE,
+    order: RavelOrder = "C",
+    dtype: npt.DTypeLike = None,
+    axis: int | None = None,
+    **kwargs: Any,
+) -> Any:
+    if iscomplexobj(a):
+        # pandas' groupby kernels have no signatures for complex dtypes - the
+        # numpy implementation handles complex values, scalars included
+        return aggregate_np(
+            group_idx,
+            a,
+            func=func,
+            size=size,
+            fill_value=fill_value,
+            order=order,
+            dtype=dtype,
+            axis=axis,
+            **kwargs,
+        )
+    return _aggregate_wrap(
+        _dispatch,
+        group_idx,
+        a,
+        func,
+        size=size,
+        fill_value=fill_value,
+        order=order,
+        dtype=dtype,
+        axis=axis,
+        len_counts_values=True,
+        **kwargs,
+    )
+
+
+aggregate.__doc__ = (
+    """
+    This is the pandas implementation of aggregate. It makes use of
+    `pandas`'s groupby machinery and is mainly used for reference
+    and benchmarking.
+    """
+    + aggregate_common_doc
+)
