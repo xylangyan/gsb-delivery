@@ -1,0 +1,46 @@
+;; -*- mode: outline; outline-regexp: " *[-\+]"; indent-tabs-mode: nil -*-
+
+^c^d hide subtree
+^c^s show subtree
+
+- Element
+ - each
+ - locate with pattern)
+
+- rdoc
+ - --coverage-report for coverage (does not generate docs)
+ - rdoc --main README.md --title Ox --exclude extconf.rb lib ext/ox README.md
+
+- todo
+
+ - taint deprecated
+  - implement a marked array or linked list in pinfo
+   - not super efficient but it should work
+   - search from tail
+   - grow if needed. start with none and grow as needed in blocks of ??
+
+ - HTML (5) builder
+  - should be correct for all elements
+  - pedantic
+
+ - add hints and overaly to parse.c
+
+ - continuous sax parser
+  - parse input stream and continue waiting for next one
+
+
+
+
+
+
+- add UTF-16 support
+U+0000..U+D7FF, U+E000..U+EFFF  00000xxxxxxxxxxxxxxxx  xxxxxxxxxxxxxxxx
+U+10000..U+10FFFF               uuuuuxxxxxxyyyyyyyyyy  110110wwwwxxxxxx 110111yyyyyyyyyy (where uuuuu = wwww + 1)
+
+
+- hints
+xmllint --valid --noout --dtdvalid ../misc/ox.dtd --debug sample.xml
+
+#rsync -vru --exclude ".*" --exclude "*~" --exclude "#*" --exclude misc --exclude "*.o" ~/code/ox/ ~/git/ox
+rsync -vrI --exclude ".*" --exclude "*~" --exclude "#*" --exclude misc --exclude "*.o" ~/code/ox/ ~/git/ox
+rsync -vrI --exclude ".*" --exclude "*~" --exclude "#*" --exclude misc --exclude "*.o" ~/git/ox/ ~/code/ox

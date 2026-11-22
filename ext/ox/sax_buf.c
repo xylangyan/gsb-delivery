@@ -1,0 +1,255 @@
+/* sax_buf.c
+ * Copyright (c) 2011, Peter Ohler
+ * All rights reserved.
+ */
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <strings.h>
+#include <sys/types.h>
+#if HAVE_SYS_UIO_H
+#include <sys/uio.h>
+#endif
+#include <time.h>
+#include <unistd.h>
+
+#include "ox.h"
+#include "ruby.h"
+#include "sax.h"
+
+#define BUF_PAD 4
+
+static VALUE rescue_cb(VALUE rdr, VALUE err);
+static VALUE io_cb(VALUE rdr);
+static VALUE partial_io_cb(VALUE rdr);
+static int   read_from_io(Buf buf);
+static int   read_from_fd(Buf buf);
+static int   read_from_io_partial(Buf buf);
+static int   read_from_str(Buf buf);
+
+void ox_sax_buf_init(Buf buf, VALUE io) {
+    volatile VALUE io_class = rb_obj_class(io);
+    VALUE          rfd;
+
+    buf->str_remaining_len = 0;
+    if (rb_cString == io_class) {
+        buf->read_func         = read_from_str;
+        buf->in.str            = StringValuePtr(io);
+        buf->str_remaining_len = strlen(buf->in.str);
+    } else if (ox_stringio_class == io_class && 0 == FIX2INT(rb_funcall2(io, ox_pos_id, 0, 0))) {
+        volatile VALUE s = rb_funcall2(io, ox_string_id, 0, 0);
+
+        buf->read_func         = read_from_str;
+        buf->in.str            = StringValuePtr(s);
+        buf->str_remaining_len = strlen(buf->in.str);
+    } else if (rb_cFile == io_class && Qnil != (rfd = rb_funcall(io, ox_fileno_id, 0))) {
+        buf->read_func = read_from_fd;
+        buf->in.fd     = FIX2INT(rfd);
+    } else if (rb_respond_to(io, ox_readpartial_id)) {
+        buf->read_func = read_from_io_partial;
+        buf->in.io     = io;
+    } else if (rb_respond_to(io, ox_read_id)) {
+        buf->read_func = read_from_io;
+        buf->in.io     = io;
+    } else {
+        rb_raise(ox_arg_error_class, "sax_parser io argument must respond to readpartial() or read().\n");
+    }
+    buf->head     = buf->base;
+    *buf->head    = '\0';
+    buf->end      = buf->head + sizeof(buf->base) - BUF_PAD;
+    buf->tail     = buf->head;
+    buf->read_end = buf->head;
+    buf->pro      = 0;
+    buf->str      = 0;
+    buf->pos      = 0;
+    buf->line     = 1;
+    buf->col      = 0;
+    buf->pro_pos  = 1;
+    buf->pro_line = 1;
+    buf->pro_col  = 0;
+    buf->dr       = 0;
+}
+
+int ox_sax_buf_read(Buf buf) {
+    int  err;
+    long shift = 0;
+
+    // if there is not much room to read into, shift or realloc a larger buffer.
+    if (buf->head < buf->tail && 4096 > buf->end - buf->tail) {
+        if (0 == buf->pro) {
+            shift = buf->tail - buf->head;
+        } else {
+            shift = buf->pro - buf->head - 1;  // leave one character so we cab backup one
+        }
+        if (0 >= shift) { /* no space left so allocate more */
+            char  *old  = buf->head;
+            size_t size = buf->end - buf->head + BUF_PAD;
+
+            if (buf->head == buf->base) {
+                buf->head = ALLOC_N(char, size * 2);
+                memcpy(buf->head, old, size);
+            } else {
+                REALLOC_N(buf->head, char, size * 2);
+            }
+            buf->end      = buf->head + size * 2 - BUF_PAD;
+            buf->tail     = buf->head + (buf->tail - old);
+            buf->read_end = buf->head + (buf->read_end - old);
+            if (0 != buf->pro) {
+                buf->pro = buf->head + (buf->pro - old);
+            }
+            if (0 != buf->str) {
+                buf->str = buf->head + (buf->str - old);
+            }
+        } else {
+            memmove(buf->head, buf->head + shift, buf->read_end - (buf->head + shift));
+            buf->tail -= shift;
+            buf->read_end -= shift;
+            if (0 != buf->pro) {
+                buf->pro -= shift;
+            }
+            if (0 != buf->str) {
+                buf->str -= shift;
+            }
+        }
+    }
+    err            = buf->read_func(buf);
+    *buf->read_end = '\0';
+
+    return err;
+}
+
+// rb_rescue hands the handler the exception instance, not its class. Passing
+// that instance to rb_raise(), which expects a class, made Ruby raise a
+// TypeError about the argument type while building the new exception, so the
+// caller saw that TypeError instead of the error its IO raised. Re-raise the
+// original error with the position appended, keeping its class.
+//
+// EOFError still ends the parse: that is how readpartial() signals end of
+// input. TypeError is no longer swallowed here; read() returning nil at EOF is
+// recognized in io_cb() rather than through the TypeError StringValuePtr()
+// raised on it.
+//
+// Raising here is safe: ox_sax_drive_cleanup() runs after the rb_protect() in
+// sax_parse() catches this.
+static VALUE rescue_cb(VALUE rbuf, VALUE err) {
+    Buf   buf = (Buf)rbuf;
+    VALUE msg;
+
+    if (rb_obj_is_kind_of(err, rb_eEOFError)) {
+        return Qfalse;
+    }
+    msg = rb_sprintf("%" PRIsVALUE " at line %ld, column %ld",
+                     rb_funcall(err, ox_message_id, 0),
+                     (long)buf->line,
+                     (long)buf->col);
+    // Exception#exception clones the receiver and swaps in the new message, so
+    // the class survives whatever initialize() it happens to define.
+    rb_exc_raise(rb_funcall(err, ox_exception_id, 1, msg));
+
+    return Qfalse;  // not reached
+}
+
+static VALUE partial_io_cb(VALUE rbuf) {
+    Buf    buf = (Buf)rbuf;
+    VALUE  args[1];
+    VALUE  rstr;
+    char  *str;
+    size_t max = (size_t)(buf->end - buf->tail);
+    size_t cnt;
+
+    args[0] = ULONG2NUM(max);
+    rstr    = rb_funcall2(buf->in.io, ox_readpartial_id, 1, args);
+    if (NIL_P(rstr)) {  // end of input
+        return Qfalse;
+    }
+    str = StringValuePtr(rstr);
+    // Clamp to the space actually requested. A misbehaving IO can return more
+    // than max bytes; copying it unclamped overflows the buffer (which starts
+    // on the C stack). Use the real byte length, not strlen(), so an embedded
+    // NUL does not cause a short copy that still leaves a longer string.
+    cnt = (size_t)RSTRING_LEN(rstr);
+    if (cnt > max) {
+        cnt = max;
+    }
+    // printf("*** read partial %lu bytes, str: '%s'\n", cnt, str);
+    memcpy(buf->tail, str, cnt);
+    buf->read_end = buf->tail + cnt;
+
+    return Qtrue;
+}
+
+static VALUE io_cb(VALUE rbuf) {
+    Buf    buf = (Buf)rbuf;
+    VALUE  args[1];
+    VALUE  rstr;
+    char  *str;
+    size_t max = (size_t)(buf->end - buf->tail);
+    size_t cnt;
+
+    args[0] = ULONG2NUM(max);
+    rstr    = rb_funcall2(buf->in.io, ox_read_id, 1, args);
+    // IO#read(len) returns nil at EOF. That used to reach StringValuePtr(),
+    // whose TypeError rescue_cb() read as end of input; say so directly so
+    // rescue_cb() no longer has to treat every TypeError as EOF.
+    if (NIL_P(rstr)) {
+        return Qfalse;
+    }
+    str = StringValuePtr(rstr);
+    // See partial_io_cb: clamp to the requested size to prevent overflow.
+    cnt = (size_t)RSTRING_LEN(rstr);
+    if (cnt > max) {
+        cnt = max;
+    }
+    // printf("*** read %lu bytes, str: '%s'\n", cnt, str);
+    memcpy(buf->tail, str, cnt);
+    buf->read_end = buf->tail + cnt;
+
+    return Qtrue;
+}
+
+static int read_from_io_partial(Buf buf) {
+    return (Qfalse == rb_rescue(partial_io_cb, (VALUE)buf, rescue_cb, (VALUE)buf));
+}
+
+static int read_from_io(Buf buf) {
+    return (Qfalse == rb_rescue(io_cb, (VALUE)buf, rescue_cb, (VALUE)buf));
+}
+
+static int read_from_fd(Buf buf) {
+    ssize_t cnt;
+    size_t  max = buf->end - buf->tail;
+
+    cnt = read(buf->in.fd, buf->tail, max);
+    if (cnt < 0) {
+        ox_sax_drive_error(buf->dr, "failed to read from file");
+        return -1;
+    } else if (0 == cnt) {  // EOF
+        return -1;
+    }
+    buf->read_end = buf->tail + cnt;
+
+    return 0;
+}
+
+// What is left of the string is carried in the buffer rather than measured
+// again here. Measuring it per refill walks the rest of the document every
+// 4KB, which makes reading a String quadratic in its length. The caller writes
+// the terminator at read_end, as it does for the other readers.
+static int read_from_str(Buf buf) {
+    size_t max = buf->end - buf->tail - 1;
+    size_t cnt = buf->str_remaining_len;
+
+    if (0 == cnt || max < 2) {
+        return -1;
+    }
+    if (max <= cnt) {
+        cnt = max - 1;
+    }
+    memcpy(buf->tail, buf->in.str, cnt);
+    buf->in.str += cnt;
+    buf->str_remaining_len -= cnt;
+    buf->read_end = buf->tail + cnt;
+
+    return 0;
+}
