@@ -16,6 +16,7 @@
    topics/rosbag2
    topics/serde
    topics/convert
+   topics/extract
 
 .. toctree::
    :caption: Usage examples

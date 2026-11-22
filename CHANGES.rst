@@ -3,6 +3,18 @@
 Changes
 =======
 
+Unreleased
+----------
+
+- Add `rosbags-extract` to write a time window from rosbag2 recordings
+- Resolve message definitions per connection, so same-named types with
+  different definitions no longer depend on the order bags are opened
+- Rename conflicting type variants during extraction; identical nested
+  definitions are emitted once
+- Report connections whose definitions are incomplete unless a fallback
+  with a matching digest is supplied
+
+
 0.11.9 - 2026-10-20
 -------------------
 

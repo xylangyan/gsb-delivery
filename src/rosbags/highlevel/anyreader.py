@@ -6,12 +6,18 @@ from __future__ import annotations
 
 import functools
 import operator
+from collections import OrderedDict
 from contextlib import ExitStack, suppress
 from heapq import merge
 from itertools import groupby
 from typing import TYPE_CHECKING, cast
 
-from rosbags.interfaces import MessageDefinition, MessageDefinitionFormat, TopicInfo
+from rosbags.interfaces import (
+    MessageDefinition,
+    MessageDefinitionFormat,
+    Nodetype,
+    TopicInfo,
+)
 from rosbags.rosbag1 import (
     Reader as Reader1,
     ReaderError as ReaderError1,
@@ -47,6 +53,61 @@ if TYPE_CHECKING:
 
 class AnyReaderError(Exception):
     """Reader error."""
+
+
+CONFLICT_HINT = 'pass the delivering connection to deserialize()'
+
+
+def _closure_names(
+    name: str, defs: dict[tuple[int, object], Typesdict], conflicting: set[str]
+) -> set[str]:
+    """Return conflicting types reachable from a type across all connections."""
+    found: set[str] = set()
+    for types in defs.values():
+        if name not in types:
+            continue
+        pending = [name]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in seen or current not in types:
+                continue
+            if current in conflicting:
+                found.add(current)
+            seen.add(current)
+            _, fields = types[current]
+            pending.extend(
+                cast('str', base[1])
+                for _, desc in fields
+                if (base := desc if desc[0] in {Nodetype.BASE, Nodetype.NAME} else desc[1][0])[0]
+                == Nodetype.NAME
+            )
+    return found
+
+
+def _merge_types(target: Typesdict, source: Typesdict) -> None:
+    """Merge definitions, keeping the first of conflicting same-named types."""
+    for name, entry in source.items():
+        target.setdefault(name, entry)
+
+
+def _closure_signatures(types: Typesdict, msgtype: str) -> dict[str, str]:
+    """Return the canonical definition of every type reachable from msgtype."""
+    signatures: dict[str, str] = {}
+    pending = [msgtype]
+    while pending:
+        name = pending.pop()
+        if name in signatures or name not in types:
+            continue
+        consts, fields = types[name]
+        pending.extend(
+            cast('str', base[1])
+            for _, desc in fields
+            if (base := desc if desc[0] in {Nodetype.BASE, Nodetype.NAME} else desc[1][0])[0]
+            == Nodetype.NAME
+        )
+        signatures[name] = repr((consts, fields))
+    return signatures
 
 
 ReaderErrors = (ReaderError1, ReaderError2)
@@ -91,6 +152,15 @@ class AnyReader:
         self.connections: list[Connection] = []
         self.default_typestore = default_typestore
         self.typestore = get_typestore(Stores.EMPTY)
+        self._connection_defs: dict[tuple[int, object], Typesdict] = {}
+        self._connection_stores: dict[tuple[int, object], Typestore] = {}
+        self._conflicts: set[str] = set()
+        self._signatures: dict[str, set[str]] = {}
+        self._roots: set[str] = set()
+        self._rawdata: OrderedDict[
+            int,
+            tuple[bytes | memoryview, Connection],
+        ] = OrderedDict()
 
         try:
             if self.is2:
@@ -114,12 +184,72 @@ class AnyReader:
         """Deserialize CDR message."""
         return self.typestore.deserialize_cdr(rawdata, typ)
 
-    def deserialize(self, rawdata: bytes, typ: str) -> object:
-        """Deserialize message with appropriate helper."""
+    def deserialize(
+        self,
+        rawdata: bytes,
+        typ: str,
+        connection: Connection | None = None,
+    ) -> object:
+        """Deserialize message with appropriate helper.
+
+        Definitions are resolved against the delivering connection when one is
+        given. This matters for bags whose connections share a type name but
+        carry different definitions.
+
+        Args:
+            rawdata: Serialized message.
+            typ: Message type name.
+            connection: Connection that delivered the message.
+
+        Returns:
+            Deserialized message.
+
+        Raises:
+            AnyReaderError: The message cannot be deserialized.
+
+        """
         try:
+            if connection is not None:
+                store = self._connection_store(connection)
+                if store is not None:
+                    return (
+                        store.deserialize_cdr(rawdata, typ)
+                        if self.is2
+                        else store.deserialize_ros1(rawdata, typ)
+                    )
+            remembered = self._rawdata.get(id(rawdata))
+            if remembered is not None and remembered[0] is rawdata:
+                store = self._connection_store(remembered[1])
+                if store is not None:
+                    return (
+                        store.deserialize_cdr(rawdata, typ)
+                        if self.is2
+                        else store.deserialize_ros1(rawdata, typ)
+                    )
+            if typ in self._conflicts:
+                msg = f'Message type {typ!r} has conflicting definitions; {CONFLICT_HINT}.'
+                raise AnyReaderError(msg)
             return self._deser_ros2(rawdata, typ) if self.is2 else self._deser_ros1(rawdata, typ)
         except SerdeError as err:
             raise AnyReaderError(*err.args) from None
+
+    def _connection_store(self, connection: Connection) -> Typestore | None:
+        """Return the store holding the definition of a connection."""
+        key = (connection.id, connection.owner)
+        if key in self._connection_stores:
+            return self._connection_stores[key]
+
+        types = self._connection_defs.get(key)
+        if types is None:
+            return None
+
+        store = get_typestore(Stores.EMPTY)
+        try:
+            store.register(types)
+        except TypesysError:
+            return None
+        self._connection_stores[key] = store
+        return store
 
     def _open(self) -> None:
         """Open subreaders and populate typestore."""
@@ -128,7 +258,6 @@ class AnyReader:
             self.stack.enter_context(reader)
 
         typs: Typesdict = {}
-        digests: dict[str, str] = {}
         connections = [y for x in self.readers for y in x.connections]
         if connections:
             definitions = [
@@ -137,22 +266,28 @@ class AnyReader:
             if definitions:
                 for connection in definitions:
                     if connection.msgdef.format == MessageDefinitionFormat.MSG:
-                        typs.update(
-                            get_types_from_msg(connection.msgdef.data, connection.msgtype),
-                        )
+                        current = get_types_from_msg(connection.msgdef.data, connection.msgtype)
                     else:
                         assert connection.msgdef.format == MessageDefinitionFormat.IDL
                         sep = '=' * 80 + '\n'
+                        current = {}
                         if connection.msgdef.data.startswith(f'{sep}IDL: '):
                             for msgdef in connection.msgdef.data.split(sep)[1:]:
                                 hdr, idl = msgdef.split('\n', 1)
                                 assert hdr.startswith('IDL: ')
-                                typs.update(get_types_from_idl(idl))
+                                current.update(get_types_from_idl(idl))
                         else:
-                            typs.update(get_types_from_idl(connection.msgdef.data))
+                            current.update(get_types_from_idl(connection.msgdef.data))
+
+                    key = (connection.id, connection.owner)
+                    self._connection_defs[key] = current
+                    _merge_types(typs, current)
+                    for name, signature in _closure_signatures(current, connection.msgtype).items():
+                        self._signatures.setdefault(name, set()).add(signature)
+                    self._roots.add(connection.msgtype)
 
                     if connection.digest:
-                        digests[connection.msgtype] = connection.digest
+                        self._check_digest(connection, current)
             elif self.default_typestore:
                 typs.update(self.default_typestore.fielddefs)
             else:
@@ -163,14 +298,25 @@ class AnyReader:
                 raise AnyReaderError(msg)
         typestore = get_typestore(Stores.EMPTY)
         typestore.register(typs)
-        func = typestore.hash_rihs01 if self.is2 else lambda x: typestore.generate_msgdef(x)[1]
-        for msgtype, digest in digests.items():
-            if (have := func(msgtype)) != digest:
-                msg = f'Message type {msgtype!r} hash mismatch {have} != {digest}'
-                raise AnyReaderError(msg)
 
+        conflicting = {name for name, sigs in self._signatures.items() if len(sigs) > 1}
+        self._conflicts = set(conflicting)
+        for name in self._roots:
+            if conflicts := _closure_names(name, self._connection_defs, conflicting):
+                self._conflicts.update({name} | conflicts)
         self.connections = connections
         self.typestore = typestore
+
+    def _check_digest(self, connection: Connection, types: Typesdict) -> None:
+        """Validate a connection's definition against its digest."""
+        if not connection.digest:
+            return
+        store = get_typestore(Stores.EMPTY)
+        store.register(types)
+        func = store.hash_rihs01 if self.is2 else lambda x: store.generate_msgdef(x)[1]
+        if (have := func(connection.msgtype)) != connection.digest:
+            msg = f'Message type {connection.msgtype!r} hash mismatch {have} != {connection.digest}'
+            raise AnyReaderError(msg)
 
     def open(self) -> None:
         """Open reader."""
@@ -195,6 +341,12 @@ class AnyReader:
         assert stack
 
         self.connections.clear()
+        self._connection_defs.clear()
+        self._connection_stores.clear()
+        self._conflicts.clear()
+        self._signatures.clear()
+        self._roots.clear()
+        self._rawdata.clear()
         self.typestore = get_typestore(Stores.EMPTY)
         stack.close()
 
@@ -297,4 +449,8 @@ class AnyReader:
             ]
         else:
             generators = [reader.messages(start=start, stop=stop) for reader in self.readers]
-        yield from merge(*generators, key=lambda x: x[1])
+        for connection, timestamp, rawdata in merge(*generators, key=lambda x: x[1]):
+            self._rawdata[id(rawdata)] = (rawdata, connection)
+            while len(self._rawdata) > 64:
+                self._rawdata.popitem(last=False)
+            yield connection, timestamp, rawdata

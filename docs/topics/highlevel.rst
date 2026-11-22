@@ -12,6 +12,15 @@ The reader also directly exposes appropriate deserialization methods and automat
 
 Readers can be reopened after closing. Do not iterate a reader concurrently from multiple threads or interleave independent message iterators: storage backends may share a seekable stream.
 
+Message definitions are resolved per connection. When a bag contains connections that share a type name but carry different definitions, pass the connection that delivered the message to ``deserialize``:
+
+.. code-block:: python
+
+   for connection, timestamp, rawdata in reader.messages():
+       msg = reader.deserialize(rawdata, connection.msgtype, connection)
+
+Messages yielded by ``reader.messages()`` are also remembered by identity, so the three-argument form above and the two-argument form keep working for them. Deserializing unrelated bytes by an ambiguous type name raises an error instead of picking one definition.
+
 .. code-block:: python
 
    from pathlib import Path

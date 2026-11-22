@@ -55,6 +55,7 @@ requires-python = ">=3.10"
 
 [project.scripts]
 rosbags-convert = "rosbags.convert.cli:main"
+rosbags-extract = "rosbags.extract.cli:main"
 
 [project.urls]
 Homepage = "https://gitlab.com/ternaris/rosbags"
