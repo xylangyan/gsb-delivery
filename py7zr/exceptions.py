@@ -89,3 +89,31 @@ class DecompressionBombError(ArchiveError):
 class AbsolutePathError(Exception):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+
+
+class StagingQuotaError(ArchiveError):
+    """Raised when a delivery plan would exceed its staging quota.
+
+    The plan itself only contains feasible steps; this guards execution when a
+    caller replays a plan against different data or edits it in place.
+    """
+
+    def __init__(self, quota: int, actual: int) -> None:
+        super().__init__(quota, actual)
+        self.quota = quota
+        self.actual = actual
+
+
+class SubstreamBoundaryError(ArchiveError):
+    """Raised when a block cannot be split at the boundaries declared in its header.
+
+    The folder's packed bytes are available but the substream sizes or the
+    decompressed output disagree with the header, so no delivery can be
+    attributed to the declared members. Decoding a corrupt block raises the
+    same error, attributed to the block that failed.
+    """
+
+    def __init__(self, block_index: int, message: str) -> None:
+        super().__init__(block_index, message)
+        self.block_index = block_index
+        self.message = message

@@ -9,6 +9,16 @@ All notable changes to this project will be documented in this file.
 `Unreleased`_
 =============
 
+Added
+-----
+- Add solid-archive delivery planning. ``SevenZipFile.extraction_plan()``
+  builds a minimum-cost plan for an arbitrary receiver order from the block
+  and substream boundaries in the archive header, per-block open costs, and a
+  staging quota. ``DeliveryPlan.execute()`` decodes one block at a time, checks
+  the real substream boundaries, reports provisional deliveries until a
+  whole-block checksum passes, and reuses verified blocks through
+  ``VerificationCache``.
+
 Changed
 -------
 - Switch the 7zAES crypto dependency from ``pycryptodomex`` (``Cryptodome``

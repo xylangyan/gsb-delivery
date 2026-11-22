@@ -189,3 +189,78 @@ mandatory headers are omitted.
         factory = StreamIOFactory()
         with py7zr.SevenZipFile("target.7z") as archive:
             archive.extractall(factory=factory)
+
+
+.. _plan-solid-delivery:
+
+Plan delivery from a solid archive
+==================================
+
+A solid 7z archive keeps several members in one block (folder). The decoder
+cannot be paused and must start again at the block's first packed byte, so
+delivering members in an arbitrary receiver order may require decoding the same
+block more than once. :meth:`py7zr.SevenZipFile.extraction_plan` builds a
+minimum-cost plan from the block and substream boundaries stored in the archive
+header, the receiver order, a per-block open cost, and a staging quota.
+
+.. code-block:: python
+
+    from py7zr import SevenZipFile, VerificationCache
+
+    with SevenZipFile('solid.7z') as archive:
+        plan = archive.extraction_plan(
+            ['b', 'd', 'a', 'c'],       # receiver order, repeats allowed
+            staging_quota=2,            # bytes retained between deliveries
+            open_costs={0: 5, 1: 3},    # cost of decoding each block
+        )
+        print(plan.describe())
+        execution = plan.execute(archive, block_cache=VerificationCache())
+
+``staging_quota`` counts bytes kept for later deliveries. The member being
+handed over does not count; a copy retained after the delivery does. A
+repeated request is delivered again and may reuse a staged copy.
+
+Planning is a shortest-path search over the staged copies and the open decoder.
+For member ``B`` it reports the block opens, the staging high-water mark of
+every step, and the resulting plan cost:
+
+* with a quota of 1 byte and two 1-byte members per block, ``b, d, a, c``
+  needs three block opens;
+* with a quota of 2 bytes, one open per block is enough;
+* if the receiver asks for ``a, b`` from the same block in order, one open
+  serves both and no staging is needed.
+
+Header evidence
+---------------
+
+``plan.proof`` records the boundaries the plan relies on. ``boundaries`` is a
+``(block, offset, size)`` tuple for every substream and ``block_spans`` is a
+``(block, pack_offset, pack_size)`` tuple for every block, both taken from the
+folder list, PackInfo and the substream size vector. Execution re-derives the
+same boundaries and raises :class:`py7zr.SubstreamBoundaryError` if the decoded
+block does not split at them.
+
+Verification states
+-------------------
+
+When a block stores only a whole-block checksum, execution may hand over the
+current member's bytes as soon as its range is complete. The delivery is marked
+``provisional`` and becomes ``verified`` only when the whole-block checksum
+passes; a mismatch marks the affected deliveries ``failed``. Pass an
+``on_status`` callback to observe each transition:
+
+.. code-block:: python
+
+    def report(kind, name):
+        print(kind, name)
+
+    execution = plan.execute(archive, on_status=report, chunk_size=4096)
+
+Member checksums are applied immediately and independently, so one bad member
+does not hide the verified state of its neighbours.
+
+If a block's header span points past the readable bytes, the plan lists it in
+``unverifiable`` and execution marks every delivery from it ``unverifiable``
+instead of presenting guessed bytes as verified. Verified whole blocks may be
+reused from :class:`py7zr.VerificationCache` for the same archive version; the
+version key is a fingerprint of the header fields that determine block content.

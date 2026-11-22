@@ -999,6 +999,90 @@ class SevenZipFile(contextlib.AbstractContextManager):
                 return True
         return False
 
+    def available_end(self) -> int | None:
+        """Return the absolute end offset of the readable archive data.
+
+        For a seekable file object the position is restored. Returns ``None``
+        for a non-seekable object, in which case a caller cannot tell from the
+        header alone whether a block's packed span is reachable.
+        """
+        try:
+            pos = self.fp.tell()
+            end = self.fp.seek(0, os.SEEK_END)
+            self.fp.seek(pos, os.SEEK_SET)
+        except (AttributeError, OSError, ValueError):
+            return None
+        return end
+
+    def extraction_plan(
+        self,
+        order: Collection[str],
+        staging_quota: int | None = None,
+        open_costs: Any = 1,
+        available_end: int | None = None,
+    ) -> Any:
+        """Return a minimum-cost delivery plan for *order*.
+
+        Members are delivered in *order*; a repeated name is delivered again
+        and may reuse a staged copy. Blocks are decoded one at a time. See
+        :class:`py7zr.plan.DeliveryPlan` for the result.
+
+        :param order: Member names in receiver order.
+        :param staging_quota: Maximum retained bytes, or ``None`` for no limit.
+        :param open_costs: Per-block open cost, as a mapping, sequence or a
+            single value.
+        :param available_end: Override the readable end offset; by default the
+            archive file size is used.
+        """
+        from py7zr.plan import ExtractionPlan
+
+        end = self.available_end() if available_end is None else available_end
+        planner = ExtractionPlan.from_header(
+            self.header,
+            self.pack_data_start,
+            file_ids={f.filename: f.id for f in self.files},
+            open_costs=open_costs,
+            available_end=end,
+        )
+        return planner.build(order, staging_quota)
+
+    def execute_plan(
+        self,
+        plan: Any,
+        block_cache: Any = None,
+        collect: bool = True,
+        on_status: Any = None,
+        chunk_size: int = 65536,
+    ) -> Any:
+        """Execute a :class:`py7zr.plan.DeliveryPlan` against this archive.
+
+        Each planned block decode reads the block's packed bytes, decodes it
+        in one pass, checks the substream boundaries from the header, and
+        then splits the output into the planned members. A member whose CRC is
+        not covered by a whole-block checksum is delivered provisional until
+        its own CRC is computed.
+
+        :param plan: A plan from :meth:`extraction_plan`.
+        :param block_cache: Optional :class:`py7zr.plan.VerificationCache`;
+            verified blocks are reused when the version matches.
+        :param collect: When ``False``, delivery data is not retained.
+        :param on_status: Optional ``callable(kind, name)`` invoked at each
+            ``provisional``, ``verified``, ``failed`` and ``unverifiable``
+            transition.
+        :param chunk_size: Decoder chunk size in bytes.
+        :return: A :class:`py7zr.plan.PlanExecution`.
+        """
+        from py7zr.plan import PlanExecutor
+
+        return PlanExecutor(
+            self,
+            plan,
+            block_cache=block_cache,
+            collect=collect,
+            on_status=on_status,
+            chunk_size=chunk_size,
+        ).run()
+
     def _var_release(self):
         self._dict = {}
         self.worker.close()

@@ -37,6 +37,37 @@ SevenZipFile Object
    member data to custom objects with a :class:`WriterFactory`.
 
 
+.. _planning-objects:
+
+Delivery Planning
+=================
+
+.. autoclass:: py7zr.ExtractionPlan
+   :members: from_header, from_archive, build, proof, unverifiable_blocks, member_names
+
+.. autoclass:: py7zr.DeliveryPlan
+   :members: describe, execute, open_counts, steps_for_block, replay
+
+.. autoclass:: py7zr.PlanExecution
+   :members: by_name
+
+.. autoclass:: py7zr.VerificationCache
+
+.. autoclass:: py7zr.Block
+
+.. autoclass:: py7zr.Substream
+
+.. autoclass:: py7zr.DeliveryStep
+
+.. autofunction:: py7zr.plan_extraction
+
+.. autofunction:: py7zr.build_plan
+
+.. seealso::
+
+   :ref:`plan-solid-delivery` for quotas, open costs and verification states.
+
+
 .. _archiveinfo-object:
 
 Information Objects
