@@ -1,0 +1,6 @@
+.bundle
+spec/gemfiles/*.gemfile.lock
+Gemfile.lock
+pkg/*
+coverage/*
+coverage.vim
