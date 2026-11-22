@@ -1,0 +1,421 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import dataclasses
+import inspect
+import logging
+import math
+from collections.abc import Callable
+from fnmatch import fnmatchcase
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
+from urllib.parse import urlparse
+
+from opentelemetry.configuration._exceptions import ConfigurationError
+from opentelemetry.sdk.util.instrumentation import InstrumentationScope
+from opentelemetry.util._importlib_metadata import entry_points
+
+if TYPE_CHECKING:
+    # pylint: disable-next=import-error
+    import grpc
+
+    from opentelemetry.configuration.models import AttributeLimits, GrpcTls, IncludeExclude
+
+_logger = logging.getLogger(__name__)
+
+_CompressionT = TypeVar("_CompressionT")
+
+_DEFAULT_OTLP_HTTP_ENDPOINT = "http://localhost:4318"
+_DEFAULT_OTLP_GRPC_ENDPOINT = "http://localhost:4317"
+_DEFAULT_OTLP_EXPORT_TIMEOUT_MILLIS = 10000
+
+
+def _matches_glob(value: str, pattern: str) -> bool:
+    """Match exactly or using the configuration schema's case-sensitive wildcards.
+
+    Only ``*`` (zero or more characters) and ``?`` (one character) are
+    wildcards. All other characters, including brackets and backslashes,
+    are literal.
+    """
+    # Escape opening brackets to disable fnmatch's character classes while
+    # retaining its wildcard implementation and compiled-pattern cache.
+    return value == pattern or fnmatchcase(value, pattern.replace("[", "[[]"))
+
+
+def _include_exclude_predicate(config: IncludeExclude) -> Callable[[str], bool]:
+    """Build a predicate matching values against include/exclude glob patterns.
+
+    Values must match one of the ``included`` patterns when present (an
+    omitted ``included`` list matches everything) and must not match any
+    ``excluded`` pattern, which takes priority over ``included``.
+    """
+    included = config.included
+    excluded = config.excluded
+
+    def matches(value: str) -> bool:
+        if included and not any(_matches_glob(value, pattern) for pattern in included):
+            return False
+        return not (excluded and any(_matches_glob(value, pattern) for pattern in excluded))
+
+    return matches
+
+
+def _scope_name_matches_glob(pattern: str) -> Callable[[InstrumentationScope], bool]:
+    """Match scope names using the configuration schema's wildcard semantics."""
+
+    def matches(scope: InstrumentationScope) -> bool:
+        return _matches_glob(scope.name, pattern)
+
+    return matches
+
+
+def _additional_properties(cls):
+    """Decorator for dataclasses whose JSON Schema sets additionalProperties.
+
+    Wraps the dataclass-generated ``__init__`` so that extra keyword
+    arguments are captured into an ``additional_properties`` instance
+    attribute instead of raising ``TypeError``.  This lets user-defined
+    component names flow through the config pipeline without modifying
+    the codegen output for built-in fields.
+
+    Applied automatically by the custom template in ``opentelemetry-sdk/codegen/``
+    when ``additionalPropertiesType`` is present in the template context
+    (set by ``datamodel-codegen`` for schema types with ``additionalProperties``).
+    """
+    original_init = cls.__init__
+    original_sig = inspect.signature(original_init)
+    known_fields = frozenset(f.name for f in dataclasses.fields(cls) if f.init)
+
+    def _init(self, **kwargs):
+        known = {k: v for k, v in kwargs.items() if k in known_fields}
+        extra = {k: v for k, v in kwargs.items() if k not in known_fields}
+        original_init(self, **known)
+        self.additional_properties = extra
+
+    # Preserve the original parameter list for IDE autocompletion and
+    # inspect.signature(), adding **kwargs to signal extras are accepted.
+    # setattr used because pyright rejects direct __signature__ assignment.
+    params = list(original_sig.parameters.values())
+    params.append(inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD))
+    setattr(_init, "__signature__", original_sig.replace(parameters=params))  # noqa: B010
+
+    cls.__init__ = _init
+    return cls
+
+
+def load_entry_point(group: str, name: str) -> type:
+    """Load a plugin class from an entry point group by name.
+
+    Returns the loaded class — callers are responsible for instantiation
+    with whatever arguments their config requires.
+
+    Raises:
+        ConfigurationError: If the entry point is not found or fails to load.
+    """
+    try:
+        ep = next(iter(entry_points(group=group, name=name)), None)
+        if ep is None:
+            raise ConfigurationError(
+                f"Plugin '{name}' not found in group '{group}'. "
+                "Make sure the package providing this plugin is installed."
+            )
+        return ep.load()
+    except ConfigurationError:
+        raise
+    except Exception as exc:
+        raise ConfigurationError(f"Failed to load plugin '{name}' from group '{group}': {exc}") from exc
+
+
+class _ComponentConfig(Protocol):
+    """Protocol for config dataclasses decorated with @_additional_properties.
+
+    Values in ``additional_properties`` are nested config dicts (suitable
+    for ``**kwargs`` splatting to the user-defined component class) or
+    ``None`` (when the YAML uses ``my_plugin:`` or ``my_plugin: null``).
+
+    The generated models declare ``additional_properties`` as an instance
+    field to match the decorator's runtime assignment.
+    """
+
+    additional_properties: dict[str, dict[str, Any] | None]
+
+
+def _resolve_component(
+    config: _ComponentConfig,
+    registry: dict[str, Callable[[Any], Any]],
+    entry_point_group: str,
+    component_type: str,
+) -> Any:
+    """Resolve a config dataclass to a component instance.
+
+    Checks built-in factories in ``registry`` first (by matching typed
+    field names on ``config``), then falls back to entry point loading
+    for plugin components found in ``config.additional_properties``.
+
+    The JSON schema enforces exactly one component per config block
+    (``minProperties: 1, maxProperties: 1``). If multiple typed fields or
+    ``additional_properties`` entries are set (e.g. when schema validation
+    is bypassed), the first registry match wins.
+
+    Args:
+        config: A dataclass with ``additional_properties`` (from the
+            ``@_additional_properties`` decorator).
+        registry: Mapping of built-in component names to factory
+            callables. Each factory receives the field value from config.
+        entry_point_group: The entry point group name for plugin loading.
+        component_type: Human-readable name for error messages
+            (e.g. "span exporter").
+
+    Returns:
+        The resolved component instance.
+
+    Raises:
+        ConfigurationError: If no component type is specified in config.
+    """
+    for name, factory in registry.items():
+        value = getattr(config, name, None)
+        if value is not None:
+            return factory(value)
+    if config.additional_properties:
+        name, plugin_config = next(iter(config.additional_properties.items()))
+        return load_entry_point(entry_point_group, name)(**(plugin_config or {}))
+    raise ConfigurationError(f"No {component_type} type specified in config.")
+
+
+def _resolve_otlp_http_endpoint(
+    endpoint: str | None,
+    signal: Literal["traces", "metrics", "logs"],
+) -> str:
+    """Return the configured OTLP HTTP endpoint, or the schema default for the signal."""
+    return endpoint if endpoint is not None else f"{_DEFAULT_OTLP_HTTP_ENDPOINT}/v1/{signal}"
+
+
+def _resolve_otlp_grpc_endpoint(endpoint: str | None) -> str:
+    """Return the configured OTLP gRPC endpoint, or the schema default."""
+    return endpoint if endpoint is not None else _DEFAULT_OTLP_GRPC_ENDPOINT
+
+
+def _warn_unsupported_otlp_size_limits(
+    exporter_name: str,
+    signal: Literal["spans", "logs", "metrics"],
+    max_request_size: int | None,
+    max_response_size: int | None,
+    max_request_size_supported: bool,
+) -> None:
+    """Warn about OTLP size limits that are configured but not applied by the exporter."""
+    if max_request_size is not None and not max_request_size_supported:
+        _logger.warning(
+            "max_request_size is not yet supported for %s exporter for %s and will be ignored.", exporter_name, signal
+        )
+    if max_response_size is not None:
+        _logger.warning(
+            "max_response_size is not yet supported for %s exporter for %s and will be ignored.", exporter_name, signal
+        )
+
+
+def _warn_unsupported_attribute_value_depth_limit(
+    attribute_value_depth_limit: int | None,
+    global_limits: AttributeLimits | None,
+) -> None:
+    """Warn when attribute_value_depth_limit is configured, as the SDK does not support it."""
+    if attribute_value_depth_limit is None and global_limits is not None:
+        attribute_value_depth_limit = global_limits.attribute_value_depth_limit
+    if attribute_value_depth_limit is not None:
+        _logger.warning("attribute_value_depth_limit is not yet supported and will be ignored.")
+
+
+def _resolve_export_timeout(timeout: int | None) -> float:
+    """Convert a config export timeout in milliseconds to seconds.
+
+    Unset maps to the schema default of 10000 ms. A value of 0 means no limit
+    and maps to ``math.inf``.
+    """
+    match timeout:
+        case None:
+            return _DEFAULT_OTLP_EXPORT_TIMEOUT_MILLIS / 1000.0
+        case 0:
+            return math.inf
+        case _:
+            return timeout / 1000.0
+
+
+def _parse_headers(
+    headers: list | None,
+    headers_list: str | None,
+) -> dict[str, str] | None:
+    """Merge headers struct and headers_list into a dict.
+
+    Returns None if neither is set, letting the exporter read env vars.
+    headers struct takes priority over headers_list for the same key.
+    headers struct entries with a null value are ignored.
+    """
+    if headers is None and headers_list is None:
+        return None
+    result: dict[str, str] = {}
+    if headers_list:
+        for item in headers_list.split(","):
+            item = item.strip()
+            if "=" in item:
+                key, value = item.split("=", 1)
+                result[key.strip()] = value.strip()
+            elif item:
+                _logger.warning(
+                    "Invalid header pair in headers_list (missing '='): %s",
+                    item,
+                )
+    if headers:
+        for pair in headers:
+            if isinstance(pair, dict):
+                name, value = pair["name"], pair.get("value")
+            else:
+                name, value = pair.name, pair.value
+            if value is None:
+                continue
+            result[name] = value
+    return result
+
+
+def _map_compression(
+    value: str | None,
+    compression_enum: type[_CompressionT],
+    *,
+    allow_deflate: bool = False,
+) -> _CompressionT:
+    """Map a compression string to the given Compression enum value.
+
+    Unset and ``"none"`` map to the enum's no-compression member.
+    """
+    value_lower = "none" if value is None else value.lower()
+    supports_deflate = hasattr(compression_enum, "Deflate") or hasattr(compression_enum, "DEFLATE")
+
+    if value_lower == "none":
+        for member_name in ("NoCompression", "NONE"):
+            if (member := getattr(compression_enum, member_name, None)) is not None:
+                return member
+    if value_lower == "gzip":
+        for member_name in ("Gzip", "GZIP"):
+            if member := getattr(compression_enum, member_name, None):
+                return member
+    if value_lower == "deflate" and allow_deflate and supports_deflate:
+        for member_name in ("Deflate", "DEFLATE"):
+            if member := getattr(compression_enum, member_name, None):
+                return member
+
+    supported_values = ["'gzip'", "'none'"]
+    if allow_deflate and supports_deflate:
+        supported_values.insert(1, "'deflate'")
+
+    raise ConfigurationError(
+        f"Unsupported compression value '{value}'. Supported values: {', '.join(supported_values)}."
+    )
+
+
+def _validate_mtls_pair(
+    key_file: str | None,
+    cert_file: str | None,
+    exporter: str,
+) -> None:
+    """Ensure mTLS key_file and cert_file are either both set or both unset."""
+    if (key_file is None) != (cert_file is None):
+        raise ConfigurationError(
+            f"Invalid tls config for {exporter} exporter: key_file and cert_file must be set together."
+        )
+
+
+def _read_tls_file(path: str, field: str) -> bytes:
+    """Read a PEM file referenced by a tls config field."""
+    try:
+        with open(path, "rb") as file:
+            return file.read()
+    except OSError as exc:
+        raise ConfigurationError(f"Failed to read tls.{field} '{path}': {exc}") from exc
+
+
+def _validate_http_tls(tls: Any, exporter: str = "otlp_http") -> None:
+    """Validate mTLS pair and verify that configured TLS files exist and are readable.
+
+    HTTP exporters take file paths rather than loaded bytes/credentials, but missing
+    or unreadable certificate files should fail fast at startup with ConfigurationError
+    rather than causing delayed export failures in background threads.
+    """
+    if tls is None:
+        return
+    _validate_mtls_pair(tls.key_file, tls.cert_file, exporter)
+    if tls.ca_file is not None:
+        _read_tls_file(tls.ca_file, "ca_file")
+    if tls.cert_file is not None:
+        _read_tls_file(tls.cert_file, "cert_file")
+    if tls.key_file is not None:
+        _read_tls_file(tls.key_file, "key_file")
+
+
+def _grpc_credentials_from_tls(tls: GrpcTls | None) -> grpc.ChannelCredentials | None:
+    """Build gRPC channel credentials from a GrpcTls config.
+
+    Returns None if no certificate files are configured, letting the
+    exporter fall back to its default credentials.
+    """
+    if tls is None or (tls.ca_file is None and tls.key_file is None and tls.cert_file is None):
+        return None
+    _validate_mtls_pair(tls.key_file, tls.cert_file, "otlp_grpc")
+
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import grpc  # noqa: PLC0415
+
+    return grpc.ssl_channel_credentials(
+        root_certificates=_read_tls_file(tls.ca_file, "ca_file") if tls.ca_file is not None else None,
+        private_key=_read_tls_file(tls.key_file, "key_file") if tls.key_file is not None else None,
+        certificate_chain=_read_tls_file(tls.cert_file, "cert_file") if tls.cert_file is not None else None,
+    )
+
+
+def _grpc_insecure_from_tls(endpoint: str | None, tls: GrpcTls | None) -> bool:
+    """Resolve the ``insecure`` flag for a gRPC exporter.
+
+    ``tls.insecure`` only applies to endpoints without an ``http``/``https``
+    scheme. Explicit ``http://`` and ``https://`` endpoints select plaintext
+    and TLS respectively. Otherwise, an unset ``tls.insecure`` defaults to
+    false.
+    """
+    if endpoint is not None:
+        scheme = urlparse(endpoint).scheme
+        if scheme in ("http", "https"):
+            return scheme == "http"
+    return tls.insecure if tls is not None and tls.insecure is not None else False
+
+
+def _parse_otlp_file_output_stream(output_stream: str | None) -> str | None:
+    """Resolve an output_stream value to a file path, or None for stdout.
+
+    Per the OTel file exporter spec, output_stream is "stdout" (or
+    None, which means the same), or a "file://" URI giving a path.
+    """
+    if output_stream is None or output_stream == "stdout":
+        return None
+    try:
+        parsed = urlparse(output_stream)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"Failed to parse output_stream '{output_stream}' for otlp_file_development exporter: {exc}"
+        ) from exc
+    is_local_file_uri = parsed.scheme == "file" and parsed.netloc in ("", "localhost") and bool(parsed.path)
+    has_extra_components = parsed.params or parsed.query or parsed.fragment
+    if is_local_file_uri and not has_extra_components:
+        path = parsed.path
+        if not path.startswith("/"):
+            raise ConfigurationError(
+                f"Unsupported output_stream '{output_stream}' for "
+                "otlp_file_development exporter. Path must be absolute."
+            )
+        if path.endswith("/"):
+            raise ConfigurationError(
+                f"Unsupported output_stream '{output_stream}' for "
+                "otlp_file_development exporter. Path must be a file, "
+                "not a directory."
+            )
+        return path
+    raise ConfigurationError(
+        f"Unsupported output_stream '{output_stream}' for otlp_file_development "
+        "exporter. Supported values: stdout, file://<path>."
+    )

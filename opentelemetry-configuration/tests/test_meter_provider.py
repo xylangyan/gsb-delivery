@@ -1,0 +1,1447 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Tests access private members of SDK classes to assert correct configuration.
+# pylint: disable=protected-access,too-many-lines
+
+import math
+import os
+import sys
+import tempfile
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from opentelemetry.configuration._conversion import _dict_to_dataclass
+from opentelemetry.configuration._meter_provider import (
+    configure_meter_provider,
+    create_meter_provider,
+)
+from opentelemetry.configuration.file._loader import ConfigurationError
+from opentelemetry.configuration.models import (
+    Aggregation as AggregationConfig,
+)
+from opentelemetry.configuration.models import (
+    Base2ExponentialBucketHistogramAggregation as Base2Config,
+)
+from opentelemetry.configuration.models import (
+    CardinalityLimits as CardinalityLimitsConfig,
+)
+from opentelemetry.configuration.models import (
+    ConsoleMetricExporter as ConsoleMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    ExperimentalMeterConfig as MeterConfigConfig,
+)
+from opentelemetry.configuration.models import (
+    ExperimentalMeterConfigurator as MeterConfiguratorConfig,
+)
+from opentelemetry.configuration.models import (
+    ExperimentalMeterMatcherAndConfig as MeterMatcherAndConfig,
+)
+from opentelemetry.configuration.models import (
+    ExperimentalOtlpFileMetricExporter as ExperimentalOtlpFileMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    ExperimentalPrometheusMetricExporter as PrometheusMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    ExperimentalViewMatchingMode,
+    ExporterDefaultHistogramAggregation,
+    ExporterTemporalityPreference,
+    IncludeExclude,
+    InstrumentType,
+    OtlpHttpEncoding,
+    ViewSelector,
+    ViewStream,
+)
+from opentelemetry.configuration.models import (
+    ExplicitBucketHistogramAggregation as ExplicitBucketConfig,
+)
+from opentelemetry.configuration.models import (
+    GrpcTls as GrpcTlsConfig,
+)
+from opentelemetry.configuration.models import (
+    HttpTls as HttpTlsConfig,
+)
+from opentelemetry.configuration.models import (
+    MeterProvider as MeterProviderConfig,
+)
+from opentelemetry.configuration.models import (
+    MetricReader as MetricReaderConfig,
+)
+from opentelemetry.configuration.models import (
+    OtlpGrpcMetricExporter as OtlpGrpcMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    OtlpHttpMetricExporter as OtlpHttpMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    PeriodicMetricReader as PeriodicMetricReaderConfig,
+)
+from opentelemetry.configuration.models import (
+    PullMetricExporter as PullMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    PullMetricReader as PullMetricReaderConfig,
+)
+from opentelemetry.configuration.models import (
+    PushMetricExporter as PushMetricExporterConfig,
+)
+from opentelemetry.configuration.models import (
+    View as ViewConfig,
+)
+from opentelemetry.sdk.metrics import (
+    Counter,
+    Histogram,
+    MeterProvider,
+    ObservableCounter,
+    ObservableGauge,
+    ObservableUpDownCounter,
+    TraceBasedExemplarFilter,
+    UpDownCounter,
+)
+from opentelemetry.sdk.metrics._internal.instrument import (
+    _Counter,
+    _Gauge,
+    _Histogram,
+    _ObservableCounter,
+    _ObservableGauge,
+    _ObservableUpDownCounter,
+    _UpDownCounter,
+)
+from opentelemetry.sdk.metrics.export import (
+    AggregationTemporality,
+    ConsoleMetricExporter,
+    PeriodicExportingMetricReader,
+)
+from opentelemetry.sdk.metrics.view import (
+    DefaultAggregation,
+    DropAggregation,
+    ExplicitBucketHistogramAggregation,
+    ExponentialBucketHistogramAggregation,
+    LastValueAggregation,
+    SumAggregation,
+    View,
+)
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.util.instrumentation import InstrumentationScope
+
+
+class TestCreateMeterProviderBasic(unittest.TestCase):
+    def test_none_config_returns_provider(self):
+        provider = create_meter_provider(None)
+        self.assertIsInstance(provider, MeterProvider)
+
+    def test_none_config_uses_supplied_resource(self):
+        resource = Resource({"service.name": "svc"})
+        provider = create_meter_provider(None, resource)
+        self.assertIs(provider._sdk_config.resource, resource)
+
+    def test_none_config_no_readers(self):
+        provider = create_meter_provider(None)
+        self.assertEqual(len(provider._metric_readers), 0)
+
+    def test_none_config_uses_trace_based_exemplar_filter(self):
+        provider = create_meter_provider(None)
+        self.assertIsInstance(provider._sdk_config.exemplar_filter, TraceBasedExemplarFilter)
+
+    def test_none_config_does_not_read_exemplar_filter_env_var(self):
+        with patch.dict(os.environ, {"OTEL_METRICS_EXEMPLAR_FILTER": "always_on"}):
+            provider = create_meter_provider(None)
+        self.assertIsInstance(provider._sdk_config.exemplar_filter, TraceBasedExemplarFilter)
+
+    def test_none_config_does_not_read_interval_env_var(self):
+        config = MeterProviderConfig(
+            readers=[
+                MetricReaderConfig(
+                    periodic=PeriodicMetricReaderConfig(
+                        exporter=PushMetricExporterConfig(console=ConsoleMetricExporterConfig())
+                    )
+                )
+            ]
+        )
+        with patch.dict(os.environ, {"OTEL_METRIC_EXPORT_INTERVAL": "999999"}):
+            provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertIsInstance(reader, PeriodicExportingMetricReader)
+        self.assertEqual(reader._export_interval_millis, 60000.0)
+
+    def test_view_matching_mode_warns(self):
+        config = MeterProviderConfig(readers=[], view_matching_mode_development=ExperimentalViewMatchingMode.composable)
+        with self.assertLogs("opentelemetry.configuration._meter_provider", level="WARNING") as logs:
+            create_meter_provider(config)
+        self.assertIn("view_matching_mode/development is not yet supported", logs.output[0])
+
+    def test_configure_none_does_not_set_global(self):
+        original = __import__("opentelemetry.metrics", fromlist=["get_meter_provider"]).get_meter_provider()
+        configure_meter_provider(None)
+        after = __import__("opentelemetry.metrics", fromlist=["get_meter_provider"]).get_meter_provider()
+        self.assertIs(original, after)
+
+    def test_configure_with_config_sets_global(self):
+        config = MeterProviderConfig(readers=[])
+        with patch("opentelemetry.configuration._meter_provider.metrics.set_meter_provider") as mock_set:
+            configure_meter_provider(config)
+            mock_set.assert_called_once()
+            arg = mock_set.call_args[0][0]
+            self.assertIsInstance(arg, MeterProvider)
+
+
+class TestCreateMetricReaders(unittest.TestCase):  # pylint: disable=too-many-public-methods
+    @staticmethod
+    def _make_periodic_config(exporter_config, interval=None, timeout=None):
+        return MeterProviderConfig(
+            readers=[
+                MetricReaderConfig(
+                    periodic=PeriodicMetricReaderConfig(
+                        exporter=exporter_config,
+                        interval=interval,
+                        timeout=timeout,
+                    )
+                )
+            ]
+        )
+
+    def test_cardinality_limits_default_and_per_type(self):
+        config = MeterProviderConfig(
+            readers=[
+                MetricReaderConfig(
+                    periodic=PeriodicMetricReaderConfig(
+                        exporter=PushMetricExporterConfig(console=ConsoleMetricExporterConfig()),
+                        cardinality_limits=CardinalityLimitsConfig(default=10, histogram=20, observable_gauge=30),
+                    )
+                )
+            ]
+        )
+        reader = create_meter_provider(config)._metric_readers[0]
+        limits = reader._instrument_class_cardinality_limit
+        expected = {
+            _Counter: 10,
+            _UpDownCounter: 10,
+            _Histogram: 20,
+            _Gauge: 10,
+            _ObservableCounter: 10,
+            _ObservableUpDownCounter: 10,
+            _ObservableGauge: 30,
+        }
+        for instrument_class, limit in expected.items():
+            with self.subTest(instrument_class=instrument_class):
+                self.assertEqual(limits[instrument_class], limit)
+
+    def test_cardinality_limits_omitted_uses_sdk_default(self):
+        config = self._make_periodic_config(PushMetricExporterConfig(console=ConsoleMetricExporterConfig()))
+        reader = create_meter_provider(config)._metric_readers[0]
+        self.assertEqual(set(reader._instrument_class_cardinality_limit.values()), {2000})
+
+    def test_console_exporter(self):
+        config = self._make_periodic_config(PushMetricExporterConfig(console=ConsoleMetricExporterConfig()))
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertIsInstance(reader, PeriodicExportingMetricReader)
+        self.assertIsInstance(reader._exporter, ConsoleMetricExporter)
+
+    def test_null_valued_console_exporter_from_parsed_config(self):
+        # Regression test for #5451: a dataclass-typed exporter written as
+        # ``console:`` (present, null) must behave like ``console: {}`` rather
+        # than requiring an explicit empty mapping.
+        config = _dict_to_dataclass(
+            {
+                "readers": [
+                    {"periodic": {"exporter": {"console": None}}},
+                ]
+            },
+            MeterProviderConfig,
+        )
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertIsInstance(reader, PeriodicExportingMetricReader)
+        self.assertIsInstance(reader._exporter, ConsoleMetricExporter)
+
+    def test_periodic_reader_default_interval(self):
+        config = self._make_periodic_config(PushMetricExporterConfig(console=ConsoleMetricExporterConfig()))
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertEqual(reader._export_interval_millis, 60000.0)
+
+    def test_periodic_reader_default_timeout(self):
+        config = self._make_periodic_config(PushMetricExporterConfig(console=ConsoleMetricExporterConfig()))
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertEqual(reader._export_timeout_millis, 30000.0)
+
+    def test_periodic_reader_explicit_interval(self):
+        config = self._make_periodic_config(
+            PushMetricExporterConfig(console=ConsoleMetricExporterConfig()),
+            interval=5000,
+        )
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertEqual(reader._export_interval_millis, 5000.0)
+
+    def test_periodic_reader_explicit_timeout(self):
+        config = self._make_periodic_config(
+            PushMetricExporterConfig(console=ConsoleMetricExporterConfig()),
+            timeout=10000,
+        )
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertEqual(reader._export_timeout_millis, 10000.0)
+
+    def test_periodic_reader_zero_timeout_is_unlimited(self):
+        config = self._make_periodic_config(
+            PushMetricExporterConfig(console=ConsoleMetricExporterConfig()),
+            timeout=0,
+        )
+        provider = create_meter_provider(config)
+        reader = provider._metric_readers[0]
+        self.assertEqual(reader._export_timeout_millis, math.inf)
+
+    def test_otlp_http_missing_package_raises(self):
+        config = self._make_periodic_config(PushMetricExporterConfig(otlp_http=OtlpHttpMetricExporterConfig()))
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "opentelemetry.exporter.otlp.proto.http.metric_exporter": None,
+                    "opentelemetry.exporter.otlp.proto.http": None,
+                },
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            create_meter_provider(config)
+        self.assertIn("otlp-proto-http", str(ctx.exception))
+
+    def test_otlp_http_created_with_endpoint(self):
+        mock_exporter_cls = MagicMock()
+        mock_compression_cls = MagicMock()
+        mock_http_module = MagicMock()
+        mock_http_module.Compression = mock_compression_cls
+        mock_module = MagicMock()
+        mock_module.OTLPMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.proto.http.metric_exporter": mock_module,
+                "opentelemetry.exporter.otlp.proto.http": mock_http_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_http=OtlpHttpMetricExporterConfig(
+                        endpoint="http://localhost:4318",
+                        encoding=OtlpHttpEncoding.protobuf,
+                    )
+                )
+            )
+            create_meter_provider(config)
+
+        _, kwargs = mock_exporter_cls.call_args
+        self.assertEqual(kwargs["endpoint"], "http://localhost:4318")
+        self.assertIsNone(kwargs["headers"])
+        self.assertEqual(kwargs["timeout"], 10.0)
+        self.assertEqual(kwargs["compression"], mock_compression_cls.NoCompression)
+
+    def test_otlp_http_zero_timeout_is_unlimited(self):
+        mock_exporter_cls = MagicMock()
+        mock_http_module = MagicMock()
+        mock_module = MagicMock()
+        mock_module.OTLPMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.proto.http.metric_exporter": mock_module,
+                "opentelemetry.exporter.otlp.proto.http": mock_http_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(otlp_http=OtlpHttpMetricExporterConfig(timeout=0))
+            )
+            create_meter_provider(config)
+
+        self.assertEqual(mock_exporter_cls.call_args.kwargs["timeout"], math.inf)
+
+    def test_otlp_http_json_missing_package_raises(self):
+        config = self._make_periodic_config(
+            PushMetricExporterConfig(otlp_http=OtlpHttpMetricExporterConfig(encoding=OtlpHttpEncoding.json))
+        )
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "opentelemetry.exporter.otlp.common.http": None,
+                    "opentelemetry.exporter.otlp.json.http.metric_exporter": None,
+                },
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            create_meter_provider(config)
+        self.assertIn("opentelemetry-exporter-otlp-json-http", str(ctx.exception))
+
+    def test_otlp_http_json_created_with_config(self):
+        mock_exporter_cls = MagicMock()
+        mock_compression_cls = SimpleNamespace(GZIP="json_gzip")
+        mock_common_module = MagicMock()
+        mock_common_module.Compression = mock_compression_cls
+        mock_exporter_module = MagicMock()
+        mock_exporter_module.OTLPMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.common.http": mock_common_module,
+                "opentelemetry.exporter.otlp.json.http.metric_exporter": mock_exporter_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_http=OtlpHttpMetricExporterConfig(
+                        endpoint="http://collector:4318/v1/metrics",
+                        compression="gzip",
+                        timeout=5000,
+                        encoding=OtlpHttpEncoding.json,
+                        temporality_preference=ExporterTemporalityPreference.delta,
+                        default_histogram_aggregation=(
+                            ExporterDefaultHistogramAggregation.base2_exponential_bucket_histogram
+                        ),
+                    )
+                )
+            )
+            create_meter_provider(config)
+
+        call_kwargs = mock_exporter_cls.call_args.kwargs
+        self.assertEqual(call_kwargs["endpoint"], "http://collector:4318/v1/metrics")
+        self.assertEqual(call_kwargs["timeout"], 5.0)
+        self.assertEqual(call_kwargs["compression"], "json_gzip")
+        self.assertIsNotNone(call_kwargs["preferred_temporality"])
+        self.assertIsNotNone(call_kwargs["preferred_aggregation"])
+
+    def test_otlp_http_created_with_deflate_compression(self):
+        mock_exporter_cls = MagicMock()
+        mock_compression_cls = MagicMock()
+        mock_compression_cls.Deflate = "deflate_val"
+        mock_http_module = MagicMock()
+        mock_http_module.Compression = mock_compression_cls
+        mock_module = MagicMock()
+        mock_module.OTLPMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.proto.http.metric_exporter": mock_module,
+                "opentelemetry.exporter.otlp.proto.http": mock_http_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(otlp_http=OtlpHttpMetricExporterConfig(compression="deflate"))
+            )
+            create_meter_provider(config)
+
+        _, kwargs = mock_exporter_cls.call_args
+        self.assertEqual(kwargs["compression"], "deflate_val")
+
+    def test_otlp_grpc_missing_package_raises(self):
+        config = self._make_periodic_config(PushMetricExporterConfig(otlp_grpc=OtlpGrpcMetricExporterConfig()))
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "opentelemetry.exporter.otlp.proto.grpc.metric_exporter": None,
+                    "grpc": None,
+                },
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            create_meter_provider(config)
+        self.assertIn("otlp-proto-grpc", str(ctx.exception))
+
+    def test_otlp_http_tls_files_passed(self):
+        for encoding in (None, OtlpHttpEncoding.protobuf, OtlpHttpEncoding.json):
+            with self.subTest(encoding=encoding):
+                protocol = "json" if encoding == OtlpHttpEncoding.json else "proto"
+                mock_exporter_cls = MagicMock()
+                mock_module = MagicMock()
+                mock_module.OTLPMetricExporter = mock_exporter_cls
+
+                with (
+                    tempfile.TemporaryDirectory() as tmp_dir,
+                    patch.dict(
+                        sys.modules,
+                        {
+                            f"opentelemetry.exporter.otlp.{protocol}.http.metric_exporter": mock_module,
+                            "opentelemetry.exporter.otlp.proto.http": MagicMock(),
+                            "opentelemetry.exporter.otlp.common.http": MagicMock(),
+                        },
+                    ),
+                ):
+                    paths = {}
+                    for name in ("ca", "client", "client_key"):
+                        paths[name] = os.path.join(tmp_dir, f"{name}.pem")
+                        with open(paths[name], "wb") as file:
+                            file.write(b"data")
+
+                    config = self._make_periodic_config(
+                        PushMetricExporterConfig(
+                            otlp_http=OtlpHttpMetricExporterConfig(
+                                encoding=encoding,
+                                tls=HttpTlsConfig(
+                                    ca_file=paths["ca"],
+                                    key_file=paths["client_key"],
+                                    cert_file=paths["client"],
+                                ),
+                            )
+                        )
+                    )
+                    create_meter_provider(config)
+
+                _, kwargs = mock_exporter_cls.call_args
+                self.assertEqual(kwargs["certificate_file"], paths["ca"])
+                self.assertEqual(kwargs["client_key_file"], paths["client_key"])
+                self.assertEqual(kwargs["client_certificate_file"], paths["client"])
+
+    def test_otlp_http_tls_missing_file_raises(self):
+        mock_module = MagicMock()
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            patch.dict(
+                sys.modules,
+                {
+                    "opentelemetry.exporter.otlp.proto.http.metric_exporter": mock_module,
+                    "opentelemetry.exporter.otlp.proto.http": MagicMock(),
+                },
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_http=OtlpHttpMetricExporterConfig(
+                        tls=HttpTlsConfig(ca_file=os.path.join(tmp_dir, "missing.pem"))
+                    )
+                )
+            )
+            create_meter_provider(config)
+        self.assertIn("tls.ca_file", str(ctx.exception))
+        mock_module.OTLPMetricExporter.assert_not_called()
+
+    def test_otlp_grpc_http_endpoint_overrides_tls_insecure(self):
+        mock_exporter_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.OTLPMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules, {"grpc": MagicMock(), "opentelemetry.exporter.otlp.proto.grpc.metric_exporter": mock_module}
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_grpc=OtlpGrpcMetricExporterConfig(
+                        endpoint="http://collector:4317", tls=GrpcTlsConfig(insecure=False)
+                    )
+                )
+            )
+            create_meter_provider(config)
+
+        _, kwargs = mock_exporter_cls.call_args
+        self.assertTrue(kwargs["insecure"])
+
+    @patch.dict(os.environ, {"OTEL_EXPORTER_OTLP_INSECURE": "true", "OTEL_EXPORTER_OTLP_METRICS_INSECURE": "true"})
+    def test_otlp_grpc_secure_default_ignores_insecure_env(self):
+        for tls in (None, GrpcTlsConfig()):
+            mock_module = MagicMock()
+            with (
+                self.subTest(tls=tls),
+                patch.dict(
+                    sys.modules,
+                    {
+                        "grpc": MagicMock(),
+                        "opentelemetry.exporter.otlp.proto.grpc.metric_exporter": mock_module,
+                    },
+                ),
+            ):
+                mock_exporter_cls = mock_module.OTLPMetricExporter
+                config = self._make_periodic_config(
+                    PushMetricExporterConfig(otlp_grpc=OtlpGrpcMetricExporterConfig(endpoint="collector:4317", tls=tls))
+                )
+                provider = create_meter_provider(config)
+                try:
+                    self.assertIs(mock_exporter_cls.call_args.kwargs["insecure"], False)
+                finally:
+                    provider.shutdown()
+
+    def test_otlp_grpc_tls_files_build_credentials(self):
+        mock_exporter_cls = MagicMock()
+        mock_grpc = MagicMock()
+        mock_module = MagicMock()
+        mock_module.OTLPMetricExporter = mock_exporter_cls
+
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            patch.dict(
+                sys.modules,
+                {
+                    "grpc": mock_grpc,
+                    "opentelemetry.exporter.otlp.proto.grpc.metric_exporter": mock_module,
+                },
+            ),
+        ):
+            ca_file = os.path.join(tmp_dir, "ca.pem")
+            with open(ca_file, "wb") as file:
+                file.write(b"ca-bytes")
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_grpc=OtlpGrpcMetricExporterConfig(
+                        endpoint="https://collector:4317", tls=GrpcTlsConfig(ca_file=ca_file, insecure=False)
+                    )
+                )
+            )
+            create_meter_provider(config)
+
+        mock_grpc.ssl_channel_credentials.assert_called_once_with(
+            root_certificates=b"ca-bytes",
+            private_key=None,
+            certificate_chain=None,
+        )
+        _, kwargs = mock_exporter_cls.call_args
+        self.assertIs(kwargs["credentials"], mock_grpc.ssl_channel_credentials.return_value)
+        self.assertFalse(kwargs["insecure"])
+
+    def test_otlp_file_development_missing_package_raises(self):
+        config = self._make_periodic_config(
+            PushMetricExporterConfig(otlp_file_development=ExperimentalOtlpFileMetricExporterConfig())
+        )
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "opentelemetry.exporter.otlp.json.file.metric_exporter": None,
+                },
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            create_meter_provider(config)
+        self.assertIn("opentelemetry-exporter-otlp-json-file", str(ctx.exception))
+
+    def test_otlp_file_development_default_stdout(self):
+        mock_exporter_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.FileMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.json.file.metric_exporter": mock_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(otlp_file_development=ExperimentalOtlpFileMetricExporterConfig())
+            )
+            create_meter_provider(config)
+
+        args, kwargs = mock_exporter_cls.call_args
+        self.assertEqual(args, ())
+        self.assertEqual(
+            kwargs["preferred_temporality"],
+            {
+                Counter: AggregationTemporality.CUMULATIVE,
+                UpDownCounter: AggregationTemporality.CUMULATIVE,
+                Histogram: AggregationTemporality.CUMULATIVE,
+                ObservableCounter: AggregationTemporality.CUMULATIVE,
+                ObservableUpDownCounter: AggregationTemporality.CUMULATIVE,
+                ObservableGauge: AggregationTemporality.CUMULATIVE,
+            },
+        )
+        self.assertIsInstance(
+            kwargs["preferred_aggregation"][Histogram],
+            ExplicitBucketHistogramAggregation,
+        )
+
+    def test_otlp_file_development_file_uri(self):
+        mock_exporter_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.FileMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.json.file.metric_exporter": mock_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_file_development=ExperimentalOtlpFileMetricExporterConfig(
+                        output_stream="file:///tmp/metrics.jsonl"
+                    )
+                )
+            )
+            create_meter_provider(config)
+
+        args, kwargs = mock_exporter_cls.call_args
+        self.assertEqual(args, ("/tmp/metrics.jsonl",))
+        self.assertIn("preferred_temporality", kwargs)
+        self.assertIn("preferred_aggregation", kwargs)
+
+    def test_otlp_file_development_unsupported_output_stream_raises(self):
+        mock_exporter_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.FileMetricExporter = mock_exporter_cls
+
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.json.file.metric_exporter": mock_module,
+            },
+        ):
+            config = self._make_periodic_config(
+                PushMetricExporterConfig(
+                    otlp_file_development=ExperimentalOtlpFileMetricExporterConfig(output_stream="http://example")
+                )
+            )
+            with self.assertRaises(ConfigurationError) as ctx:
+                create_meter_provider(config)
+        self.assertIn("output_stream", str(ctx.exception))
+        mock_exporter_cls.assert_not_called()
+
+    def test_otlp_http_max_request_size_passed_through(self):
+        mock_exporter_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.OTLPMetricExporter = mock_exporter_cls
+        with patch.dict(
+            sys.modules,
+            {
+                "opentelemetry.exporter.otlp.proto.http": MagicMock(),
+                "opentelemetry.exporter.otlp.proto.http.metric_exporter": mock_module,
+            },
+        ):
+            create_meter_provider(
+                self._make_periodic_config(
+                    PushMetricExporterConfig(otlp_http=OtlpHttpMetricExporterConfig(max_request_size=1024))
+                )
+            )
+        self.assertEqual(mock_exporter_cls.call_args.kwargs["max_request_size"], 1024)
+
+    def test_otlp_unsupported_size_limits_warn(self):
+        modules = {
+            "grpc": MagicMock(),
+            "opentelemetry.exporter.otlp.proto.grpc.metric_exporter": MagicMock(),
+            "opentelemetry.exporter.otlp.proto.http": MagicMock(),
+            "opentelemetry.exporter.otlp.proto.http.metric_exporter": MagicMock(),
+            "opentelemetry.exporter.otlp.common.http": MagicMock(),
+            "opentelemetry.exporter.otlp.json.http.metric_exporter": MagicMock(),
+        }
+        cases = [
+            (
+                "grpc max_request_size",
+                PushMetricExporterConfig(otlp_grpc=OtlpGrpcMetricExporterConfig(max_request_size=1024)),
+                "max_request_size is not yet supported for otlp_grpc exporter for metrics",
+            ),
+            (
+                "grpc max_response_size",
+                PushMetricExporterConfig(otlp_grpc=OtlpGrpcMetricExporterConfig(max_response_size=1024)),
+                "max_response_size is not yet supported for otlp_grpc exporter for metrics",
+            ),
+            (
+                "http max_response_size",
+                PushMetricExporterConfig(otlp_http=OtlpHttpMetricExporterConfig(max_response_size=1024)),
+                "max_response_size is not yet supported for otlp_http exporter for metrics",
+            ),
+            (
+                "http json max_request_size",
+                PushMetricExporterConfig(
+                    otlp_http=OtlpHttpMetricExporterConfig(max_request_size=1024, encoding=OtlpHttpEncoding.json)
+                ),
+                "max_request_size is not yet supported for otlp_http JSON exporter for metrics",
+            ),
+        ]
+        for name, exporter_config, expected in cases:
+            with (
+                self.subTest(name),
+                patch.dict(sys.modules, modules),
+                self.assertLogs("opentelemetry.configuration._common", level="WARNING") as logs,
+            ):
+                create_meter_provider(self._make_periodic_config(exporter_config))
+                self.assertTrue(any(expected in message for message in logs.output), logs.output)
+
+
+class TestCreatePullMetricReaders(unittest.TestCase):
+    def test_pull_prometheus_creates_reader(self):
+        mock_reader_cls = MagicMock()
+        mock_start_server = MagicMock()
+        mock_module = MagicMock()
+        mock_module.PrometheusMetricReader = mock_reader_cls
+        mock_module.start_http_server = mock_start_server
+
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": mock_module},
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            exporter=PullMetricExporterConfig(
+                                prometheus_development=PrometheusMetricExporterConfig(
+                                    host="0.0.0.0",
+                                    port=9090,
+                                    target_info_enabled_development=False,
+                                )
+                            )
+                        )
+                    )
+                ]
+            )
+            provider = create_meter_provider(config)
+
+        mock_reader_cls.assert_called_once_with(
+            disable_target_info=True,
+            scope_info_enabled=True,
+            resource_attribute_filter=None,
+            cardinality_limits=None,
+        )
+        mock_start_server.assert_called_once_with(port=9090, addr="0.0.0.0")
+        self.assertEqual(len(provider._metric_readers), 1)
+
+    def test_pull_prometheus_defaults(self):
+        mock_reader_cls = MagicMock()
+        mock_start_server = MagicMock()
+        mock_module = MagicMock()
+        mock_module.PrometheusMetricReader = mock_reader_cls
+        mock_module.start_http_server = mock_start_server
+
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": mock_module},
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            exporter=PullMetricExporterConfig(prometheus_development=PrometheusMetricExporterConfig())
+                        )
+                    )
+                ]
+            )
+            provider = create_meter_provider(config)
+
+        mock_reader_cls.assert_called_once_with(
+            disable_target_info=False,
+            scope_info_enabled=True,
+            resource_attribute_filter=None,
+            cardinality_limits=None,
+        )
+        mock_start_server.assert_called_once_with(port=9464, addr="localhost")
+        self.assertEqual(len(provider._metric_readers), 1)
+
+    @staticmethod
+    def _create_prometheus_reader_kwargs(exporter_config):
+        mock_module = MagicMock()
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": mock_module},
+        ):
+            create_meter_provider(
+                MeterProviderConfig(
+                    readers=[
+                        MetricReaderConfig(
+                            pull=PullMetricReaderConfig(
+                                exporter=PullMetricExporterConfig(prometheus_development=exporter_config)
+                            )
+                        )
+                    ]
+                )
+            )
+        mock_module.PrometheusMetricReader.assert_called_once()
+        return mock_module.PrometheusMetricReader.call_args.kwargs
+
+    def test_pull_prometheus_scope_info_enabled(self):
+        for configured, expected in ((None, True), (True, True), (False, False)):
+            with self.subTest(configured=configured):
+                with self.assertNoLogs("opentelemetry.configuration._meter_provider", level="WARNING"):
+                    kwargs = self._create_prometheus_reader_kwargs(
+                        PrometheusMetricExporterConfig(scope_info_enabled=configured)
+                    )
+                self.assertIs(kwargs["scope_info_enabled"], expected)
+
+    def test_pull_prometheus_resource_constant_labels(self):
+        with self.assertNoLogs("opentelemetry.configuration._meter_provider", level="WARNING"):
+            kwargs = self._create_prometheus_reader_kwargs(
+                PrometheusMetricExporterConfig(
+                    resource_constant_labels=IncludeExclude(
+                        included=["service.*"],
+                        excluded=["service.namespace"],
+                    )
+                )
+            )
+        resource_attribute_filter = kwargs["resource_attribute_filter"]
+        for key, expected in (
+            ("service.name", True),
+            ("service.version", True),
+            ("service.namespace", False),
+            ("host.name", False),
+        ):
+            with self.subTest(key=key):
+                self.assertIs(resource_attribute_filter(key), expected)
+
+    def test_pull_prometheus_resource_constant_labels_empty_includes_all(self):
+        kwargs = self._create_prometheus_reader_kwargs(
+            PrometheusMetricExporterConfig(resource_constant_labels=IncludeExclude())
+        )
+        self.assertTrue(kwargs["resource_attribute_filter"]("host.name"))
+
+    def test_pull_prometheus_missing_package_raises(self):
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": None},
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            exporter=PullMetricExporterConfig(prometheus_development=PrometheusMetricExporterConfig())
+                        )
+                    )
+                ]
+            )
+            with self.assertRaises(ConfigurationError):
+                create_meter_provider(config)
+
+    def test_pull_no_exporter_raises(self):
+        config = MeterProviderConfig(
+            readers=[MetricReaderConfig(pull=PullMetricReaderConfig(exporter=PullMetricExporterConfig()))]
+        )
+        with self.assertRaises(ConfigurationError):
+            create_meter_provider(config)
+
+    def test_pull_plugin_loads_via_entry_point(self):
+        mock_reader = MagicMock()
+        mock_class = MagicMock(return_value=mock_reader)
+        mock_entry_points = MagicMock(return_value=[MagicMock(**{"load.return_value": mock_class})])
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            mock_entry_points,
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            # pylint: disable=unexpected-keyword-arg
+                            exporter=PullMetricExporterConfig(my_custom_reader={"port": 8080})
+                        )
+                    )
+                ]
+            )
+            provider = create_meter_provider(config)
+        self.assertEqual(len(provider._metric_readers), 1)
+        mock_class.assert_called_once_with(port=8080)
+        mock_entry_points.assert_called_once_with(
+            group="opentelemetry_pull_metric_exporter",
+            name="my_custom_reader",
+        )
+
+    def test_pull_plugin_cardinality_limits_warns(self):
+        mock_class = MagicMock()
+        mock_entry_points = MagicMock(return_value=[MagicMock(**{"load.return_value": mock_class})])
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            mock_entry_points,
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            # pylint: disable=unexpected-keyword-arg
+                            exporter=PullMetricExporterConfig(my_custom_reader={"port": 8080}),
+                            cardinality_limits=CardinalityLimitsConfig(default=5),
+                        )
+                    )
+                ]
+            )
+            with self.assertLogs(
+                "opentelemetry.configuration._meter_provider",
+                level="WARNING",
+            ) as cm:
+                create_meter_provider(config)
+        self.assertTrue(any("cardinality_limits" in msg for msg in cm.output))
+        mock_class.assert_called_once_with(port=8080)
+
+    def test_pull_plugin_not_found_raises(self):
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[],
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            # pylint: disable=unexpected-keyword-arg
+                            exporter=PullMetricExporterConfig(no_such_reader={})
+                        )
+                    )
+                ]
+            )
+            with self.assertRaises(ConfigurationError):
+                create_meter_provider(config)
+
+    def test_pull_producers_warns(self):
+        mock_module = MagicMock()
+
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": mock_module},
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            exporter=PullMetricExporterConfig(prometheus_development=PrometheusMetricExporterConfig()),
+                            producers=[MagicMock()],
+                        )
+                    )
+                ]
+            )
+            with self.assertLogs(
+                "opentelemetry.configuration._meter_provider",
+                level="WARNING",
+            ) as cm:
+                create_meter_provider(config)
+        self.assertTrue(any("MetricProducer" in msg for msg in cm.output))
+
+    def test_pull_cardinality_limits_passed_to_prometheus_reader(self):
+        mock_module = MagicMock()
+
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": mock_module},
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            exporter=PullMetricExporterConfig(prometheus_development=PrometheusMetricExporterConfig()),
+                            cardinality_limits=CardinalityLimitsConfig(default=5, counter=7),
+                        )
+                    )
+                ]
+            )
+            create_meter_provider(config)
+
+        limits = mock_module.PrometheusMetricReader.call_args.kwargs["cardinality_limits"]
+        self.assertEqual(limits[Counter], 7)
+        self.assertEqual(limits[Histogram], 5)
+
+    def test_pull_without_cardinality_limits(self):
+        mock_module = MagicMock()
+
+        with patch.dict(
+            sys.modules,
+            {"opentelemetry.exporter.prometheus": mock_module},
+        ):
+            config = MeterProviderConfig(
+                readers=[
+                    MetricReaderConfig(
+                        pull=PullMetricReaderConfig(
+                            exporter=PullMetricExporterConfig(prometheus_development=PrometheusMetricExporterConfig()),
+                        )
+                    )
+                ]
+            )
+            create_meter_provider(config)
+
+        self.assertIsNone(mock_module.PrometheusMetricReader.call_args.kwargs["cardinality_limits"])
+
+
+class TestCreateMetricReadersGeneral(unittest.TestCase):
+    @staticmethod
+    def _make_periodic_config(exporter_config):
+        return MeterProviderConfig(
+            readers=[MetricReaderConfig(periodic=PeriodicMetricReaderConfig(exporter=exporter_config))]
+        )
+
+    def test_no_reader_type_raises(self):
+        config = MeterProviderConfig(readers=[MetricReaderConfig()])
+        with self.assertRaises(ConfigurationError):
+            create_meter_provider(config)
+
+    def test_no_exporter_type_raises(self):
+        config = self._make_periodic_config(PushMetricExporterConfig())
+        with self.assertRaises(ConfigurationError):
+            create_meter_provider(config)
+
+    def test_plugin_metric_exporter_loaded_via_entry_point(self):
+        mock_exporter = MagicMock()
+        mock_class = MagicMock(return_value=mock_exporter)
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[MagicMock(**{"load.return_value": mock_class})],
+        ):
+            # pylint: disable=unexpected-keyword-arg
+            config = self._make_periodic_config(PushMetricExporterConfig(my_custom_exporter={}))
+            provider = create_meter_provider(config)
+        self.assertEqual(len(provider._metric_readers), 1)
+
+    def test_unknown_metric_exporter_raises_configuration_error(self):
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[],
+        ):
+            # pylint: disable=unexpected-keyword-arg
+            config = self._make_periodic_config(PushMetricExporterConfig(no_such_exporter={}))
+            with self.assertRaises(ConfigurationError):
+                create_meter_provider(config)
+
+    def test_multiple_readers(self):
+        config = MeterProviderConfig(
+            readers=[
+                MetricReaderConfig(
+                    periodic=PeriodicMetricReaderConfig(
+                        exporter=PushMetricExporterConfig(console=ConsoleMetricExporterConfig())
+                    )
+                ),
+                MetricReaderConfig(
+                    periodic=PeriodicMetricReaderConfig(
+                        exporter=PushMetricExporterConfig(console=ConsoleMetricExporterConfig())
+                    )
+                ),
+            ]
+        )
+        provider = create_meter_provider(config)
+        self.assertEqual(len(provider._metric_readers), 2)
+
+
+class TestTemporalityAndAggregation(unittest.TestCase):
+    @staticmethod
+    def _make_console_config(temporality=None, histogram_agg=None):
+        return MeterProviderConfig(
+            readers=[
+                MetricReaderConfig(
+                    periodic=PeriodicMetricReaderConfig(
+                        exporter=PushMetricExporterConfig(
+                            console=ConsoleMetricExporterConfig(
+                                temporality_preference=temporality,
+                                default_histogram_aggregation=histogram_agg,
+                            )
+                        )
+                    )
+                )
+            ]
+        )
+
+    @staticmethod
+    def _get_exporter(config):
+        provider = create_meter_provider(config)
+        return provider._metric_readers[0]._exporter
+
+    def test_default_temporality_is_cumulative(self):
+        exporter = self._get_exporter(self._make_console_config())
+        for instrument_type in (
+            Counter,
+            UpDownCounter,
+            Histogram,
+            ObservableCounter,
+            ObservableGauge,
+            ObservableUpDownCounter,
+        ):
+            self.assertEqual(
+                exporter._preferred_temporality[instrument_type],
+                AggregationTemporality.CUMULATIVE,
+            )
+
+    def test_cumulative_temporality(self):
+        exporter = self._get_exporter(self._make_console_config(temporality=ExporterTemporalityPreference.cumulative))
+        self.assertEqual(
+            exporter._preferred_temporality[Counter],
+            AggregationTemporality.CUMULATIVE,
+        )
+
+    def test_delta_temporality(self):
+        exporter = self._get_exporter(self._make_console_config(temporality=ExporterTemporalityPreference.delta))
+        self.assertEqual(
+            exporter._preferred_temporality[Counter],
+            AggregationTemporality.DELTA,
+        )
+        self.assertEqual(
+            exporter._preferred_temporality[Histogram],
+            AggregationTemporality.DELTA,
+        )
+        self.assertEqual(
+            exporter._preferred_temporality[UpDownCounter],
+            AggregationTemporality.CUMULATIVE,
+        )
+        self.assertEqual(
+            exporter._preferred_temporality[ObservableCounter],
+            AggregationTemporality.DELTA,
+        )
+
+    def test_low_memory_temporality(self):
+        exporter = self._get_exporter(self._make_console_config(temporality=ExporterTemporalityPreference.low_memory))
+        self.assertEqual(
+            exporter._preferred_temporality[Counter],
+            AggregationTemporality.DELTA,
+        )
+        self.assertEqual(
+            exporter._preferred_temporality[ObservableCounter],
+            AggregationTemporality.CUMULATIVE,
+        )
+
+    def test_default_histogram_aggregation_is_explicit(self):
+        exporter = self._get_exporter(self._make_console_config())
+        self.assertIsInstance(
+            exporter._preferred_aggregation[Histogram],
+            ExplicitBucketHistogramAggregation,
+        )
+
+    def test_explicit_histogram_aggregation(self):
+        exporter = self._get_exporter(
+            self._make_console_config(histogram_agg=ExporterDefaultHistogramAggregation.explicit_bucket_histogram)
+        )
+        self.assertIsInstance(
+            exporter._preferred_aggregation[Histogram],
+            ExplicitBucketHistogramAggregation,
+        )
+
+    def test_base2_exponential_histogram_aggregation(self):
+        exporter = self._get_exporter(
+            self._make_console_config(
+                histogram_agg=ExporterDefaultHistogramAggregation.base2_exponential_bucket_histogram
+            )
+        )
+        self.assertIsInstance(
+            exporter._preferred_aggregation[Histogram],
+            ExponentialBucketHistogramAggregation,
+        )
+
+    def test_temporality_suppresses_env_var(self):
+        with patch.dict(
+            os.environ,
+            {"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "DELTA"},
+        ):
+            exporter = self._get_exporter(self._make_console_config())
+        # Config has no preference → default cumulative, env var ignored
+        self.assertEqual(
+            exporter._preferred_temporality[Counter],
+            AggregationTemporality.CUMULATIVE,
+        )
+
+
+class TestCreateViews(unittest.TestCase):
+    @staticmethod
+    def _make_view_config(selector_kwargs=None, stream_kwargs=None):
+        selector = ViewSelector(**(selector_kwargs or {"instrument_name": "*"}))
+        stream = ViewStream(**(stream_kwargs or {}))
+        return MeterProviderConfig(
+            readers=[],
+            views=[ViewConfig(selector=selector, stream=stream)],
+        )
+
+    @staticmethod
+    def _get_view(config):
+        provider = create_meter_provider(config)
+        return provider._sdk_config.views[0]
+
+    def test_view_created(self):
+        config = self._make_view_config()
+        provider = create_meter_provider(config)
+        self.assertEqual(len(provider._sdk_config.views), 1)
+        self.assertIsInstance(provider._sdk_config.views[0], View)
+
+    def test_selector_instrument_name(self):
+        view = self._get_view(self._make_view_config({"instrument_name": "my.metric"}))
+        self.assertEqual(view._instrument_name, "my.metric")
+
+    def test_selector_instrument_type(self):
+        view = self._get_view(self._make_view_config({"instrument_type": InstrumentType.counter}))
+        self.assertIs(view._instrument_type, Counter)
+
+    def test_selector_meter_name(self):
+        view = self._get_view(self._make_view_config({"meter_name": "my.meter"}))
+        self.assertEqual(view._meter_name, "my.meter")
+
+    def test_stream_name(self):
+        view = self._get_view(
+            self._make_view_config(
+                {"instrument_name": "my.metric"},
+                stream_kwargs={"name": "renamed"},
+            )
+        )
+        self.assertEqual(view._name, "renamed")
+
+    def test_stream_aggregation_cardinality_limit(self):
+        view = self._get_view(self._make_view_config(stream_kwargs={"aggregation_cardinality_limit": 42}))
+        self.assertEqual(view._aggregation_cardinality_limit, 42)
+
+    def test_stream_aggregation_cardinality_limit_default(self):
+        view = self._get_view(self._make_view_config())
+        self.assertIsNone(view._aggregation_cardinality_limit)
+
+    def test_stream_description(self):
+        view = self._get_view(self._make_view_config(stream_kwargs={"description": "a description"}))
+        self.assertEqual(view._description, "a description")
+
+    def test_stream_attribute_keys_included(self):
+        view = self._get_view(
+            self._make_view_config(stream_kwargs={"attribute_keys": IncludeExclude(included=["key1", "key2"])})
+        )
+        self.assertEqual(view._attribute_keys, {"key1", "key2"})
+
+    def test_stream_attribute_keys_excluded_logs_warning(self):
+        config = self._make_view_config(stream_kwargs={"attribute_keys": IncludeExclude(excluded=["key1"])})
+        with self.assertLogs("opentelemetry.configuration._meter_provider", level="WARNING") as log:
+            create_meter_provider(config)
+        self.assertTrue(any("excluded" in msg for msg in log.output))
+
+    def test_stream_aggregation_drop(self):
+        view = self._get_view(self._make_view_config(stream_kwargs={"aggregation": AggregationConfig(drop={})}))
+        self.assertIsInstance(view._aggregation, DropAggregation)
+
+    def test_stream_aggregation_explicit_bucket_histogram_with_boundaries(
+        self,
+    ):
+        view = self._get_view(
+            self._make_view_config(
+                stream_kwargs={
+                    "aggregation": AggregationConfig(
+                        explicit_bucket_histogram=ExplicitBucketConfig(boundaries=[1.0, 5.0, 10.0])
+                    )
+                }
+            )
+        )
+        self.assertIsInstance(view._aggregation, ExplicitBucketHistogramAggregation)
+        self.assertEqual(list(view._aggregation._boundaries), [1.0, 5.0, 10.0])
+
+    def test_stream_aggregation_base2_exponential_with_params(self):
+        view = self._get_view(
+            self._make_view_config(
+                stream_kwargs={
+                    "aggregation": AggregationConfig(
+                        base2_exponential_bucket_histogram=Base2Config(max_size=64, max_scale=5)
+                    )
+                }
+            )
+        )
+        self.assertIsInstance(view._aggregation, ExponentialBucketHistogramAggregation)
+
+    def test_stream_aggregation_base2_exponential_record_min_max(self):
+        for record_min_max, expected in [
+            (True, True),
+            (False, False),
+            (None, True),
+        ]:
+            with self.subTest(record_min_max=record_min_max):
+                view = self._get_view(
+                    self._make_view_config(
+                        stream_kwargs={
+                            "aggregation": AggregationConfig(
+                                base2_exponential_bucket_histogram=Base2Config(record_min_max=record_min_max)
+                            )
+                        }
+                    )
+                )
+                self.assertIsInstance(view._aggregation, ExponentialBucketHistogramAggregation)
+                self.assertEqual(view._aggregation._record_min_max, expected)
+
+    def test_stream_aggregation_last_value(self):
+        view = self._get_view(self._make_view_config(stream_kwargs={"aggregation": AggregationConfig(last_value={})}))
+        self.assertIsInstance(view._aggregation, LastValueAggregation)
+
+    def test_stream_aggregation_sum(self):
+        view = self._get_view(self._make_view_config(stream_kwargs={"aggregation": AggregationConfig(sum={})}))
+        self.assertIsInstance(view._aggregation, SumAggregation)
+
+    def test_stream_aggregation_default(self):
+        view = self._get_view(self._make_view_config(stream_kwargs={"aggregation": AggregationConfig(default={})}))
+        self.assertIsInstance(view._aggregation, DefaultAggregation)
+
+
+class TestMeterConfigurator(unittest.TestCase):
+    @staticmethod
+    def _enabled(provider, name):
+        return provider._apply_meter_configurator(InstrumentationScope(name)).is_enabled
+
+    def test_no_configurator_leaves_meters_enabled(self):
+        provider = create_meter_provider(MeterProviderConfig(readers=[]))
+        self.assertTrue(self._enabled(provider, "any.scope"))
+
+    def test_matching_glob_disables_meter(self):
+        config = MeterProviderConfig(
+            readers=[],
+            meter_configurator_development=MeterConfiguratorConfig(
+                default_config=MeterConfigConfig(enabled=True),
+                meters=[
+                    MeterMatcherAndConfig(
+                        name="noisy.*",
+                        config=MeterConfigConfig(enabled=False),
+                    )
+                ],
+            ),
+        )
+        provider = create_meter_provider(config)
+        self.assertFalse(self._enabled(provider, "noisy.http"))
+        self.assertTrue(self._enabled(provider, "app.service"))
+
+    def test_scope_patterns_treat_brackets_literally(self):
+        for pattern in ("noisy.[bc]", "noisy.[bc]*"):
+            with self.subTest(pattern=pattern):
+                config = MeterProviderConfig(
+                    readers=[],
+                    meter_configurator_development=MeterConfiguratorConfig(
+                        default_config=MeterConfigConfig(enabled=True),
+                        meters=[
+                            MeterMatcherAndConfig(
+                                name=pattern,
+                                config=MeterConfigConfig(enabled=False),
+                            )
+                        ],
+                    ),
+                )
+                provider = create_meter_provider(config)
+                self.assertFalse(self._enabled(provider, "noisy.[bc]"))
+                self.assertTrue(self._enabled(provider, "noisy.b"))
+                self.assertTrue(self._enabled(provider, "noisy.btail"))
+                self.assertTrue(self._enabled(provider, "Noisy.[bc]"))
+                self.assertEqual(self._enabled(provider, "noisy.[bc]tail"), pattern == "noisy.[bc]")
+
+    def test_default_config_applies_to_unmatched_scopes(self):
+        config = MeterProviderConfig(
+            readers=[],
+            meter_configurator_development=MeterConfiguratorConfig(
+                default_config=MeterConfigConfig(enabled=False),
+                meters=[
+                    MeterMatcherAndConfig(
+                        name="keep.*",
+                        config=MeterConfigConfig(enabled=True),
+                    )
+                ],
+            ),
+        )
+        provider = create_meter_provider(config)
+        self.assertTrue(self._enabled(provider, "keep.me"))
+        self.assertFalse(self._enabled(provider, "other"))
+
+    def test_first_matching_rule_wins(self):
+        config = MeterProviderConfig(
+            readers=[],
+            meter_configurator_development=MeterConfiguratorConfig(
+                meters=[
+                    MeterMatcherAndConfig(
+                        name="a.*",
+                        config=MeterConfigConfig(enabled=False),
+                    ),
+                    MeterMatcherAndConfig(
+                        name="a.b",
+                        config=MeterConfigConfig(enabled=True),
+                    ),
+                ],
+            ),
+        )
+        provider = create_meter_provider(config)
+        self.assertFalse(self._enabled(provider, "a.b"))
+
+    def test_absent_enabled_defaults_to_enabled(self):
+        config = MeterProviderConfig(
+            readers=[],
+            meter_configurator_development=MeterConfiguratorConfig(
+                default_config=MeterConfigConfig(),
+            ),
+        )
+        provider = create_meter_provider(config)
+        self.assertTrue(self._enabled(provider, "any.scope"))

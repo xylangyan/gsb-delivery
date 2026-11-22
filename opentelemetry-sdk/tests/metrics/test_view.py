@@ -1,0 +1,238 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# pylint: disable=protected-access
+
+from unittest import TestCase
+from unittest.mock import Mock
+
+from opentelemetry.sdk.metrics import Counter, MeterProvider
+from opentelemetry.sdk.metrics.view import View
+
+
+class TestView(TestCase):
+    def test_required_instrument_criteria(self):
+        with self.assertRaises(Exception):
+            View()
+
+    def test_aggregation_cardinality_limit(self):
+        self.assertIsNone(View(instrument_name="a")._aggregation_cardinality_limit)
+        self.assertEqual(View(instrument_name="a", aggregation_cardinality_limit=5)._aggregation_cardinality_limit, 5)
+
+    def test_invalid_aggregation_cardinality_limit(self):
+        for limit in (0, -1, 1.5, "5", True):
+            with self.subTest(limit=limit):
+                with self.assertRaises(ValueError):
+                    View(instrument_name="a", aggregation_cardinality_limit=limit)
+
+    def test_instrument_type(self):
+        self.assertTrue(View(instrument_type=Mock)._match(Mock()))
+
+    def test_instrument_name(self):
+        mock_instrument = Mock()
+        mock_instrument.configure_mock(name="instrument_name")
+
+        self.assertTrue(View(instrument_name="instrument_name")._match(mock_instrument))
+
+    def test_instrument_name_case_insensitive(self):
+        # The SDK stores instrument names lower-cased, so a view pattern that
+        # reuses the instrument's original name must still match regardless of
+        # case (and regardless of the host platform).
+        mock_instrument = Mock()
+        mock_instrument.configure_mock(name="instrument_name")
+
+        self.assertTrue(View(instrument_name="Instrument_Name")._match(mock_instrument))
+        self.assertTrue(View(instrument_name="INSTRUMENT_*")._match(mock_instrument))
+        self.assertFalse(View(instrument_name="other_name")._match(mock_instrument))
+
+    def test_instrument_unit(self):
+        mock_instrument = Mock()
+        mock_instrument.configure_mock(unit="instrument_unit")
+
+        self.assertTrue(View(instrument_unit="instrument_unit")._match(mock_instrument))
+
+    def test_instrument_unit_ucum_annotated_units_match_exactly(self):
+        # UCUM annotated units use square brackets; selection must compare
+        # them literally rather than as fnmatch character classes.
+        for unit in ("[degF]", "[degC]", "[in_i]", "[ft_i]"):
+            with self.subTest(unit=unit):
+                mock_instrument = Mock()
+                mock_instrument.configure_mock(unit=unit)
+
+                self.assertTrue(View(instrument_unit=unit)._match(mock_instrument))
+
+    def test_instrument_unit_wildcard_characters_are_literal(self):
+        # The unit selection criterion is exact-match only per the Metrics
+        # SDK specification; '*', '?' and '[' must never act as wildcards.
+        cases = (
+            ("[degF]", "[degC]", False),
+            ("[degF]", "[*]", False),
+            ("[degF]", "[d?gF]", False),
+            ("request_count", "request_*", False),
+            ("request_count", "request_count", True),
+        )
+        for instrument_unit, pattern, expected in cases:
+            with self.subTest(instrument_unit=instrument_unit, pattern=pattern):
+                mock_instrument = Mock()
+                mock_instrument.configure_mock(unit=instrument_unit)
+
+                self.assertEqual(View(instrument_unit=pattern)._match(mock_instrument), expected)
+
+    def test_instrument_unit_case_sensitive(self):
+        # Units are case-sensitive and matching must not depend on the host
+        # platform's filename case sensitivity.
+        mock_instrument = Mock()
+        mock_instrument.configure_mock(unit="By")
+
+        self.assertTrue(View(instrument_unit="By")._match(mock_instrument))
+        self.assertFalse(View(instrument_unit="by")._match(mock_instrument))
+
+    def test_meter_name(self):
+        self.assertTrue(View(meter_name="meter_name")._match(Mock(**{"instrumentation_scope.name": "meter_name"})))
+
+    def test_meter_version(self):
+        self.assertTrue(
+            View(meter_version="meter_version")._match(Mock(**{"instrumentation_scope.version": "meter_version"}))
+        )
+
+    def test_meter_schema_url(self):
+        self.assertTrue(
+            View(meter_schema_url="meter_schema_url")._match(
+                Mock(**{"instrumentation_scope.schema_url": "meter_schema_url"})
+            )
+        )
+        self.assertFalse(
+            View(meter_schema_url="meter_schema_url")._match(
+                Mock(**{"instrumentation_scope.schema_url": "meter_schema_urlabc"})
+            )
+        )
+        self.assertTrue(
+            View(meter_schema_url="meter_schema_url")._match(
+                Mock(**{"instrumentation_scope.schema_url": "meter_schema_url"})
+            )
+        )
+
+    def test_additive_criteria(self):
+        view = View(
+            meter_name="meter_name",
+            meter_version="meter_version",
+            meter_schema_url="meter_schema_url",
+        )
+
+        self.assertTrue(
+            view._match(
+                Mock(
+                    **{
+                        "instrumentation_scope.name": "meter_name",
+                        "instrumentation_scope.version": "meter_version",
+                        "instrumentation_scope.schema_url": "meter_schema_url",
+                    }
+                )
+            )
+        )
+        self.assertFalse(
+            view._match(
+                Mock(
+                    **{
+                        "instrumentation_scope.name": "meter_name",
+                        "instrumentation_scope.version": "meter_version",
+                        "instrumentation_scope.schema_url": "meter_schema_vrl",
+                    }
+                )
+            )
+        )
+
+    def test_view_name(self):
+        for wildcard_name in (
+            "instrument_name*",
+            "*instrument_name",
+            "instrument?name",
+            "instrument_[0-9]",
+            "instrument_[!a-z]",
+            "instrument_[abc]",
+            "instrument_[",
+            "[ab]",
+        ):
+            with self.subTest(wildcard_name=wildcard_name):
+                with self.assertRaisesRegex(
+                    Exception,
+                    r"View name declared with wildcard characters in instrument_name",
+                ):
+                    View(name="name", instrument_name=wildcard_name)
+
+        view = View(name="name", instrument_name="instrument_name_1")
+        self.assertEqual(view._name, "name")
+        self.assertEqual(view._instrument_name, "instrument_name_1")
+
+    def test_view_name_without_instrument_name(self):
+        cases = [
+            ("custom_name", {"instrument_type": Mock}),
+            ("custom_name", {"meter_name": "some_meter"}),
+            ("custom_name", {"instrument_unit": "ms"}),
+            ("custom_name", {"meter_version": "1.0.0"}),
+            (
+                "custom_name",
+                {"meter_schema_url": "https://opentelemetry.io/schemas/1.4.0"},
+            ),
+            ("name", {"instrument_type": Counter}),
+            (
+                "custom_name",
+                {
+                    "instrument_type": Counter,
+                    "meter_name": "some_meter",
+                    "instrument_unit": "ms",
+                },
+            ),
+        ]
+        for name, kwargs in cases:
+            with self.subTest(name=name, **kwargs):
+                with self.assertRaisesRegex(
+                    Exception,
+                    rf"View {name} specifies a name but no instrument_name, which may select multiple instruments",
+                ):
+                    View(name=name, **kwargs)
+
+        with self.subTest(case="meter_provider"):
+            with self.assertRaisesRegex(
+                Exception,
+                r"View name specifies a name but no instrument_name, which may select multiple instruments",
+            ):
+                MeterProvider(views=[View(name="name", instrument_type=Counter)])
+
+    def test_unnamed_view_without_instrument_name(self):
+        view = View(instrument_type=Counter)
+        self.assertIsNone(view._name)
+        self.assertIs(view._instrument_type, Counter)
+        self.assertIsNone(view._instrument_name)
+
+        meter_provider = MeterProvider(views=[view])
+        self.assertIsNotNone(meter_provider)
+
+    def test_view_name_with_concrete_instrument_name(self):
+        mock_instrument = Mock()
+        mock_instrument.configure_mock(name="my_counter")
+
+        view = View(name="custom_name", instrument_name="my_counter")
+        self.assertEqual(view._name, "custom_name")
+        self.assertEqual(view._instrument_name, "my_counter")
+        self.assertTrue(view._match(mock_instrument))
+
+        other_instrument = Mock()
+        other_instrument.configure_mock(name="other_counter")
+        self.assertFalse(view._match(other_instrument))
+
+        view_with_type = View(
+            name="custom_name",
+            instrument_name="my_counter",
+            instrument_type=Mock,
+        )
+        self.assertTrue(view_with_type._match(mock_instrument))
+
+        view_with_counter = View(
+            name="custom_name",
+            instrument_name="my_counter",
+            instrument_type=Counter,
+        )
+        self.assertEqual(view_with_counter._name, "custom_name")
+        self.assertEqual(view_with_counter._instrument_name, "my_counter")
+        self.assertIs(view_with_counter._instrument_type, Counter)

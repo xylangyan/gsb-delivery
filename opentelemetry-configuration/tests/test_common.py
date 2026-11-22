@@ -1,0 +1,791 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+import inspect
+import math
+import os
+import sys
+import tempfile
+import unittest
+from dataclasses import dataclass, field, fields
+from types import SimpleNamespace
+from typing import Any, get_type_hints
+from unittest.mock import MagicMock, patch
+
+from opentelemetry.configuration._common import (
+    _additional_properties,
+    _grpc_credentials_from_tls,
+    _grpc_insecure_from_tls,
+    _include_exclude_predicate,
+    _map_compression,
+    _matches_glob,
+    _parse_headers,
+    _parse_otlp_file_output_stream,
+    _read_tls_file,
+    _resolve_component,
+    _resolve_export_timeout,
+    _resolve_otlp_grpc_endpoint,
+    _resolve_otlp_http_endpoint,
+    _validate_http_tls,
+    _validate_mtls_pair,
+    _warn_unsupported_otlp_size_limits,
+    load_entry_point,
+)
+from opentelemetry.configuration._exceptions import ConfigurationError
+from opentelemetry.configuration.models import (
+    ExperimentalResourceDetector,
+    GrpcTls,
+    HttpTls,
+    IncludeExclude,
+    LogRecordExporter,
+    NameStringValuePair,
+    OpenTelemetryConfiguration,
+    PushMetricExporter,
+    Sampler,
+    SpanExporter,
+    TextMapPropagator,
+)
+
+
+class TestParseHeaders(unittest.TestCase):
+    def test_both_none_returns_none(self):
+        self.assertIsNone(_parse_headers(None, None))
+
+    def test_empty_headers_list_returns_empty_dict(self):
+        self.assertEqual(_parse_headers(None, ""), {})
+
+    def test_headers_list_single_pair(self):
+        self.assertEqual(
+            _parse_headers(None, "x-api-key=secret"),
+            {"x-api-key": "secret"},
+        )
+
+    def test_headers_list_multiple_pairs(self):
+        self.assertEqual(
+            _parse_headers(None, "x-api-key=secret,env=prod"),
+            {"x-api-key": "secret", "env": "prod"},
+        )
+
+    def test_headers_list_strips_whitespace(self):
+        self.assertEqual(
+            _parse_headers(None, " x-api-key = secret , env = prod "),
+            {"x-api-key": "secret", "env": "prod"},
+        )
+
+    def test_headers_list_value_with_equals(self):
+        # value contains '=' — only split on the first one
+        self.assertEqual(
+            _parse_headers(None, "auth=Bearer tok=en"),
+            {"auth": "Bearer tok=en"},
+        )
+
+    def test_headers_list_invalid_pair_ignored(self):
+        # malformed entry (no '=') should be skipped with a warning
+        result = _parse_headers(None, "bad,x-key=val")
+        self.assertEqual(result, {"x-key": "val"})
+
+    def test_struct_headers_only(self):
+        headers = [
+            SimpleNamespace(name="x-api-key", value="secret"),
+            SimpleNamespace(name="env", value="prod"),
+        ]
+        self.assertEqual(
+            _parse_headers(headers, None),
+            {"x-api-key": "secret", "env": "prod"},
+        )
+
+    def test_struct_header_null_value_is_ignored(self):
+        for null_pair in (
+            NameStringValuePair(name="auth", value=None),
+            {"name": "auth", "value": None},
+            {"name": "auth"},
+        ):
+            with self.subTest(null_pair=null_pair):
+                self.assertEqual(_parse_headers([null_pair], None), {})
+                self.assertEqual(
+                    _parse_headers([null_pair], "auth=keep"),
+                    {"auth": "keep"},
+                )
+
+    def test_struct_header_empty_string_value_is_kept(self):
+        for empty_pair in (
+            NameStringValuePair(name="auth", value=""),
+            {"name": "auth", "value": ""},
+        ):
+            with self.subTest(empty_pair=empty_pair):
+                self.assertEqual(_parse_headers([empty_pair], None), {"auth": ""})
+                self.assertEqual(
+                    _parse_headers([empty_pair], "auth=keep"),
+                    {"auth": ""},
+                )
+
+    def test_struct_headers_override_headers_list(self):
+        # struct takes priority over headers_list for same key
+        headers = [SimpleNamespace(name="x-api-key", value="from-struct")]
+        self.assertEqual(
+            _parse_headers(headers, "x-api-key=from-list,env=prod"),
+            {"x-api-key": "from-struct", "env": "prod"},
+        )
+
+    def test_both_empty_struct_and_none_list_returns_empty_dict(self):
+        self.assertEqual(_parse_headers([], None), {})
+
+
+class TestResolveExportTimeout(unittest.TestCase):
+    def test_conversion(self):
+        for timeout, expected in ((None, 10.0), (0, math.inf), (5000, 5.0), (1, 0.001)):
+            with self.subTest(timeout=timeout):
+                self.assertEqual(_resolve_export_timeout(timeout), expected)
+
+
+class TestResolveOtlpEndpoint(unittest.TestCase):
+    def test_http_absent_endpoint_uses_signal_default(self):
+        for signal in ("traces", "metrics", "logs"):
+            with self.subTest(signal=signal):
+                self.assertEqual(
+                    _resolve_otlp_http_endpoint(None, signal),
+                    f"http://localhost:4318/v1/{signal}",
+                )
+
+    def test_http_explicit_endpoint_is_kept(self):
+        self.assertEqual(
+            _resolve_otlp_http_endpoint("http://collector:4318/custom", "traces"),
+            "http://collector:4318/custom",
+        )
+
+    def test_grpc_endpoint(self):
+        for endpoint, expected in (
+            (None, "http://localhost:4317"),
+            ("http://collector:4317", "http://collector:4317"),
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(_resolve_otlp_grpc_endpoint(endpoint), expected)
+
+
+class TestWarnUnsupportedOtlpSizeLimits(unittest.TestCase):
+    def test_unset_or_supported_limits_do_not_warn(self):
+        cases = [(None, False), (None, True), (0, True), (1024, True)]
+        for max_request_size, supported in cases:
+            with (
+                self.subTest(max_request_size=max_request_size, supported=supported),
+                self.assertNoLogs("opentelemetry.configuration._common", level="WARNING"),
+            ):
+                _warn_unsupported_otlp_size_limits(
+                    "otlp_http", "metrics", max_request_size, None, max_request_size_supported=supported
+                )
+
+    def test_unsupported_limits_warn(self):
+        cases = [
+            (1024, None, False, ["max_request_size"]),
+            (0, None, False, ["max_request_size"]),
+            (None, 1024, False, ["max_response_size"]),
+            (None, 0, False, ["max_response_size"]),
+            (1024, 1024, False, ["max_request_size", "max_response_size"]),
+            (1024, 1024, True, ["max_response_size"]),
+        ]
+        for max_request_size, max_response_size, supported, expected_limits in cases:
+            with (
+                self.subTest(
+                    max_request_size=max_request_size, max_response_size=max_response_size, supported=supported
+                ),
+                self.assertLogs("opentelemetry.configuration._common", level="WARNING") as logs,
+            ):
+                _warn_unsupported_otlp_size_limits(
+                    "otlp_http", "metrics", max_request_size, max_response_size, max_request_size_supported=supported
+                )
+            self.assertEqual(
+                [record.getMessage() for record in logs.records],
+                [
+                    f"{limit} is not yet supported for otlp_http exporter for metrics and will be ignored."
+                    for limit in expected_limits
+                ],
+            )
+
+
+class TestLoadEntryPoint(unittest.TestCase):
+    def test_returns_loaded_class(self):
+        mock_class = MagicMock()
+        mock_ep = MagicMock()
+        mock_ep.load.return_value = mock_class
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[mock_ep],
+        ):
+            result = load_entry_point("some_group", "some_name")
+        self.assertIs(result, mock_class)
+
+    def test_raises_when_not_found(self):
+        with (
+            patch(
+                "opentelemetry.configuration._common.entry_points",
+                return_value=[],
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            load_entry_point("some_group", "missing")
+        self.assertIn("missing", str(ctx.exception))
+        self.assertIn("some_group", str(ctx.exception))
+
+    def test_wraps_load_exception_in_configuration_error(self):
+        mock_ep = MagicMock()
+        mock_ep.load.side_effect = ImportError("bad import")
+        with (
+            patch(
+                "opentelemetry.configuration._common.entry_points",
+                return_value=[mock_ep],
+            ),
+            self.assertRaises(ConfigurationError) as ctx,
+        ):
+            load_entry_point("some_group", "some_name")
+        self.assertIn("bad import", str(ctx.exception))
+
+    def test_instantiation_error_not_wrapped(self):
+        """load_entry_point returns the class; instantiation is the caller's
+        responsibility. Errors from calling the returned class are NOT wrapped
+        in ConfigurationError — they propagate as-is."""
+        mock_class = MagicMock(side_effect=TypeError("bad init"))
+        mock_ep = MagicMock()
+        mock_ep.load.return_value = mock_class
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[mock_ep],
+        ):
+            cls = load_entry_point("some_group", "some_name")
+            # load_entry_point itself succeeds
+            self.assertIs(cls, mock_class)
+            # Calling the returned class raises the original error, not
+            # ConfigurationError
+            with self.assertRaises(TypeError, msg="bad init"):
+                cls()
+
+
+class _CompressionWithDeflate:
+    NoCompression = "none"
+    Gzip = "gzip"
+    Deflate = "deflate"
+
+
+class _CompressionWithoutDeflate:
+    NoCompression = "none"
+    Gzip = "gzip"
+
+
+class _UppercaseCompressionWithDeflate:
+    NONE = "none"
+    GZIP = "gzip"
+    DEFLATE = "deflate"
+
+
+class TestMapCompression(unittest.TestCase):
+    def test_unset_and_none_map_to_no_compression(self):
+        for value in (None, "none", "NONE"):
+            for compression_enum in (_CompressionWithDeflate, _UppercaseCompressionWithDeflate):
+                with self.subTest(value=value, compression_enum=compression_enum.__name__):
+                    self.assertEqual(_map_compression(value, compression_enum), "none")
+
+    def test_gzip_maps_to_gzip(self):
+        self.assertEqual(_map_compression("gzip", _CompressionWithDeflate), "gzip")
+
+    def test_uppercase_gzip_maps_to_gzip(self):
+        self.assertEqual(_map_compression("gzip", _UppercaseCompressionWithDeflate), "gzip")
+
+    def test_deflate_maps_when_enabled(self):
+        self.assertEqual(
+            _map_compression("deflate", _CompressionWithDeflate, allow_deflate=True),
+            "deflate",
+        )
+
+    def test_uppercase_deflate_maps_when_enabled(self):
+        self.assertEqual(
+            _map_compression("deflate", _UppercaseCompressionWithDeflate, allow_deflate=True),
+            "deflate",
+        )
+
+    def test_deflate_raises_by_default(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _map_compression("deflate", _CompressionWithDeflate)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported compression value 'deflate'. Supported values: 'gzip', 'none'.",
+        )
+
+    def test_deflate_raises_when_http_enum_lacks_support(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _map_compression("deflate", _CompressionWithoutDeflate, allow_deflate=True)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported compression value 'deflate'. Supported values: 'gzip', 'none'.",
+        )
+
+    def test_http_error_message_includes_deflate(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _map_compression("brotli", _CompressionWithDeflate, allow_deflate=True)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported compression value 'brotli'. Supported values: 'gzip', 'deflate', 'none'.",
+        )
+
+
+class TestParseOtlpFileOutputStream(unittest.TestCase):
+    def test_none_returns_none(self):
+        self.assertIsNone(_parse_otlp_file_output_stream(None))
+
+    def test_stdout_returns_none(self):
+        self.assertIsNone(_parse_otlp_file_output_stream("stdout"))
+
+    def test_file_uri_returns_path(self):
+        self.assertEqual(
+            _parse_otlp_file_output_stream("file:///tmp/traces.jsonl"),
+            "/tmp/traces.jsonl",
+        )
+
+    def test_file_uri_localhost_host_returns_path(self):
+        self.assertEqual(
+            _parse_otlp_file_output_stream("file://localhost/tmp/traces.jsonl"),
+            "/tmp/traces.jsonl",
+        )
+
+    def test_file_uri_with_other_host_raises(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _parse_otlp_file_output_stream("file://otherhost/tmp/traces.jsonl")
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported output_stream 'file://otherhost/tmp/traces.jsonl' "
+            "for otlp_file_development exporter. Supported values: stdout, "
+            "file://<path>.",
+        )
+
+    def test_file_uri_empty_path_raises(self):
+        with self.assertRaises(ConfigurationError):
+            _parse_otlp_file_output_stream("file://")
+
+    def test_file_uri_with_query_raises(self):
+        with self.assertRaises(ConfigurationError):
+            _parse_otlp_file_output_stream("file:///tmp/traces.jsonl?foo=bar")
+
+    def test_file_uri_with_fragment_raises(self):
+        with self.assertRaises(ConfigurationError):
+            _parse_otlp_file_output_stream("file:///tmp/traces.jsonl#frag")
+
+    def test_unsupported_scheme_raises(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _parse_otlp_file_output_stream("http://example")
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported output_stream 'http://example' for "
+            "otlp_file_development exporter. Supported values: stdout, "
+            "file://<path>.",
+        )
+
+    def test_malformed_uri_raises_configuration_error(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _parse_otlp_file_output_stream("file://[::1")
+
+        self.assertIn(
+            "Failed to parse output_stream 'file://[::1' for otlp_file_development exporter",
+            str(ctx.exception),
+        )
+
+    def test_relative_path_raises(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _parse_otlp_file_output_stream("file:traces.jsonl")
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported output_stream 'file:traces.jsonl' for otlp_file_development exporter. Path must be absolute.",
+        )
+
+    def test_trailing_slash_path_raises(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _parse_otlp_file_output_stream("file:///tmp/output/")
+
+        self.assertEqual(
+            str(ctx.exception),
+            "Unsupported output_stream 'file:///tmp/output/' for "
+            "otlp_file_development exporter. Path must be a file, "
+            "not a directory.",
+        )
+
+
+class TestAdditionalPropertiesSupport(unittest.TestCase):
+    def setUp(self):
+        @_additional_properties
+        @dataclass
+        class _SampleConfig:
+            known_field: dict | None = None
+            another_field: str | None = None
+            additional_properties: dict[str, dict[str, Any] | None] = field(default_factory=dict, init=False)
+
+        self.cls = _SampleConfig
+
+    def test_known_fields_work_normally(self):
+        obj = self.cls(known_field={}, another_field="val")
+        self.assertEqual(obj.known_field, {})
+        self.assertEqual(obj.another_field, "val")
+        self.assertEqual(obj.additional_properties, {})
+
+    def test_unknown_kwargs_captured_in_additional_properties(self):
+        # pylint: disable=unexpected-keyword-arg
+        obj = self.cls(my_plugin={"key": "val"})
+        self.assertIsNone(obj.known_field)
+        self.assertEqual(obj.additional_properties, {"my_plugin": {"key": "val"}})
+
+    def test_mixed_known_and_unknown_kwargs(self):
+        # pylint: disable=unexpected-keyword-arg
+        obj = self.cls(known_field={}, my_plugin={})
+        self.assertEqual(obj.known_field, {})
+        self.assertEqual(obj.additional_properties, {"my_plugin": {}})
+
+    def test_no_args_creates_empty_additional_properties(self):
+        obj = self.cls()
+        self.assertIsNone(obj.known_field)
+        self.assertEqual(obj.additional_properties, {})
+
+    def test_signature_preserves_known_fields_and_adds_kwargs(self):
+        sig = inspect.signature(self.cls)
+        param_names = list(sig.parameters.keys())
+        self.assertIn("known_field", param_names)
+        self.assertIn("another_field", param_names)
+        # **kwargs signals that extras are accepted
+        kwargs_param = sig.parameters.get("kwargs")
+        self.assertIsNotNone(kwargs_param)
+        self.assertEqual(kwargs_param.kind, inspect.Parameter.VAR_KEYWORD)
+
+
+class TestGeneratedModelsHaveAdditionalProperties(unittest.TestCase):
+    """Guards against regressions in the custom datamodel-codegen template.
+
+    The codegen/dataclass.jinja2 template conditionally applies the
+    @_additional_properties decorator based on the
+    additionalPropertiesType template variable. If datamodel-codegen
+    changes how it passes this variable, these tests will fail.
+    """
+
+    def _assert_supports_additional_properties(self, model_cls):
+        # pylint: disable=unexpected-keyword-arg
+        obj = model_cls(_test_plugin_key={})
+        other = model_cls()
+        self.assertTrue(
+            hasattr(obj, "additional_properties"),
+            f"{model_cls.__name__} missing additional_properties attribute",
+        )
+        self.assertIn("_test_plugin_key", obj.additional_properties)
+        self.assertEqual(other.additional_properties, {})
+        self.assertIsNot(obj.additional_properties, other.additional_properties)
+
+        additional_properties_field = next(
+            field for field in fields(model_cls) if field.name == "additional_properties"
+        )
+        self.assertFalse(additional_properties_field.init)
+        self.assertEqual(
+            get_type_hints(model_cls)["additional_properties"],
+            dict[str, dict[str, Any] | None],
+        )
+
+    def test_root_configuration_allows_unrestricted_extras(self):
+        # pylint: disable=unexpected-keyword-arg
+        extras = {"vendor_label": "prod", "vendor_flags": [True], "vendor_count": 3, "vendor_option": None}
+        obj = OpenTelemetryConfiguration(file_format="1.0", **extras)
+        self.assertEqual(obj.additional_properties, extras)
+        self.assertEqual(
+            get_type_hints(OpenTelemetryConfiguration)["additional_properties"],
+            dict[str, Any],
+        )
+
+    def test_sampler(self):
+        self._assert_supports_additional_properties(Sampler)
+
+    def test_span_exporter(self):
+        self._assert_supports_additional_properties(SpanExporter)
+
+    def test_text_map_propagator(self):
+        self._assert_supports_additional_properties(TextMapPropagator)
+
+    def test_resource_detector(self):
+        self._assert_supports_additional_properties(ExperimentalResourceDetector)
+
+    def test_log_record_exporter(self):
+        self._assert_supports_additional_properties(LogRecordExporter)
+
+    def test_push_metric_exporter(self):
+        self._assert_supports_additional_properties(PushMetricExporter)
+
+
+class TestResolveComponent(unittest.TestCase):
+    def setUp(self):
+        @_additional_properties
+        @dataclass
+        class _Config:
+            builtin_a: dict | None = None
+            builtin_b: str | None = None
+            additional_properties: dict[str, dict[str, Any] | None] = field(default_factory=dict, init=False)
+
+        self.cls = _Config
+        self.registry = {
+            "builtin_a": lambda v: ("resolved_a", v),
+            "builtin_b": lambda v: ("resolved_b", v),
+        }
+
+    def test_resolves_builtin_from_registry(self):
+        config = self.cls(builtin_a={"key": "val"})
+        result = _resolve_component(config, self.registry, "test_group", "test component")
+        self.assertEqual(result, ("resolved_a", {"key": "val"}))
+
+    def test_resolves_plugin_via_entry_point(self):
+        mock_instance = MagicMock()
+        mock_class = MagicMock(return_value=mock_instance)
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[MagicMock(**{"load.return_value": mock_class})],
+        ):
+            # pylint: disable=unexpected-keyword-arg
+            config = self.cls(my_plugin={"opt": "val"})
+            result = _resolve_component(config, self.registry, "test_group", "test component")
+        self.assertIs(result, mock_instance)
+        mock_class.assert_called_once_with(opt="val")
+
+    def test_plugin_with_empty_config(self):
+        mock_instance = MagicMock()
+        mock_class = MagicMock(return_value=mock_instance)
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[MagicMock(**{"load.return_value": mock_class})],
+        ):
+            # pylint: disable=unexpected-keyword-arg
+            config = self.cls(my_plugin={})
+            _resolve_component(config, self.registry, "test_group", "test component")
+        mock_class.assert_called_once_with()
+
+    def test_no_component_raises_configuration_error(self):
+        config = self.cls()
+        with self.assertRaises(ConfigurationError):
+            _resolve_component(config, self.registry, "test_group", "test component")
+
+    def test_plugin_not_found_raises_configuration_error(self):
+        with patch(
+            "opentelemetry.configuration._common.entry_points",
+            return_value=[],
+        ):
+            # pylint: disable=unexpected-keyword-arg
+            config = self.cls(missing_plugin={})
+            with self.assertRaises(ConfigurationError):
+                _resolve_component(config, self.registry, "test_group", "test component")
+
+    def test_first_registry_match_wins_when_multiple_set(self):
+        """When multiple built-in fields are set (which the schema should
+        prevent), the first registry match wins."""
+        config = self.cls(builtin_a={"a": 1}, builtin_b="b")
+        result = _resolve_component(config, self.registry, "test_group", "test component")
+        # builtin_a comes first in the registry dict
+        self.assertEqual(result, ("resolved_a", {"a": 1}))
+
+
+class TestValidateMtlsPair(unittest.TestCase):
+    def test_valid_combinations(self):
+        for key_file, cert_file in ((None, None), ("/k.pem", "/c.pem")):
+            with self.subTest(key_file=key_file, cert_file=cert_file):
+                _validate_mtls_pair(key_file, cert_file, "otlp_http")
+
+    def test_partial_pair_raises(self):
+        for key_file, cert_file in (("/k.pem", None), (None, "/c.pem")):
+            with self.subTest(key_file=key_file, cert_file=cert_file):
+                with self.assertRaises(ConfigurationError) as ctx:
+                    _validate_mtls_pair(key_file, cert_file, "otlp_http")
+                self.assertIn("otlp_http", str(ctx.exception))
+
+
+class TestValidateHttpTls(unittest.TestCase):
+    def test_none_tls_noop(self):
+        self.assertIsNone(_validate_http_tls(None))
+
+    def test_valid_files_pass(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ca_file = os.path.join(tmp_dir, "ca.pem")
+            cert_file = os.path.join(tmp_dir, "cert.pem")
+            key_file = os.path.join(tmp_dir, "key.pem")
+            for path in (ca_file, cert_file, key_file):
+                with open(path, "wb") as file:
+                    file.write(b"data")
+            self.assertIsNone(_validate_http_tls(HttpTls(ca_file=ca_file, cert_file=cert_file, key_file=key_file)))
+
+    def test_missing_ca_file_raises(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ca_file = os.path.join(tmp_dir, "nonexistent.pem")
+            with self.assertRaises(ConfigurationError) as ctx:
+                _validate_http_tls(HttpTls(ca_file=ca_file))
+            self.assertIn("tls.ca_file", str(ctx.exception))
+
+    def test_missing_cert_file_raises(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            key_file = os.path.join(tmp_dir, "key.pem")
+            with open(key_file, "wb") as file:
+                file.write(b"data")
+            cert_file = os.path.join(tmp_dir, "nonexistent.pem")
+            with self.assertRaises(ConfigurationError) as ctx:
+                _validate_http_tls(HttpTls(key_file=key_file, cert_file=cert_file))
+            self.assertIn("tls.cert_file", str(ctx.exception))
+
+    def test_mismatched_mtls_pair_raises(self):
+        with self.assertRaises(ConfigurationError) as ctx:
+            _validate_http_tls(HttpTls(key_file="/path/to/key.pem"))
+        self.assertIn("otlp_http", str(ctx.exception))
+
+
+class TestReadTlsFile(unittest.TestCase):
+    def test_reads_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "ca.pem")
+            with open(path, "wb") as file:
+                file.write(b"pem-bytes")
+            self.assertEqual(_read_tls_file(path, "ca_file"), b"pem-bytes")
+
+    def test_missing_file_raises(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "missing.pem")
+            with self.assertRaises(ConfigurationError) as ctx:
+                _read_tls_file(path, "ca_file")
+        self.assertIn("tls.ca_file", str(ctx.exception))
+        self.assertIn(path, str(ctx.exception))
+
+
+class TestGrpcInsecureFromTls(unittest.TestCase):
+    def test_resolves_insecure(self):
+        cases = [
+            ("http://collector:4317", GrpcTls(insecure=False), True),
+            ("http://collector:4317", GrpcTls(insecure=True), True),
+            ("http://collector:4317", GrpcTls(), True),
+            ("http://collector:4317", None, True),
+            ("collector:4317", GrpcTls(insecure=False), False),
+            ("collector:4317", GrpcTls(insecure=True), True),
+            ("collector:4317", GrpcTls(), False),
+            ("collector:4317", None, False),
+            ("https://collector:4317", GrpcTls(insecure=True), False),
+            ("https://collector:4317", GrpcTls(insecure=False), False),
+            ("https://collector:4317", GrpcTls(), False),
+            ("https://collector:4317", None, False),
+            (None, GrpcTls(insecure=False), False),
+            (None, GrpcTls(insecure=True), True),
+            (None, GrpcTls(), False),
+            (None, None, False),
+        ]
+        for endpoint, tls, expected in cases:
+            with self.subTest(endpoint=endpoint, tls=tls):
+                self.assertEqual(_grpc_insecure_from_tls(endpoint, tls), expected)
+
+
+class TestGrpcCredentialsFromTls(unittest.TestCase):
+    def test_returns_none_without_files(self):
+        mock_grpc = MagicMock()
+        for tls in (None, GrpcTls(), GrpcTls(insecure=True)):
+            with self.subTest(tls=tls), patch.dict(sys.modules, {"grpc": mock_grpc}):
+                self.assertIsNone(_grpc_credentials_from_tls(tls))
+        mock_grpc.ssl_channel_credentials.assert_not_called()
+
+    def test_builds_credentials_from_files(self):
+        mock_grpc = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp_dir, patch.dict(sys.modules, {"grpc": mock_grpc}):
+            paths = {}
+            for name in ("ca", "key", "cert"):
+                paths[name] = os.path.join(tmp_dir, f"{name}.pem")
+                with open(paths[name], "wb") as file:
+                    file.write(f"{name}-bytes".encode())
+            result = _grpc_credentials_from_tls(
+                GrpcTls(ca_file=paths["ca"], key_file=paths["key"], cert_file=paths["cert"])
+            )
+
+        mock_grpc.ssl_channel_credentials.assert_called_once_with(
+            root_certificates=b"ca-bytes",
+            private_key=b"key-bytes",
+            certificate_chain=b"cert-bytes",
+        )
+        self.assertIs(result, mock_grpc.ssl_channel_credentials.return_value)
+
+    def test_partial_mtls_pair_raises(self):
+        with patch.dict(sys.modules, {"grpc": MagicMock()}), self.assertRaises(ConfigurationError):
+            _grpc_credentials_from_tls(GrpcTls(cert_file="/certs/client.pem"))
+
+    def test_missing_file_raises(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            patch.dict(sys.modules, {"grpc": MagicMock()}),
+            self.assertRaises(ConfigurationError),
+        ):
+            _grpc_credentials_from_tls(GrpcTls(ca_file=os.path.join(tmp_dir, "missing.pem")))
+
+
+class TestMatchesGlob(unittest.TestCase):
+    def test_exact_and_wildcard_matches(self):
+        cases = [
+            ("a[bc]", "a[bc]", True),
+            ("ab", "a[bc]", False),
+            ("ac", "a[bc]", False),
+            ("a[bc]def", "a[bc]*", True),
+            ("abdef", "a[bc]*", False),
+            ("a[bc]d", "a[bc]?", True),
+            ("a[bcd]", "a[bc?]", True),
+            ("a[bc]", "a[bc?]", False),
+            ("[a-z]", "[a-z]", True),
+            ("b", "[a-z]", False),
+            ("[!a]", "[!a]", True),
+            ("b", "[!a]", False),
+            ("a[[b]]c", "a[[b]]*", True),
+            ("a[", "a[", True),
+            ("a[tail", "a[*", True),
+            ("a]tail", "a]*", True),
+            ("a\\tail", "a\\*", True),
+            ("a*", "a\\*", False),
+            ("a.c+($)^|{}", "a.c+($)^|{}", True),
+            ("prefix.value", "value", False),
+            ("value.suffix", "value", False),
+            ("value", "value", True),
+            ("VALUE", "value", False),
+            ("value", "V*", False),
+            ("VALUE", "v*", False),
+            ("value", "v*", True),
+            ("ab", "a*b", True),
+            ("a\nb", "a*b", True),
+            ("a\nb", "a?b", True),
+            ("ab", "a?b", False),
+            ("ab", "a?", True),
+            ("abc", "a?", False),
+            ("aéb", "a?b", True),
+            ("a😀b", "a?b", True),
+            ("abc", "**a**?**c**", True),
+            ("", "", True),
+            ("", "*", True),
+            ("", "**", True),
+            ("", "?", False),
+            ("a", "", False),
+        ]
+        for value, pattern, expected in cases:
+            with self.subTest(value=value, pattern=pattern):
+                self.assertEqual(_matches_glob(value, pattern), expected)
+
+
+class TestIncludeExcludePredicate(unittest.TestCase):
+    def test_include_exclude_predicate(self):
+        cases = [
+            (IncludeExclude(), "anything", True),
+            (IncludeExclude(), "", True),
+            (IncludeExclude(included=["service.*"]), "service.name", True),
+            (IncludeExclude(included=["service.*"]), "host.name", False),
+            (IncludeExclude(included=["service.name"]), "service.name", True),
+            (IncludeExclude(included=["service.name"]), "Service.name", False),
+            (IncludeExclude(included=["host.?d"]), "host.id", True),
+            (IncludeExclude(included=["host.?d"]), "host.uuid", False),
+            (IncludeExclude(included=["a", "b"]), "b", True),
+            (IncludeExclude(excluded=["host.*"]), "host.name", False),
+            (IncludeExclude(excluded=["host.*"]), "service.name", True),
+            (IncludeExclude(included=["service.*"], excluded=["service.namespace"]), "service.name", True),
+            (IncludeExclude(included=["service.*"], excluded=["service.namespace"]), "service.namespace", False),
+            (IncludeExclude(included=["service.name"], excluded=["service.*"]), "service.name", False),
+            (IncludeExclude(included=["service.*"], excluded=["host.*"]), "host.name", False),
+        ]
+        for config, value, expected in cases:
+            with self.subTest(config=config, value=value):
+                self.assertEqual(_include_exclude_predicate(config)(value), expected)
