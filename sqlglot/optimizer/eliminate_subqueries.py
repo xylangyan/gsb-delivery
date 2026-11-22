@@ -6,6 +6,7 @@ import typing as t
 from sqlglot import expressions as exp
 from sqlglot.helper import find_new_name
 from sqlglot.optimizer.scope import Scope, build_scope
+from sqlglot.optimizer.stateful import is_stateful
 from sqlglot._typing import E
 
 if t.TYPE_CHECKING:
@@ -189,6 +190,10 @@ def _new_cte(
         If this CTE duplicates an existing CTE, `cte` will be None.
     """
     duplicate_cte_alias = existing_ctes.get(scope.expression)
+    # Textually identical subqueries that compute a stateful value are still distinct
+    # evaluations, so they must not share one CTE.
+    if duplicate_cte_alias and is_stateful(scope.expression):
+        duplicate_cte_alias = None
     parent = scope.expression.parent
     name = parent.alias if parent else ""
 

@@ -23,6 +23,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.resolver import Resolver
 from sqlglot.optimizer.scope import build_scope, traverse_scope, walk_in_scope
 from sqlglot.schema import MappingSchema
+from sqlglot.transforms import eliminate_qualify
 from tests.helpers import (
     TPCDS_SCHEMA,
     TPCH_SCHEMA,
@@ -3132,6 +3133,110 @@ SELECT :with_,WITH :expressions,CTE :this,UNION :this,SELECT :expressions,1,:exp
 
     def test_eliminate_subqueries(self):
         self.check_file("eliminate_subqueries", optimizer.eliminate_subqueries.eliminate_subqueries)
+
+    def test_stateful_preservation(self):
+        # A materialized CTE is a single-evaluation boundary and must not be inlined.
+        materialized = parse_one(
+            "WITH s AS MATERIALIZED (SELECT RANDOM() AS r FROM x) SELECT s.r FROM s"
+        )
+        self.assertEqual(
+            optimizer.optimize(materialized, schema=self.schema, dialect="duckdb").sql("duckdb"),
+            'WITH "s" AS MATERIALIZED (SELECT RANDOM() AS "r" FROM "x" AS "x") '
+            'SELECT "s"."r" AS "r" FROM "s" AS "s"',
+        )
+
+        # A plain CTE is not a boundary, so its stateful projection is also kept, not merged.
+        plain = parse_one("WITH s AS (SELECT RANDOM() AS r FROM x) SELECT s.r FROM s")
+        self.assertEqual(
+            optimizer.optimize(plain, schema=self.schema, dialect="duckdb").sql("duckdb"),
+            'WITH "s" AS (SELECT RANDOM() AS "r" FROM "x" AS "x") '
+            'SELECT "s"."r" AS "r" FROM "s" AS "s"',
+        )
+
+        # Textually identical stateful derived tables are distinct evaluations: no dedup.
+        duplicates = parse_one(
+            "SELECT a.z, b.z FROM (SELECT RANDOM() AS z FROM x) a "
+            "JOIN (SELECT RANDOM() AS z FROM x) b ON TRUE"
+        )
+        optimized = optimizer.optimize(duplicates, schema=self.schema, dialect="duckdb").sql(
+            "duckdb"
+        )
+        self.assertIn('"a" AS (SELECT RANDOM()', optimized)
+        self.assertIn('"b" AS (SELECT RANDOM()', optimized)
+
+        # Deterministic subqueries still merge and deduplicate as before.
+        deterministic = parse_one(
+            "SELECT a.b FROM (SELECT x.b AS b FROM x) a JOIN (SELECT x.b AS c FROM x) d ON TRUE"
+        )
+        self.assertNotIn(
+            "JOIN (SELECT", optimizer.optimize(deterministic, schema=self.schema).sql("duckdb")
+        )
+
+    def test_stateful_sampling_cardinality(self):
+        # Count evaluations with an incrementing local surrogate of sample().
+        with duckdb.connect() as connection:
+            connection.execute("CREATE TABLE orders (id INT)")
+            connection.execute("INSERT INTO orders VALUES (1), (2)")
+            connection.execute("CREATE TABLE details (oid INT, item TEXT)")
+            connection.execute("INSERT INTO details VALUES (1, 'x'), (1, 'y'), (2, 'z')")
+            connection.execute("CREATE SEQUENCE sample_seq START 1")
+            connection.execute("CREATE MACRO sample() AS nextval('sample_seq')")
+
+            def run(sql):
+                connection.execute("DROP SEQUENCE sample_seq")
+                connection.execute("CREATE SEQUENCE sample_seq START 1")
+                rows = connection.execute(sql).fetchall()
+                calls = connection.execute("SELECT currval('sample_seq')").fetchone()[0]
+                return rows, calls
+
+            schema = {"orders": {"id": "INT"}, "details": {"oid": "INT", "item": "TEXT"}}
+
+            def transpile(sql):
+                return optimizer.optimize(
+                    parse_one(sql, dialect="duckdb"), schema=schema, dialect="duckdb"
+                ).sql("postgres")
+
+            # Sampling once per original order: both details see the same s, 2 evaluations.
+            rows, calls = run(
+                transpile(
+                    "WITH sampled AS MATERIALIZED (SELECT id, sample() AS s FROM orders) "
+                    "SELECT o.id, d.item, o.s AS s FROM sampled o "
+                    "JOIN details d ON o.id = d.oid QUALIFY o.s >= 0 ORDER BY o.id, d.item"
+                )
+            )
+            self.assertEqual(calls, 2)
+            self.assertEqual(rows[0][2], rows[1][2])
+            self.assertEqual([(r[0], r[1]) for r in rows], [(1, "x"), (1, "y"), (2, "z")])
+
+            # A caller-declared boundary makes a plain CTE safe for the same sharing. The
+            # boundary is threaded to `eliminate_qualify` directly, then generated for DuckDB.
+            curated = eliminate_qualify(
+                parse_one(
+                    "WITH sampled AS (SELECT id, sample() AS s FROM orders) "
+                    "SELECT o.id, d.item, o.s AS s FROM sampled o "
+                    "JOIN details d ON o.id = d.oid QUALIFY o.s >= 0",
+                    dialect="duckdb",
+                ),
+                boundaries=["sampled"],
+            )
+            rows, calls = run(curated.sql("duckdb") + " ORDER BY 1, 2")
+            self.assertEqual(calls, 2)
+            self.assertEqual(rows[0][2], rows[1][2])
+
+            # A window over the sampled value evaluates it once, and the value survives.
+            rows, calls = run(
+                transpile(
+                    "SELECT id, sample() AS s FROM orders "
+                    "QUALIFY ROW_NUMBER() OVER (PARTITION BY s ORDER BY id) = 1 ORDER BY id"
+                )
+            )
+            self.assertEqual(calls, 2)
+            self.assertEqual(len(rows), 2)
+
+            # Two separately written calls are two evaluations.
+            rows, calls = run(transpile("SELECT id, sample() AS a, sample() AS b FROM orders"))
+            self.assertEqual(calls, 4)
+            self.assertNotEqual(rows[0][1], rows[0][2])
 
     def test_canonicalize_internal_names(self):
         schema = {

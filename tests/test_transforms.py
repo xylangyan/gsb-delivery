@@ -1,6 +1,8 @@
 import unittest
 
 from sqlglot import parse_one, expressions as exp
+from sqlglot.errors import UnsupportedError
+from sqlglot.optimizer import stateful
 from sqlglot.transforms import (
     eliminate_distinct_on,
     eliminate_join_marks,
@@ -160,6 +162,85 @@ class TestTransforms(unittest.TestCase):
             "SELECT a, b FROM t QUALIFY ROW_NUMBER() OVER (PARTITION BY d ORDER BY e) = 1 AND f > 0",
             "SELECT a, b FROM (SELECT a, b, ROW_NUMBER() OVER (PARTITION BY d ORDER BY e) AS _w, f FROM t) AS _t WHERE _w = 1 AND f > 0",
         )
+
+    def test_eliminate_qualify_stateful(self):
+        # A window must not re-evaluate a stateful projection: the value is computed once in
+        # the body and the window reads the projected column.
+        self.validate(
+            eliminate_qualify,
+            "SELECT id, sample() AS s FROM orders QUALIFY ROW_NUMBER() OVER (PARTITION BY s ORDER BY id) = 1",
+            "SELECT id, s FROM (SELECT _b.id AS id, _b.s AS s, ROW_NUMBER() OVER (PARTITION BY _b.s ORDER BY _b.id) AS _w FROM (SELECT id, SAMPLE() AS s FROM orders) AS _b) AS _t WHERE _w = 1",
+        )
+        # A stateful call written directly in a window is hoisted out of the window.
+        self.validate(
+            eliminate_qualify,
+            "SELECT id FROM orders QUALIFY ROW_NUMBER() OVER (PARTITION BY sample() ORDER BY id) = 1",
+            "SELECT id, _s FROM (SELECT _b.id AS id, _b._s AS _s, ROW_NUMBER() OVER (PARTITION BY _b._s ORDER BY _b.id) AS _w FROM (SELECT id, SAMPLE() AS _s FROM orders) AS _b) AS _t WHERE _w = 1",
+        )
+        # Referencing a projected alias reuses that single evaluation.
+        self.validate(
+            eliminate_qualify,
+            "SELECT id, sample() AS s FROM orders QUALIFY s > 0.5",
+            "SELECT id, s FROM (SELECT id, SAMPLE() AS s FROM orders) AS _t WHERE s > 0.5",
+        )
+        # Two separately written calls stay two evaluations, even though their text matches.
+        self.validate(
+            eliminate_qualify,
+            "SELECT id, sample() AS a, sample() AS b FROM orders QUALIFY a > b",
+            "SELECT id, a, b FROM (SELECT id, SAMPLE() AS a, SAMPLE() AS b FROM orders) AS _t WHERE a > b",
+        )
+
+    def test_eliminate_qualify_stateful_boundaries(self):
+        # A materialized CTE samples once per original row; both details reuse one value.
+        self.validate(
+            eliminate_qualify,
+            "WITH sampled AS MATERIALIZED (SELECT id, sample() AS s FROM orders) SELECT o.id, d.item, o.s AS s FROM sampled o JOIN details d ON o.id = d.oid QUALIFY o.s > 0.5",
+            "SELECT id, item, s FROM (SELECT _b.id AS id, _b.item AS item, _b.s AS s FROM (WITH sampled AS MATERIALIZED (SELECT id, SAMPLE() AS s FROM orders) SELECT o.id, d.item, o.s AS s FROM sampled AS o JOIN details AS d ON o.id = d.oid) AS _b) AS _t WHERE s > 0.5",
+        )
+        # A caller-declared boundary has the same effect for a plain CTE.
+        self.validate(
+            lambda e: eliminate_qualify(e, boundaries=["sampled"]),
+            "WITH sampled AS (SELECT id, sample() AS s FROM orders) SELECT o.id, o.s AS s FROM sampled o QUALIFY o.s > 0.5",
+            "SELECT id, s FROM (SELECT _b.id AS id, _b.s AS s FROM (WITH sampled AS (SELECT id, SAMPLE() AS s FROM orders) SELECT o.id, o.s AS s FROM sampled AS o) AS _b) AS _t WHERE s > 0.5",
+        )
+        # A correlated subquery samples per inner row and must not be hoisted for reuse.
+        self.validate(
+            eliminate_qualify,
+            "SELECT o.id, (SELECT sample() FROM details d WHERE d.oid = o.id AND d.item = 'x') AS x FROM orders o QUALIFY x > 0",
+            "SELECT id, x FROM (SELECT o.id, (SELECT SAMPLE() FROM details AS d WHERE d.oid = o.id AND d.item = 'x') AS x FROM orders AS o) AS _t WHERE x > 0",
+        )
+        # Deterministic QUALIFY output is unchanged.
+        self.validate(
+            eliminate_qualify,
+            "SELECT id, sample() AS s FROM orders QUALIFY s IS NOT NULL",
+            "SELECT id, s FROM (SELECT id, SAMPLE() AS s FROM orders) AS _t WHERE NOT s IS NULL",
+        )
+
+    def test_stateful_boundary_rejection(self):
+        # A plain (inlinable) CTE offers no single-evaluation boundary; the value is shared.
+        expression = parse_one(
+            "WITH sampled AS (SELECT id, sample() AS s FROM orders) "
+            "SELECT o.id, o.s FROM sampled o QUALIFY o.s > 0.5"
+        )
+        with self.assertRaises(UnsupportedError) as ctx:
+            eliminate_qualify(expression)
+        self.assertIn("SAMPLE()", str(ctx.exception))
+        self.assertIn("sampled", str(ctx.exception))
+
+        # A stateful projection in a joined scope is sampled per joined row.
+        expression = parse_one(
+            "SELECT o.id, d.item, sample() AS s FROM orders o JOIN details d ON o.id = d.oid "
+            "QUALIFY s > 0.5"
+        )
+        with self.assertRaises(UnsupportedError) as ctx:
+            eliminate_qualify(expression)
+        self.assertIn("SAMPLE()", str(ctx.exception))
+
+        # STATEful helpers identify the call itself, not an enclosing projection.
+        call = parse_one("SELECT sample() AS s").selects[0]
+        self.assertFalse(stateful.is_stateful_call(call))
+        self.assertTrue(stateful.is_stateful_call(call.this))
+        self.assertTrue(stateful.is_stateful(call.this))
 
     def test_remove_precision_parameterized_types(self):
         self.validate(

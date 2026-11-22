@@ -198,7 +198,10 @@ def eliminate_distinct_on(expression: exp.Expr) -> exp.Expr:
     return expression
 
 
-def eliminate_qualify(expression: exp.Expr) -> exp.Expr:
+def eliminate_qualify(
+    expression: exp.Expr,
+    boundaries: t.Iterable[exp.Expr | str] | None = None,
+) -> exp.Expr:
     """
     Convert SELECT statements that contain the QUALIFY clause into subqueries, filtered equivalently.
 
@@ -211,8 +214,16 @@ def eliminate_qualify(expression: exp.Expr) -> exp.Expr:
     otherwise we won't be able to refer to it in the outer query's WHERE clause. Finally, if a
     newly aliased projection is referenced in the QUALIFY clause, it will be replaced by the
     corresponding expression to avoid creating invalid column references.
+
+    Stateful values such as ``sample()`` are evaluated once per projected alias and per written
+    call, which is preserved across the rewrite. ``boundaries`` names the query layers the caller
+    guarantees are evaluated once per input row, by node or by CTE/subquery alias.
     """
     if isinstance(expression, exp.Select) and expression.args.get("qualify"):
+        from sqlglot.optimizer import stateful
+
+        stateful.prepare(expression, boundaries)
+
         parent = expression.parent
         if isinstance(parent, exp.Insert) and isinstance(parent.parent, exp.MultitableInserts):
             # A FROM-first multi-table INSERT branch shares its parent's FROM, so it can't be wrapped

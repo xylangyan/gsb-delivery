@@ -9,6 +9,18 @@ from sqlglot import expressions as exp
 from sqlglot.helper import find_new_name, seq_get
 from sqlglot.optimizer.helpers import is_implicit_group_by_all, projection_has_aggregate
 from sqlglot.optimizer.scope import Scope, find_all_in_scope, traverse_scope
+from sqlglot.optimizer.stateful import BOUNDARY, is_stateful
+
+
+def _has_stateful_projection(select: exp.Select) -> bool:
+    """Whether merging ``select`` into its consumer would duplicate a stateful evaluation."""
+    source = select.parent
+    if isinstance(source, (exp.CTE, exp.Subquery)) and (
+        source.meta_get(BOUNDARY) or source.args.get("materialized")
+    ):
+        return True
+    return any(is_stateful(projection.this) for projection in select.selects)
+
 
 if t.TYPE_CHECKING:
     from sqlglot._typing import E
@@ -442,6 +454,8 @@ def _mergeable(
         or any(v for k, v in inner_select.args.items() if k in UNMERGABLE_ARGS)
         or inner_select.args.get("from_") is None
         or outer_scope.pivots
+        # Inlining a stateful projection duplicates evaluations that must happen once per row.
+        or _has_stateful_projection(inner_select)
         # Merging can move filters and projections across row pairing and padding.
         or any(
             join.method in ("ASOF", "POSITIONAL")

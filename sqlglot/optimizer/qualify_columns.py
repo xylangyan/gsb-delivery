@@ -20,6 +20,7 @@ from sqlglot.optimizer.scope import (
     walk_in_scope,
 )
 from sqlglot.optimizer.simplify import simplify_parens
+from sqlglot.optimizer.stateful import contains_stateful
 from sqlglot.schema import Schema, ensure_schema
 
 if t.TYPE_CHECKING:
@@ -420,6 +421,11 @@ def _expand_alias_refs(
             alias_expr, i = alias_to_expression.get(column.name, (None, 1))
 
             if alias_expr:
+                # A stateful alias must be read through its projection: expanding it would
+                # evaluate the stateful function a second time (including a nested subquery's).
+                if contains_stateful(alias_expr):
+                    continue
+
                 # An aggregate alias must not be expanded into a GROUP BY or another (non-window) aggregate.
                 skip_replace = bool(
                     find_in_scope(alias_expr, exp.AggFunc)
