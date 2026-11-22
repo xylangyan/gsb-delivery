@@ -1,0 +1,14 @@
+{
+    "files": {
+        "./thriftpy2/http.py": [
+            {
+                "code": "reportArgumentType",
+                "range": {
+                    "startColumn": 48,
+                    "endColumn": 52,
+                    "lineCount": 1
+                }
+            }
+        ]
+    }
+}
