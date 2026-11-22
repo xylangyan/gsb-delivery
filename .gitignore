@@ -1,0 +1,8 @@
+*.pyc
+.coverage
+.version
+MANIFEST
+build/
+dist/
+html/
+pygtrie.egg-info/
