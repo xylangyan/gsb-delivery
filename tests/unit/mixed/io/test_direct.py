@@ -1,0 +1,373 @@
+# Copyright (c) "Neo4j"
+# Neo4j Sweden AB [https://neo4j.com]
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# ruff: noqa: ASYNC110
+# FIXME: activate lint and fix it
+
+from __future__ import annotations
+
+import asyncio
+import threading
+import time
+import traceback
+from asyncio import Event as AsyncEvent
+from threading import (
+    Event,
+    Lock,
+    Thread,
+)
+
+import pytest
+
+from neo4j._async.io._pool import AcquisitionAuth as AsyncAcquisitionAuth
+from neo4j._deadline import Deadline
+from neo4j._sync.io._pool import AcquisitionAuth
+from neo4j.api import READ_ACCESS
+from neo4j.exceptions import ConnectionAcquisitionTimeoutError
+
+from ...._async_util import gather_cancel
+from ...async_.io.test_direct import (
+    ADDRESS1,
+    AsyncFakeBoltPool,
+    TEST_DB1,
+)
+from ...async_.test_auth_management import (
+    static_auth_manager as static_async_auth_manager,
+)
+from ...sync.io.test_direct import FakeBoltPool
+from ...sync.test_auth_management import static_auth_manager
+from ._common import (
+    AsyncMultiEvent,
+    MultiEvent,
+)
+
+
+class TestMixedConnectionPoolTestCase:
+    def assert_pool_size(
+        self, address, expected_active, expected_inactive, pool
+    ):
+        try:
+            connections = pool.connections[address]
+        except KeyError:
+            assert expected_active == 0
+            assert expected_inactive == 0
+        else:
+            assert expected_active == len(
+                [cx for cx in connections if cx.in_use]
+            )
+            assert expected_inactive == len(
+                [cx for cx in connections if not cx.in_use]
+            )
+
+    @pytest.mark.parametrize("pre_populated", (0, 3, 5))
+    def test_multithread(self, pre_populated, fake_connection_generator):
+        connections_lock = Lock()
+        connections = []
+        pre_populated_connections = []
+        thread_exceptions = []
+
+        def acquire_release_conn(
+            pool_, address_, acquired_counter_, release_event_
+        ):
+            nonlocal connections, connections_lock, thread_exceptions
+            try:
+                conn_ = pool_._acquire(address_, None, Deadline(3), None)
+                try:
+                    with connections_lock:
+                        if connections is not None:
+                            connections.append(conn_)
+                    acquired_counter_.increment()
+                    release_event_.wait()
+                finally:
+                    pool_.release(conn_)
+            except BaseException as e:
+                traceback.print_exception(e)
+                thread_exceptions.append(e)
+
+        with FakeBoltPool(
+            fake_connection_generator, (), max_connection_pool_size=5
+        ) as pool:
+            address = ("127.0.0.1", 7687)
+            acquired_counter = MultiEvent()
+            release_event = Event()
+
+            # pre-populate the pool with connections
+            for _ in range(pre_populated):
+                conn = pool._acquire(address, None, Deadline(3), None)
+                pre_populated_connections.append(conn)
+            for conn in pre_populated_connections:
+                pool.release(conn)
+            assert len(set(pre_populated_connections)) == pre_populated
+            self.assert_pool_size(address, 0, pre_populated, pool)
+
+            # start 10 threads competing for connections from a pool of size 5
+            threads = []
+            for _ in range(10):
+                t = Thread(
+                    target=acquire_release_conn,
+                    args=(pool, address, acquired_counter, release_event),
+                    daemon=True,
+                )
+                t.start()
+                threads.append(t)
+
+            if not acquired_counter.wait(5, timeout=1):
+                raise RuntimeError("Acquire threads not fast enough")
+            # The pool size should be 5, all are in-use
+            self.assert_pool_size(address, 5, 0, pool)
+            with connections_lock:
+                assert set(pre_populated_connections).issubset(
+                    set(connections)
+                )
+                connections = pre_populated_connections = None
+            # Now we allow the threads to release connections they obtained
+            # from the pool
+            release_event.set()
+
+            # wait for all threads to release connections back to pool
+            for t in threads:
+                t.join(timeout=5)
+                if t.is_alive():
+                    raise TimeoutError(f"Joining thread timed out: {t!r}")
+            if thread_exceptions:
+                raise RuntimeError(
+                    "thread raised an exception"
+                ) from thread_exceptions[0]
+            # The pool size is still 5, but all are free
+            self.assert_pool_size(address, 0, 5, pool)
+
+    def test_full_pool_re_auth(self, fake_connection_generator, mocker):
+        address = ("127.0.0.1", 7687)
+        acquire_auth1 = AcquisitionAuth(
+            auth=static_auth_manager(("user1", "pass1"))
+        )
+        auth2 = ("user2", "pass2")
+        acquire_auth2 = AcquisitionAuth(auth=static_auth_manager(auth2))
+        acquire1_event = threading.Event()
+        cx1 = None
+
+        def acquire1(pool_):
+            nonlocal cx1
+            cx = pool_._acquire(address, acquire_auth1, Deadline(1), None)
+            acquire1_event.set()
+            cx1 = cx
+            while True:
+                with pool_.cond:
+                    # _waiters is an internal attribute of threading.Condition
+                    # this might break in the future, but we couldn't come up
+                    # with a better way of waiting for the other thread to
+                    # block.
+                    waiters = len(pool_.cond._waiters)
+                if waiters:
+                    break
+                time.sleep(0.001)
+            pool_.release(cx)
+
+        def acquire2(pool_):
+            acquire1_event.wait(timeout=10)
+            cx = pool_._acquire(address, acquire_auth2, Deadline(10), None)
+            assert cx is cx1
+            cx.re_auth.assert_called_once()
+            assert auth2 in cx.re_auth.call_args.args
+            pool_.release(cx)
+
+        with FakeBoltPool(
+            fake_connection_generator, (), max_connection_pool_size=1
+        ) as pool:
+            t1 = threading.Thread(target=acquire1, args=(pool,), daemon=True)
+            t2 = threading.Thread(target=acquire2, args=(pool,), daemon=True)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+    @pytest.mark.parametrize("pre_populated", (0, 3, 5))
+    @pytest.mark.asyncio
+    async def test_multi_coroutine(
+        self, pre_populated, async_fake_connection_generator
+    ):
+        connections = []
+        pre_populated_connections = []
+
+        async def acquire_release_conn(
+            pool_, address_, acquired_counter_, release_event_
+        ):
+            nonlocal connections
+            conn_ = await pool_._acquire(address_, None, Deadline(3), None)
+            if connections is not None:
+                connections.append(conn_)
+            await acquired_counter_.increment()
+            await release_event_.wait()
+            await pool_.release(conn_)
+
+        async def waiter(pool_, acquired_counter_, release_event_):
+            nonlocal pre_populated_connections, connections
+
+            if not await acquired_counter_.wait(5, timeout=5):
+                raise RuntimeError("Acquire coroutines not fast enough")
+            # The pool size should be 5, all are in-use
+            self.assert_pool_size(address, 5, 0, pool_)
+            assert set(pre_populated_connections).issubset(set(connections))
+            connections = pre_populated_connections = None
+
+            # Now we allow the coroutines to release connections they obtained
+            # from the pool
+            release_event_.set()
+
+            # wait for all coroutines to release connections back to pool
+            if not await acquired_counter_.wait(10, timeout=10):
+                raise RuntimeError("Acquire coroutines not fast enough")
+            # The pool size is still 5, but all are free
+            self.assert_pool_size(address, 0, 5, pool_)
+
+        async with AsyncFakeBoltPool(
+            async_fake_connection_generator, (), max_connection_pool_size=5
+        ) as pool:
+            address = ("127.0.0.1", 7687)
+            acquired_counter = AsyncMultiEvent()
+            release_event = AsyncEvent()
+
+            # pre-populate the pool with connections
+            for _ in range(pre_populated):
+                conn = await pool._acquire(address, None, Deadline(3), None)
+                pre_populated_connections.append(conn)
+            for conn in pre_populated_connections:
+                await pool.release(conn)
+            assert len(set(pre_populated_connections)) == pre_populated
+            self.assert_pool_size(address, 0, pre_populated, pool)
+
+            # start 10 coroutines competing for connections from a pool of size
+            # 5
+            coroutines = [
+                acquire_release_conn(
+                    pool, address, acquired_counter, release_event
+                )
+                for _ in range(10)
+            ]
+            await gather_cancel(
+                waiter(pool, acquired_counter, release_event), *coroutines
+            )
+
+    @pytest.mark.asyncio
+    async def test_full_pool_re_auth_async(
+        self, async_fake_connection_generator, mocker
+    ):
+        address = ("127.0.0.1", 7687)
+        acquire_auth1 = AsyncAcquisitionAuth(
+            auth=static_async_auth_manager(("user1", "pass1"))
+        )
+        auth2 = ("user2", "pass2")
+        acquire_auth2 = AsyncAcquisitionAuth(
+            auth=static_async_auth_manager(auth2)
+        )
+        cx1 = None
+
+        async def acquire1(pool_):
+            nonlocal cx1
+            cx = await pool_._acquire(
+                address, acquire_auth1, Deadline(1), None
+            )
+            cx1 = cx
+            while len(pool_.cond._waiters) == 0:
+                await asyncio.sleep(0)
+            await pool_.release(cx)
+
+        async def acquire2(pool_):
+            while cx1 is None:
+                await asyncio.sleep(0)
+            cx = await pool_._acquire(
+                address, acquire_auth2, Deadline(float("inf")), None
+            )
+            assert cx is cx1
+            cx.re_auth.assert_called_once()
+            assert auth2 in cx.re_auth.call_args.args
+            await pool_.release(cx)
+
+        async with AsyncFakeBoltPool(
+            async_fake_connection_generator, (), max_connection_pool_size=1
+        ) as pool:
+            await gather_cancel(acquire1(pool), acquire2(pool))
+
+
+@pytest.mark.asyncio
+async def test_async_bails_on_deadline_expiration_during_wait(
+    async_fake_connection_generator,
+) -> None:
+    deadline = Deadline(float("inf"))
+
+    async def acquire(pool):
+        return await pool.acquire(
+            READ_ACCESS, deadline, TEST_DB1, None, None, None
+        )
+
+    async def release(pool, connection):
+        await pool.release(connection)
+
+    async def timing_out_acquire_and_release(pool):
+        with pytest.raises(ConnectionAcquisitionTimeoutError):
+            await acquire(pool)
+
+    async with AsyncFakeBoltPool(
+        async_fake_connection_generator,
+        ADDRESS1,
+        max_connection_pool_size=1,
+    ) as pool:
+        cx = await acquire(pool)
+        worker = asyncio.create_task(timing_out_acquire_and_release(pool))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        deadline._deadline = time.monotonic() - 1  # expire the deadline
+        await release(pool, cx)
+        await worker
+
+
+def test_sync_bails_on_deadline_expiration_during_wait(
+    fake_connection_generator,
+) -> None:
+    deadline = Deadline(float("inf"))
+    worker_exception: BaseException | None = None
+
+    def acquire(pool):
+        return pool.acquire(READ_ACCESS, deadline, TEST_DB1, None, None, None)
+
+    def release(pool, connection):
+        pool.release(connection)
+
+    def timing_out_acquire_and_release(pool):
+        try:
+            with pytest.raises(ConnectionAcquisitionTimeoutError):
+                acquire(pool)
+        except BaseException as e:
+            nonlocal worker_exception
+            worker_exception = e
+            raise
+
+    with FakeBoltPool(
+        fake_connection_generator,
+        ADDRESS1,
+        max_connection_pool_size=1,
+    ) as pool:
+        cx = acquire(pool)
+        worker = Thread(
+            target=timing_out_acquire_and_release, args=(pool,), daemon=True
+        )
+        worker.start()
+        time.sleep(0.1)
+        deadline._deadline = time.monotonic() - 1  # expire the deadline
+        release(pool, cx)
+        worker.join()
+        if worker_exception is not None:
+            raise RuntimeError("Worker failed") from worker_exception
