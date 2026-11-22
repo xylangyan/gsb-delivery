@@ -463,6 +463,29 @@ class AsyncResult(AsyncNonConcurrentMethodChecker):
     async def _buffer_all(self):
         await self._buffer()
 
+    def _result_graph(self) -> Graph:
+        graph = self._hydration_scope.get_graph()
+        if graph.batch is None:
+            from ...graph import (
+                DatabaseIdentity,
+                GraphBatch,
+            )
+
+            database = self._database
+            if not isinstance(database, str) or not database:
+                database = "<default>"
+            address = self._address
+            graph._set_batch(
+                GraphBatch(
+                    DatabaseIdentity(
+                        database,
+                        None if address is None else str(address),
+                    ),
+                    f"result-{id(self._hydration_scope):x}",
+                )
+            )
+        return graph
+
     def _obtain_summary(self) -> ResultSummary:
         """
         Obtain the summary of this result.
@@ -710,7 +733,7 @@ class AsyncResult(AsyncNonConcurrentMethodChecker):
             Can raise :exc:`.ResultConsumedError`.
         """
         await self._buffer_all()
-        return self._hydration_scope.get_graph()
+        return self._result_graph()
 
     @AsyncNonConcurrentMethodChecker._non_concurrent_method
     async def value(

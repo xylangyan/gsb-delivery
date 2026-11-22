@@ -5,6 +5,17 @@ See also https://github.com/neo4j/neo4j-python-driver/wiki for a full changelog.
 
 ## NEXT RELEASE
 - Python 3.10 support has been dropped.
+- Paths preserve the relationship's actual direction separately from the
+  path's traversal direction (`Path.directions`).
+- Graph entities can carry the database identity and graph batch in which
+  their `element_id` is valid (`Graph.batch`, `Entity.provenance`,
+  `Graph.merge`).
+- Add `neo4j.graph.GraphView` for combining responses without sharing an
+  element cache across unrelated databases or batches, with support for
+  confirmed migration continuations and pending paths on conflicting late
+  data.
+- `Result.graph()` now records the database identity and batch of the
+  response in the returned `Graph`.
 
 
 ## Version 6.4

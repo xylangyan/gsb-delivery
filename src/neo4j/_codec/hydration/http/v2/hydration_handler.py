@@ -176,12 +176,30 @@ class _GraphHydrator(GraphHydratorHttp):
                 existing_n0_element_id = existing._start_node.element_id
             if existing._end_node is not None:
                 existing_n1_element_id = existing._end_node.element_id
-            if (
-                existing.type == type_
-                and n0_element_id == existing_n0_element_id
-                and n1_element_id == existing_n1_element_id
-            ):
+            if existing.type == type_:
+                if (
+                    existing_n0_element_id is None
+                    and existing_n1_element_id is None
+                ):
+                    # A path bound this relationship before its own data
+                    # arrived.  The response's start/end are authoritative.
+                    existing._properties.update(properties)
+                    existing._start_node = self._hydrate_node(n0_element_id)
+                    existing._end_node = self._hydrate_node(n1_element_id)
+                    return existing
+                if (
+                    n0_element_id == existing_n0_element_id
+                    and n1_element_id == existing_n1_element_id
+                ):
+                    existing._properties.update(properties)
+                    return existing
+                existing._add_conflict(
+                    "conflicting start/end data for relationship "
+                    f"{element_id!r}"
+                )
                 existing._properties.update(properties)
+                existing._start_node = self._hydrate_node(n0_element_id)
+                existing._end_node = self._hydrate_node(n1_element_id)
                 return existing
             log.warning(
                 "Conflicting relationship data for element id %r. "

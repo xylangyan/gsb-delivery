@@ -29,6 +29,9 @@ from .....graph import (
     Graph,
     Node,
     Path,
+    _bind_relationship,
+    _mark_relationship_conflict,
+    _remember_path_binding,
 )
 from .....spatial import (
     CartesianPoint,
@@ -108,8 +111,50 @@ class _GraphHydrator(GraphHydratorBolt):
         inst = self.hydrate_unbound_relationship(
             id_, type_, properties, element_id
         )
-        inst._start_node = self.hydrate_node(n0_id, element_id=n0_element_id)
-        inst._end_node = self.hydrate_node(n1_id, element_id=n1_element_id)
+        start_node = self.hydrate_node(n0_id, element_id=n0_element_id)
+        end_node = self.hydrate_node(n1_id, element_id=n1_element_id)
+        if inst._start_node is None and inst._end_node is None:
+            inst._start_node = start_node
+            inst._end_node = end_node
+            return inst
+
+        # A path may have bound this relationship before its own data
+        # arrived.  Paths legitimately traverse a relationship in either
+        # direction, so only a disagreement about *which* nodes are the
+        # endpoints is a conflict; the direction itself is not.
+        path_bound = getattr(inst, "_path_bound", None)
+        if path_bound is not None:
+            del inst._path_bound
+            path_endpoints = {
+                path_bound[0].element_id,
+                path_bound[1].element_id,
+            }
+            if path_endpoints != {n0_element_id, n1_element_id}:
+                _mark_relationship_conflict(
+                    inst,
+                    "conflicting start/end data for relationship "
+                    f"{element_id!r}",
+                )
+            inst._start_node = start_node
+            inst._end_node = end_node
+            return inst
+
+        existing_start = (
+            None if inst._start_node is None else inst._start_node.element_id
+        )
+        existing_end = (
+            None if inst._end_node is None else inst._end_node.element_id
+        )
+        if existing_start not in (None, n0_element_id) or existing_end not in (
+            None,
+            n1_element_id,
+        ):
+            _mark_relationship_conflict(
+                inst,
+                f"conflicting start/end data for relationship {element_id!r}",
+            )
+            inst._start_node = start_node
+            inst._end_node = end_node
         return inst
 
     def hydrate_unbound_relationship(
@@ -126,6 +171,18 @@ class _GraphHydrator(GraphHydratorBolt):
             r = self.graph.relationship_type(type_)
             inst = r(self.graph, element_id, id_, properties)
             self.graph._relationships[element_id] = inst
+        else:
+            # Details may arrive after a path has bound this relationship.
+            # Keep the proven content without changing the relationship's
+            # direction.
+            if properties:
+                inst._properties.update(properties)
+            if inst.type != type_:
+                _mark_relationship_conflict(
+                    inst,
+                    "conflicting type data for relationship "
+                    f"{element_id!r}: {inst.type!r} != {type_!r}",
+                )
         return inst
 
     def hydrate_path(self, nodes, relationships, sequence):
@@ -134,21 +191,24 @@ class _GraphHydrator(GraphHydratorBolt):
         assert len(sequence) % 2 == 0
         last_node = nodes[0]
         entities = [last_node]
+        directions = []
         for i, rel_index in enumerate(sequence[::2]):
             assert rel_index != 0
             next_node = nodes[sequence[2 * i + 1]]
             if rel_index > 0:
                 r = relationships[rel_index - 1]
-                r._start_node = last_node
-                r._end_node = next_node
-                entities.append(r)
+                direction = 1
+                actual_start, actual_end = last_node, next_node
             else:
                 r = relationships[-rel_index - 1]
-                r._start_node = next_node
-                r._end_node = last_node
-                entities.append(r)
+                direction = -1
+                actual_start, actual_end = next_node, last_node
+            _bind_relationship(r, actual_start, actual_end)
+            _remember_path_binding(r, actual_start, actual_end)
+            entities.append(r)
+            directions.append(direction)
             last_node = next_node
-        return Path(*entities)
+        return Path(*entities, directions=directions)
 
 
 class HydrationHandler(HydrationHandlerBoltBase):

@@ -1678,7 +1678,69 @@ See https://neo4j.com/docs/python-manual/current/cypher-workflow/#python-driver-
 
     .. autoattribute:: relationships
 
+    .. autoproperty:: batch
+
+    .. autoproperty:: database
+
     .. automethod:: relationship_type
+
+    .. automethod:: merge
+
+
+Graph views
+-----------
+
+.. autoclass:: neo4j.graph.GraphView
+
+    **This is experimental** (see :ref:`filter-warnings-ref`).
+    It might be changed or removed any time even without prior notice.
+
+    A view can combine several responses. Entities repeated within one view
+    share identity. The same ``element_id`` from an unrelated database or
+    graph batch stays independent.
+
+    .. autoattribute:: nodes
+
+    .. autoattribute:: relationships
+
+    .. autoattribute:: paths
+
+    .. autoattribute:: pending_paths
+
+    .. autoattribute:: migrations
+
+    .. autoattribute:: conflicts
+
+    .. automethod:: from_graph
+
+    .. automethod:: add_graph
+
+    .. automethod:: add_result
+
+    .. automethod:: add_response
+
+    .. automethod:: add_paths
+
+    .. automethod:: add_nodes
+
+    .. automethod:: confirm_migration
+
+    .. automethod:: node
+
+    .. automethod:: relationship
+
+    .. automethod:: nodes_by_element_id
+
+    .. automethod:: relationships_by_element_id
+
+
+.. autoclass:: neo4j.graph.GraphBatch
+
+.. autoclass:: neo4j.graph.DatabaseIdentity
+
+.. autoclass:: neo4j.graph.Provenance
+
+.. autoclass:: neo4j.graph.PendingPath
 
 
 .. autoclass:: neo4j.Record()
@@ -1933,6 +1995,10 @@ Relationship   :class:`neo4j.graph.Relationship`
 Path           :class:`neo4j.graph.Path`
 =============  =================================
 
+An entity's ``element_id`` is only meaningful together with the database
+identity and graph batch it was read from.  :class:`neo4j.graph.GraphView`
+keeps that provenance while combining responses.
+
 
 Node
 ----
@@ -1969,6 +2035,10 @@ Node
         Checks whether a property key exists for a given node.
 
     .. autoproperty:: graph
+
+    .. autoproperty:: provenance
+
+    .. autoproperty:: graph_batch
 
     .. autoproperty:: id
 
@@ -2026,6 +2096,10 @@ Relationship
 
     .. autoproperty:: graph
 
+    .. autoproperty:: provenance
+
+    .. autoproperty:: graph_batch
+
     .. autoproperty:: id
 
     .. autoproperty:: element_id
@@ -2037,6 +2111,8 @@ Relationship
     .. autoproperty:: end_node
 
     .. autoproperty:: type
+
+    .. autoproperty:: conflicts
 
     .. automethod:: get
 
@@ -2082,6 +2158,10 @@ Path
     .. autoproperty:: end_node
 
     .. autoproperty:: relationships
+
+    .. autoproperty:: directions
+
+    .. autoproperty:: traversal
 
 
 Spatial Data Types
