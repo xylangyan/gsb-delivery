@@ -6,6 +6,15 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- :class:`Cache` now supports version-aware backends. If the wrapped mapping
+  implements a cheap ``get_version(key)`` method, several caches sharing the same
+  backend detect producer-side updates and deletions by version, fetch each value
+  only when stale, share large reads across caches, and never reload a value whose
+  version changed while the read was in flight. New ``Cache.get_with_version()``
+  returns the value together with the version read.
+- Values too heavy for the fast cache budget are returned to the caller without
+  being inserted, so they no longer evict hot items, and values that the fast cache
+  can only retain weakly are kept out of the strong-reference budget.
 
 
 3.0.0 - 2023-04-17
