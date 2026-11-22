@@ -1,0 +1,11 @@
+--charset UTF-8
+--main README.md
+--title 'Prawn Documentation'
+--no-private
+--embed-mixins
+-
+CONTRIBUTING.md
+COPYING
+LICENSE
+README.md
+CHANGELOG.md
