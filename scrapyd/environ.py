@@ -43,6 +43,9 @@ class Environment:
         # If the version is not provided, then the runner uses the default version, determined by egg storage.
         if "_version" in message:
             env["SCRAPYD_EGG_VERSION"] = message["_version"]
+        if "_egg_fingerprint" in message:
+            # Lets the runner verify the exact egg content accepted for this job.
+            env["SCRAPYD_EGG_FINGERPRINT"] = message["_egg_fingerprint"]
         # Scrapy discovers the same scrapy.cfg files as Scrapyd. So, this is only needed if users are adding [settings]
         # sections to Scrapyd configuration files (which Scrapy doesn't discover). This might lead to strange behavior
         # if an egg project and a [settings] project have the same name (unlikely). Preserved, since committed in 2010.

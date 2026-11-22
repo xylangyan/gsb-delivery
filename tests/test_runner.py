@@ -34,6 +34,12 @@ class MockEggStorage:
             return version, io.BytesIO(b"badegg")
         return None, None
 
+    def get_by_fingerprint(self, project, fingerprint):
+        if project == "bytesio":
+            with (BASEDIR / "fixtures" / "mybot.egg").open("rb") as f:
+                return fingerprint, io.BytesIO(f.read())
+        return None, None
+
     def list(self, project):
         pass
 
@@ -92,6 +98,32 @@ def test_badegg(monkeypatch, capsys, chdir):
     assert str(exc.value) == ""
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_fingerprint_mismatch(monkeypatch, chdir):
+    from scrapyd.exceptions import EggFingerprintError
+
+    (chdir / "scrapyd.conf").write_text("[scrapyd]\neggstorage = tests.test_runner.MockEggStorage")
+    monkeypatch.setenv("SCRAPY_PROJECT", "bytesio")
+    monkeypatch.setenv("SCRAPYD_EGG_FINGERPRINT", "0" * 64)
+
+    with patch.object(sys, "argv", ["scrapy", "list"]), pytest.raises(EggFingerprintError):
+        main()
+
+    os.environ.pop("SCRAPY_SETTINGS_MODULE", None)
+
+
+def test_fingerprint_missing_egg(monkeypatch, chdir):
+    from scrapyd.exceptions import EggFingerprintError
+
+    (chdir / "scrapyd.conf").write_text("[scrapyd]\neggstorage = tests.test_runner.MockEggStorage")
+    monkeypatch.setenv("SCRAPY_PROJECT", "unknown")
+    monkeypatch.setenv("SCRAPYD_EGG_FINGERPRINT", "0" * 64)
+
+    with patch.object(sys, "argv", ["scrapy", "list"]), pytest.raises(EggFingerprintError):
+        main()
+
+    os.environ.pop("SCRAPY_SETTINGS_MODULE", None)
 
 
 # This confirms that entry_points are required, as documented.

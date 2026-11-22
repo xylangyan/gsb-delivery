@@ -1,5 +1,4 @@
 import os
-import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,7 +6,8 @@ from pathlib import Path
 import pkg_resources
 
 from scrapyd import Config
-from scrapyd.exceptions import BadEggError
+from scrapyd.eggstorage import egg_fingerprint
+from scrapyd.exceptions import BadEggError, EggFingerprintError
 from scrapyd.utils import initialize_component
 
 
@@ -37,19 +37,32 @@ def project_environment(project):
     config = Config()
     eggstorage = initialize_component(config, "eggstorage", "scrapyd.eggstorage.FilesystemEggStorage")
 
-    eggversion = os.environ.get("SCRAPYD_EGG_VERSION", None)
-    sanitized_version, egg = eggstorage.get(project, eggversion)
+    expected_fingerprint = os.environ.get("SCRAPYD_EGG_FINGERPRINT", None)
+    if expected_fingerprint is not None:
+        # The accepted content, even if the version name was withdrawn or republished in the meantime.
+        sanitized_version, egg = eggstorage.get_by_fingerprint(project, expected_fingerprint)
+        if egg is None:
+            raise EggFingerprintError(f"no retained egg matches the accepted fingerprint {expected_fingerprint}")
+    else:
+        eggversion = os.environ.get("SCRAPYD_EGG_VERSION", None)
+        sanitized_version, egg = eggstorage.get(project, eggversion)
 
     tmp = None
     # egg can be None if the project is not in egg storage: for example, if Scrapyd is invoked within a Scrapy project.
     if egg:
         try:
+            data = egg.read()
+            if expected_fingerprint is not None and egg_fingerprint(data) != expected_fingerprint:
+                raise EggFingerprintError(
+                    f"egg fingerprint {egg_fingerprint(data)} does not match the accepted fingerprint "
+                    f"{expected_fingerprint}"
+                )
             if hasattr(egg, "name"):  # for example, FileIO
                 activate_egg(egg.name)
             else:  # for example, BytesIO
                 prefix = f"{project}-{sanitized_version}-"
                 with tempfile.NamedTemporaryFile(suffix=".egg", prefix=prefix, delete=False) as tmp:
-                    shutil.copyfileobj(egg, tmp)
+                    tmp.write(data)
                 activate_egg(tmp.name)
         finally:
             egg.close()

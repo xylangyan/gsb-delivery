@@ -76,6 +76,10 @@ def test_start_service_max_proc(app):
     [
         ({}, {}),
         ({"_version": "v1"}, {"SCRAPYD_EGG_VERSION": "v1"}),
+        (
+            {"_version": "v1", "_egg_fingerprint": "fp1"},
+            {"SCRAPYD_EGG_VERSION": "v1", "SCRAPYD_EGG_FINGERPRINT": "fp1"},
+        ),
     ],
 )
 def test_spawn_process(launcher, message, expected):
@@ -98,6 +102,8 @@ def test_spawn_process(launcher, message, expected):
         assert process.env[key] == value
     if "SCRAPYD_EGG_VERSION" not in expected:
         assert "SCRAPYD_EGG_VERSION" not in process.env
+    if "SCRAPYD_EGG_FINGERPRINT" not in expected:
+        assert "SCRAPYD_EGG_FINGERPRINT" not in process.env
     if has_settings():
         assert process.env["SCRAPY_SETTINGS_MODULE"] == "localproject.settings"
     else:

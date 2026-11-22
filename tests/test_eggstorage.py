@@ -8,7 +8,7 @@ from zope.interface.verify import verifyObject
 
 from scrapyd.app import application
 from scrapyd.config import Config
-from scrapyd.eggstorage import FilesystemEggStorage, sorted_versions
+from scrapyd.eggstorage import FilesystemEggStorage, egg_fingerprint, sorted_versions
 from scrapyd.exceptions import DirectoryTraversalError, EggNotFoundError, ProjectNotFoundError
 from scrapyd.interfaces import IEggStorage
 
@@ -217,3 +217,113 @@ def test_delete_nonexistent_version(eggstorage):
 
     with pytest.raises(EggNotFoundError):
         eggstorage.delete("mybot", "02")
+
+
+def test_fingerprint(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg01"), "mybot", "01")
+
+    assert eggstorage.fingerprint("mybot", "01") == egg_fingerprint(b"egg01")
+
+
+def test_acquire_retains_overwritten_version(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg-h1"), "mybot", "42")
+    h1_fingerprint = eggstorage.fingerprint("mybot", "42")
+    eggstorage.acquire("mybot", "42", h1_fingerprint)
+
+    # Republishing the same version name while the lease is active.
+    eggstorage.put(io.BytesIO(b"egg-h2"), "mybot", "42")
+    h2_fingerprint = eggstorage.fingerprint("mybot", "42")
+
+    assert h1_fingerprint != h2_fingerprint
+    version, retained = eggstorage.get_by_fingerprint("mybot", h1_fingerprint)
+    with closing(retained):
+        assert (version, retained.read()) == ("42", b"egg-h1")
+
+    eggstorage.release("mybot", h1_fingerprint)
+    assert eggstorage.get_by_fingerprint("mybot", h1_fingerprint) == (None, None)
+
+
+def test_acquire_retains_deleted_version_and_blocks_name_lookup(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg-h1"), "mybot", "42")
+    h1_fingerprint = eggstorage.fingerprint("mybot", "42")
+    eggstorage.acquire("mybot", "42", h1_fingerprint)
+
+    eggstorage.delete("mybot", "42")
+
+    # A new request cannot bind to the withdrawn version name, nor see it in the version list.
+    assert eggstorage.get("mybot", "42") == (None, None)
+    assert eggstorage.list("mybot") == []
+    # An accepted job still retrieves its exact content by fingerprint.
+    version, retained = eggstorage.get_by_fingerprint("mybot", h1_fingerprint)
+    with closing(retained):
+        assert (version, retained.read()) == ("42", b"egg-h1")
+
+    eggstorage.release("mybot", h1_fingerprint)
+    assert not (Path(eggstorage.basedir) / "mybot").exists()
+
+
+def test_delete_without_lease_removes_bytes_immediately(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg-h1"), "mybot", "42")
+    fingerprint = eggstorage.fingerprint("mybot", "42")
+
+    eggstorage.delete("mybot", "42")
+
+    assert eggstorage.get_by_fingerprint("mybot", fingerprint) == (None, None)
+    assert not (Path(eggstorage.basedir) / "mybot").exists()
+
+
+def test_release_keeps_egg_until_last_job(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg-h1"), "mybot", "42")
+    fingerprint = eggstorage.fingerprint("mybot", "42")
+    eggstorage.acquire("mybot", "42", fingerprint)
+    eggstorage.acquire("mybot", "42", fingerprint)
+    eggstorage.delete("mybot", "42")
+
+    eggstorage.release("mybot", fingerprint)
+    assert eggstorage.get_by_fingerprint("mybot", fingerprint)[1] is not None
+
+    eggstorage.release("mybot", fingerprint)
+    assert eggstorage.get_by_fingerprint("mybot", fingerprint) == (None, None)
+
+
+def test_delete_project_retains_leased_eggs(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg-h1"), "mybot", "42")
+    fingerprint = eggstorage.fingerprint("mybot", "42")
+    eggstorage.acquire("mybot", "42", fingerprint)
+
+    eggstorage.delete("mybot")
+
+    assert eggstorage.list("mybot") == []
+    version, retained = eggstorage.get_by_fingerprint("mybot", fingerprint)
+    with closing(retained):
+        assert (version, retained.read()) == ("42", b"egg-h1")
+
+    eggstorage.release("mybot", fingerprint)
+    assert not (Path(eggstorage.basedir) / "mybot").exists()
+
+
+def test_delete_project_after_republication_keeps_both_contents(eggstorage):
+    eggstorage.put(io.BytesIO(b"egg-h1"), "mybot", "42")
+    fp_h1 = eggstorage.fingerprint("mybot", "42")
+    eggstorage.acquire("mybot", "42", fp_h1)
+
+    eggstorage.put(io.BytesIO(b"egg-h2"), "mybot", "42")
+    fp_h2 = eggstorage.fingerprint("mybot", "42")
+    eggstorage.acquire("mybot", "42", fp_h2)
+
+    eggstorage.delete("mybot")
+
+    _, h1 = eggstorage.get_by_fingerprint("mybot", fp_h1)
+    _, h2 = eggstorage.get_by_fingerprint("mybot", fp_h2)
+    with closing(h1), closing(h2):
+        assert h1.read() == b"egg-h1"
+        assert h2.read() == b"egg-h2"
+
+    eggstorage.release("mybot", fp_h1)
+    eggstorage.release("mybot", fp_h2)
+    assert not (Path(eggstorage.basedir) / "mybot").exists()
+
+
+def test_acquire_unknown_egg(eggstorage):
+    with pytest.raises(EggNotFoundError):
+        eggstorage.acquire("mybot", "42", "missing")

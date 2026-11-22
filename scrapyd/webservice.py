@@ -15,6 +15,7 @@ from typing import ClassVar
 from twisted.logger import Logger
 from twisted.web import error, http, resource
 
+from scrapyd.eggstorage import egg_fingerprint
 from scrapyd.exceptions import EggNotFoundError, ProjectNotFoundError, RunnerError
 
 log = Logger()
@@ -62,14 +63,15 @@ def param(
 class SpiderList:
     cache: ClassVar = defaultdict(dict)
 
-    def get(self, project, version, *, runner):
+    def get(self, project, version, *, runner, fingerprint=None):
         """Return the ``scrapy list`` output for the project and version, using a cache if possible."""
+        key = fingerprint or version
         try:
-            return self.cache[project][version]
+            return self.cache[project][key]
         except KeyError:
-            return self.set(project, version, runner=runner)
+            return self.set(project, version, runner=runner, fingerprint=fingerprint)
 
-    def set(self, project, version, *, runner):
+    def set(self, project, version, *, runner, fingerprint=None):
         """Calculate, cache and return the ``scrapy list`` output for the project and version, bypassing the cache."""
 
         env = os.environ.copy()
@@ -93,7 +95,8 @@ class SpiderList:
         # Evict the return value of version=None calls, since we can't determine whether this version is the default
         # version (in which case we would overwrite it) or not (in which case we would keep it).
         self.cache[project].pop(None, None)
-        self.cache[project][version] = spiders
+        # Content fingerprints distinguish eggs published under the same version name.
+        self.cache[project][fingerprint or version] = spiders
         return spiders
 
     def delete(self, project, version=None):
@@ -196,38 +199,108 @@ class Schedule(WsResource):
     @param("jobid", required=False, default=lambda: uuid.uuid1().hex)
     @param("priority", required=False, default=0, type=float)
     @param("setting", required=False, default=list, multiple=True)
-    def render_POST(self, txrequest, project, spider, version, jobid, priority, setting):
+    @param("_request_id", dest="request_id", required=False, default=None)
+    def render_POST(self, txrequest, project, spider, version, jobid, priority, setting, request_id):
         if project not in self.root.poller.queues:
             raise error.Error(code=http.OK, message=b"project '%b' not found" % project.encode())
 
-        if version and self.root.eggstorage.get(project, version) == (None, None):
-            raise error.Error(code=http.OK, message=b"version '%b' not found" % version.encode())
+        registry = self.root.jobregistry
+        caller = self._caller(txrequest)
 
-        spiders = spider_list.get(project, version, runner=self.root.runner)
-        if spider not in spiders:
-            raise error.Error(code=http.OK, message=b"spider '%b' not found" % spider.encode())
+        # A late retry of the same caller request returns the original binding; a request choosing another egg cannot
+        # claim that request ID.
+        if request_id is not None:
+            existing = registry.get_by_request(caller, request_id)
+            if existing is not None:
+                return dict(existing["response"])
+
+        resolved, fingerprint = self._resolve(project, version, spider)
 
         args = {key.decode(): values[0].decode() for key, values in txrequest.args.items()}
-        if version is not None:
-            args["_version"] = version
+        response = {"jobid": jobid}
+        if resolved is not None:
+            response["version"] = resolved
+            response["egg_fingerprint"] = fingerprint
+
+        if not registry.bind(
+            {
+                "job_id": jobid,
+                "project": project,
+                "spider": spider,
+                "version": resolved,
+                "fingerprint": fingerprint,
+                "caller": caller,
+                "request_id": request_id,
+                "response": response,
+            }
+        ):
+            existing = registry.get(jobid)
+            if existing is not None:
+                return dict(existing["response"])
+            raise error.Error(code=http.OK, message=b"jobid '%b' is already in use" % jobid.encode())
+
+        try:
+            self._enqueue(project, spider, resolved, fingerprint, jobid, priority, setting, args)
+        except Exception:
+            if fingerprint is not None:
+                self.root.eggstorage.release(project, fingerprint)
+            registry.release(jobid)
+            raise
+
+        log.debug(
+            "Job scheduled: project={project!r} spider={spider!r} job={job!r} version={version!r} "
+            "fingerprint={fingerprint!r}",
+            project=project,
+            spider=spider,
+            job=jobid,
+            version=resolved,
+            fingerprint=fingerprint,
+        )
+        return response
+
+    def _resolve(self, project, version, spider):
+        eggstorage = self.root.eggstorage
+        if version is None:
+            # resolved stays None for projects without eggs (for example, a [settings] project in scrapy.cfg).
+            resolved, egg = eggstorage.get(project)
+        else:
+            resolved, egg = eggstorage.get(project, version)
+            if resolved is None:
+                raise error.Error(code=http.OK, message=b"version '%b' not found" % version.encode())
+
+        fingerprint = None
+        if egg is not None:
+            try:
+                data = egg.read()
+            finally:
+                egg.close()
+            fingerprint = egg_fingerprint(data)
+
+        # Validate against the exact bytes accepted for this job (not the latest egg sharing the version name).
+        if spider not in spider_list.get(project, resolved, runner=self.root.runner, fingerprint=fingerprint):
+            raise error.Error(code=http.OK, message=b"spider '%b' not found" % spider.encode())
+        return resolved, fingerprint
+
+    def _enqueue(self, project, spider, resolved, fingerprint, jobid, priority, setting, args):
+        internal_args = {"_job": jobid}
+        if resolved is not None:
+            internal_args["_version"] = resolved
+        if fingerprint is not None:
+            internal_args["_egg_fingerprint"] = fingerprint
+            self.root.eggstorage.acquire(project, resolved, fingerprint)
 
         self.root.scheduler.schedule(
             project,
             spider,
             priority=priority,
             settings=dict(s.split("=", 1) for s in setting),
-            _job=jobid,
+            **internal_args,
             **args,
         )
 
-        log.debug(
-            "Job scheduled: project={project!r} spider={spider!r} job={job!r}",
-            project=project,
-            spider=spider,
-            job=jobid,
-        )
-
-        return {"jobid": jobid}
+    @staticmethod
+    def _caller(txrequest):
+        return txrequest.getHeader("x-scrapyd-caller") or txrequest.getClientAddress().host or "anonymous"
 
 
 class Cancel(WsResource):
@@ -249,6 +322,7 @@ class Cancel(WsResource):
 
         if self.root.poller.queues[project].remove(lambda message: message["_job"] == job):
             prevstate = "pending"
+            self._release_binding(project, job)
 
         if signal.isdigit():
             signal = int(signal)
@@ -267,6 +341,12 @@ class Cancel(WsResource):
 
         return {"prevstate": prevstate}
 
+    def _release_binding(self, project, job):
+        binding = self.root.jobregistry.get(job)
+        if binding is not None and binding["project"] == project and binding["fingerprint"]:
+            self.root.eggstorage.release(project, binding["fingerprint"])
+        self.root.jobregistry.release(job)
+
 
 class AddVersion(WsResource):
     @param("project")
@@ -281,7 +361,10 @@ class AddVersion(WsResource):
         self.root.eggstorage.put(BytesIO(egg), project, version)
         self.root.update_projects()
 
-        spiders = spider_list.set(project, version, runner=self.root.runner)
+        fingerprint = egg_fingerprint(egg)
+        spiders = spider_list.set(project, version, runner=self.root.runner, fingerprint=fingerprint)
+        # Keep the bare version name fresh, since ListSpiders looks the current content up by version name.
+        spider_list.cache[project][version] = spiders
         return {"project": project, "version": version, "spiders": len(spiders)}
 
 
@@ -338,6 +421,10 @@ class Status(WsResource):
                 result["currstate"] = "running"
                 return result
 
+        if self.root.jobregistry.is_held(job):
+            result["currstate"] = "held"
+            return result
+
         for queue_name in queues if project is None else [project]:
             for message in queues[queue_name].list():
                 if message["_job"] == job:
@@ -374,8 +461,13 @@ class ListJobs(WsResource):
                     "project": queue_name,
                     "spider": message["name"],
                     "version": message.get("_version"),
+                    "egg_fingerprint": message.get("_egg_fingerprint"),
                     "settings": message.get("settings", {}),
-                    "args": {k: v for k, v in message.items() if k not in ("name", "_job", "_version", "settings")},
+                    "args": {
+                        key: value
+                        for key, value in message.items()
+                        if key not in ("name", "_job", "_version", "_egg_fingerprint", "settings")
+                    },
                 }
                 for queue_name in (queues if project is None else [project])
                 for message in queues[queue_name].list()
@@ -385,6 +477,8 @@ class ListJobs(WsResource):
                     "id": process.job,
                     "project": process.project,
                     "spider": process.spider,
+                    "version": getattr(process, "version", None),
+                    "egg_fingerprint": getattr(process, "egg_fingerprint", None),
                     "pid": process.pid,
                     "start_time": str(process.start_time),
                     "log_url": self.root.get_log_url(process),

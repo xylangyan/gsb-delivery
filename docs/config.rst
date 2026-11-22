@@ -428,6 +428,8 @@ Options
   -  ``scrapyd.eggstorage.FilesystemEggStorage`` writes eggs in the :ref:`eggs_dir` directory
 
      .. note:: Eggs are named after the ``version``, replacing characters other than ``A-Za-z0-9_-`` with underscores. Therefore, if you frequently use non-word, non-hyphen characters, the eggs for different versions can collide.
+
+     .. note:: When a version is withdrawn or republished while accepted jobs are still allowed to use its content, the previous egg bytes are retained in a leases directory until the last such job ends. Retained bytes are only reachable by their content fingerprint, so new requests cannot bind to a withdrawn version name.
   -  Implement your own, using the :py:interface:`~scrapyd.interfaces.IEggStorage` interface: for example, to store eggs remotely
 
 .. _eggs_dir:
@@ -475,6 +477,21 @@ Default
 Options
   Any non-negative integer
 
+.. _jobregistry:
+
+jobregistry
+~~~~~~~~~~~
+
+The class that records, for each accepted job, the exact egg content (version name and SHA-256 fingerprint) bound at
+acceptance time, together with the caller's request ID and the evidence that the job's process started. The registry is
+restart-safe: jobs without start evidence after a daemon restart are held for coordination instead of being launched.
+
+Default
+  ``scrapyd.jobregistry.JobRegistry``
+Options
+  -  ``scrapyd.jobregistry.JobRegistry`` stores bindings in a SQLite database named ``job_registry.db``, in the :ref:`dbs_dir` directory
+  -  Implement your own, using the :py:interface:`~scrapyd.interfaces.IJobRegistry` interface
+
 Directory options
 -----------------
 
@@ -492,6 +509,7 @@ Options
 Used by
   -  :ref:`spiderqueue` (``scrapyd.spiderqueue.SqliteSpiderQueue``)
   -  :ref:`jobstorage` (``scrapyd.jobstorage.SqliteJobStorage``)
+  -  :ref:`jobregistry` (``scrapyd.jobregistry.JobRegistry``)
 
 .. attention:: Each ``*_dir`` setting must point to a different directory.
 

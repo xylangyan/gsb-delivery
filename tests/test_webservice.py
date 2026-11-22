@@ -11,6 +11,7 @@ import pytest
 from twisted.logger import LogLevel, capturedLogs
 from twisted.web import error
 
+from scrapyd.eggstorage import egg_fingerprint
 from scrapyd.exceptions import DirectoryTraversalError, RunnerError
 from scrapyd.interfaces import IEggStorage
 from scrapyd.launcher import ScrapyProcessProtocol
@@ -91,6 +92,19 @@ def test_spider_list(app):
     spider_list.delete("myproject")
     spiders = spider_list.get("myproject", None, runner="scrapyd.runner")
     assert sorted(spiders) == ["spider1", "spider2"]
+
+
+def test_spider_list_cache_keyed_by_fingerprint(app):
+    storage = app.getComponent(IEggStorage)
+    h1 = get_egg_data("mybot")
+    storage.put(io.BytesIO(h1), "myproject", "42")
+    fp_h1 = egg_fingerprint(h1)
+
+    assert spider_list.get("myproject", "42", runner="scrapyd.runner", fingerprint=fp_h1) == ["spider1", "spider2"]
+
+    # A value cached under the bare version name must not shadow the fingerprint-keyed entry.
+    spider_list.cache["myproject"]["42"] = ["poisoned"]
+    assert spider_list.get("myproject", "42", runner="scrapyd.runner", fingerprint=fp_h1) == ["spider1", "spider2"]
 
 
 def test_spider_list_log_stdout(app):
@@ -366,6 +380,8 @@ def test_list_jobs(txrequest, root, scrapy_process, args, exists, chdir):
             "id": "j1",
             "project": "p1",
             "spider": "s1",
+            "version": None,
+            "egg_fingerprint": None,
             "pid": None,
             "start_time": "2001-02-03 04:05:06.000009",
             "log_url": "/logs/p1/s1/j1.log" if exists else None,
@@ -389,6 +405,7 @@ def test_list_jobs(txrequest, root, scrapy_process, args, exists, chdir):
             "project": "p1",
             "spider": "s1",
             "version": "0.1",
+            "egg_fingerprint": None,
             "settings": {"DOWNLOAD_DELAY=2": "TRACK=Cause = Time"},
             "args": {"arg1": "val1"},
         },
@@ -551,6 +568,8 @@ def test_schedule(txrequest, root, args, run_only_if_has_settings):
     content = root.children[b"schedule.json"].render(txrequest)
     data = json.loads(content)
     jobid = data.pop("jobid")
+    fingerprint = data.pop("egg_fingerprint", None)
+    resolved_version = data.pop("version", None)
 
     assert data.pop("node_name")
     assert data == {"status": "ok"}
@@ -558,9 +577,14 @@ def test_schedule(txrequest, root, args, run_only_if_has_settings):
 
     jobs = root.poller.queues[project].list()
     expected = {"name": spider, "_job": jobid, "settings": {}}
-    if version:
-        expected["_version"] = version
+    if resolved_version:
+        expected["_version"] = resolved_version
+    if fingerprint:
+        expected["_egg_fingerprint"] = fingerprint
 
+    available_versions = root.eggstorage.list(project)
+    expected_resolved = version or (available_versions[-1] if available_versions else None)
+    assert resolved_version == expected_resolved
     assert len(jobs) == 1
     assert jobs[0] == expected
 
@@ -630,9 +654,11 @@ def test_schedule_parameters(txrequest, root_with_egg):
     txrequest.method = "POST"
     content = root_with_egg.children[b"schedule.json"].render(txrequest)
     data = json.loads(content)
+    fingerprint = data.pop("egg_fingerprint")
 
     assert data.pop("node_name")
-    assert data == {"status": "ok", "jobid": "aaa"}
+    assert data == {"status": "ok", "jobid": "aaa", "version": "0.1"}
+    assert re.search(r"^[a-f0-9]{64}$", fingerprint)
 
     jobs = root_with_egg.poller.queues["mybot"].list()
 
@@ -640,6 +666,7 @@ def test_schedule_parameters(txrequest, root_with_egg):
     assert jobs[0] == {
         "name": "spider1",
         "_version": "0.1",
+        "_egg_fingerprint": fingerprint,
         "_job": "aaa",
         "settings": {
             "DOWNLOAD_DELAY": "2",

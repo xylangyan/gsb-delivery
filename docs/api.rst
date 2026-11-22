@@ -86,6 +86,13 @@ Parameters
     the spider name
   ``_version``
     the project version (the latest project version by default)
+
+    The resolved version name is bound to the job at acceptance time, so choosing the default version does not make
+    the job depend on whichever egg happens to be the latest when the job eventually starts.
+  ``_request_id``
+    an identifier chosen by the caller for request deduplication. A retried request with the same caller and
+    ``_request_id`` returns the binding created by the original request instead of enqueuing a new job. A request that
+    selects different content cannot reuse another request's ID.
   ``jobid``
     the job's ID (a hexadecimal UUID v1 by default)
   ``priority``
@@ -118,7 +125,14 @@ Example:
 .. code-block:: shell-session
 
    $ curl http://localhost:6800/schedule.json -d project=myproject -d spider=somespider
-   {"node_name": "mynodename", "status": "ok", "jobid": "6487ec79947edab326d6db28a2d86511e8247444"}
+   {"node_name": "mynodename", "status": "ok", "jobid": "6487ec79947edab326d6db28a2d86511e8247444",
+    "version": "42", "egg_fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
+
+The response identifies the exact content accepted for the job, so it stays verifiable after the version name is
+withdrawn or republished:
+
+-  ``version``: the concrete version name resolved at acceptance time (omitted for projects without eggs)
+-  ``egg_fingerprint``: the SHA-256 fingerprint of the accepted egg content (omitted for projects without eggs)
 
 .. _status.json:
 
@@ -137,7 +151,9 @@ Parameters
   ``project``
     the project name
 
-The job's status is indicated by the ``currstate`` key whose value is one of ``'pending'``, ``'running'`` or ``'finished'`` – or ``None`` if the job is not found.
+The job's status is indicated by the ``currstate`` key whose value is one of ``'pending'``, ``'running'`` or
+``'finished'`` – or ``None`` if the job is not found. A job accepted before a daemon restart but lacking evidence that
+its process ever started is reported as ``'held'`` and is left in the queue for coordination rather than launched.
 
 Example:
 
@@ -278,6 +294,7 @@ Example:
                "project": "myproject",
                "spider": "spider1",
                "version": "0.1",
+               "egg_fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                "settings": {"DOWNLOAD_DELAY=2"},
                "args": {"arg1": "val1"},
            }
@@ -287,6 +304,8 @@ Example:
                "id": "422e608f9f28cef127b3d5ef93fe9399",
                "project": "myproject",
                "spider": "spider2",
+               "version": "0.1",
+               "egg_fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                "pid": 93956,
                "start_time": "2012-09-12 10:14:03.594664",
                "log_url": "/logs/myproject/spider3/2f16646cfcaf11e1b0090800272a6d06.log",

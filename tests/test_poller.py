@@ -80,3 +80,32 @@ def test_poll_empty(poller):
     assert hasattr(value, "result")
     assert getattr(value, "called", False)
     assert value.result is None
+
+
+def test_poll_skips_held_jobs(poller):
+    queue = get_spider_queues(poller.config)["mybot1"]
+    queue.add("spider1", _job="held-job")
+    queue.add("spider2", _job="ready-job")
+
+    poller.registry.bind(
+        {
+            "job_id": "held-job",
+            "project": "mybot1",
+            "spider": "spider1",
+            "version": None,
+            "fingerprint": None,
+            "caller": "caller-a",
+            "request_id": "r1",
+            "response": {"jobid": "held-job"},
+        }
+    )
+    poller.registry.mark_held("held-job")
+
+    waiter = poller.next()
+    poller.poll()
+
+    # The held job stays queued; the launchable job is delivered instead.
+    assert [message["_job"] for message in queue.list()] == ["held-job"]
+    assert waiter.called
+    assert waiter.result["_job"] == "ready-job"
+    assert waiter.result["_spider"] == "spider2"

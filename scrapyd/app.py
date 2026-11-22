@@ -8,7 +8,7 @@ from twisted.web import server
 
 from scrapyd.basicauth import wrap_resource
 from scrapyd.environ import Environment
-from scrapyd.interfaces import IEggStorage, IEnvironment, IJobStorage, IPoller, ISpiderScheduler
+from scrapyd.interfaces import IEggStorage, IEnvironment, IJobRegistry, IJobStorage, IPoller, ISpiderScheduler
 from scrapyd.scheduler import SpiderScheduler
 from scrapyd.utils import initialize_component
 
@@ -27,12 +27,16 @@ def application(config):
     poller = initialize_component(config, "poller", "scrapyd.poller.QueuePoller")
     jobstorage = initialize_component(config, "jobstorage", "scrapyd.jobstorage.MemoryJobStorage")
     eggstorage = initialize_component(config, "eggstorage", "scrapyd.eggstorage.FilesystemEggStorage")
+    jobregistry = initialize_component(config, "jobregistry", "scrapyd.jobregistry.JobRegistry")
+    # Share the registry, so the poller and the web services observe the same bindings even with an in-memory database.
+    poller.registry = jobregistry
 
     app.setComponent(IEnvironment, environment)
     app.setComponent(ISpiderScheduler, scheduler)
     app.setComponent(IPoller, poller)
     app.setComponent(IJobStorage, jobstorage)
     app.setComponent(IEggStorage, eggstorage)
+    app.setComponent(IJobRegistry, jobregistry)
 
     # launcher uses jobstorage in initializer, and uses poller and environment.
     launcher = initialize_component(config, "launcher", "scrapyd.launcher.Launcher", app)

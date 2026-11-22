@@ -9,7 +9,7 @@ from twisted.logger import Logger
 
 from scrapyd import __version__
 from scrapyd.exceptions import LauncherError
-from scrapyd.interfaces import IEnvironment, IJobStorage, IPoller
+from scrapyd.interfaces import IEggStorage, IEnvironment, IJobRegistry, IJobStorage, IPoller
 
 log = Logger()
 
@@ -20,6 +20,7 @@ def get_crawl_args(message):
     """
     copied = message.copy()
     del copied["_project"]
+    copied.pop("_egg_fingerprint", None)  # internal: passed to the runner via SCRAPYD_EGG_FINGERPRINT
 
     return [
         copied.pop("_spider"),
@@ -56,20 +57,36 @@ class Launcher(Service):
 
     def _spawn_process(self, message, slot):
         project = message["_project"]
+        job_id = message["_job"]
         environment = self.app.getComponent(IEnvironment)
         message.setdefault("settings", {})
         message["settings"].update(environment.get_settings(message))
 
+        registry = self.app.getComponent(IJobRegistry)
+        binding = registry.get(job_id)
+        if binding is not None:
+            # The accepted binding is authoritative, even if the queued message lacks the resolved fields.
+            if binding["version"] is not None:
+                message["_version"] = binding["version"]
+            if binding["fingerprint"] is not None:
+                message["_egg_fingerprint"] = binding["fingerprint"]
+
         env = environment.get_environment(message, slot)
         args = [sys.executable, "-m", self.runner, "crawl", *get_crawl_args(message)]
 
-        process = ScrapyProcessProtocol(project, message["_spider"], message["_job"], env, args)
+        process = ScrapyProcessProtocol(project, message["_spider"], job_id, env, args)
+        process.version = message.get("_version")
+        process.egg_fingerprint = message.get("_egg_fingerprint")
         process.deferred.addBoth(self._process_finished, slot)
 
         try:
             reactor.spawnProcess(process, sys.executable, args=args, env=env)
         except OSError as e:
             raise LauncherError(f"{e}: args={args!r}") from e
+
+        if binding is not None:
+            # Persist the evidence that the process actually started, before any daemon restart.
+            registry.mark_running(job_id)
 
         self.processes[slot] = process
         log.debug("Process slot {slot} occupied", slot=slot)
@@ -79,6 +96,13 @@ class Launcher(Service):
         process.end_time = datetime.datetime.now()
         self.finished.add(process)
         log.debug("Process slot {slot} vacated", slot=slot)
+
+        registry = self.app.getComponent(IJobRegistry)
+        binding = registry.get(process.job)
+        if binding is not None:
+            # Keep the finished binding as the audit trail and for idempotent retries; release only the egg content.
+            registry.mark_finished(process.job)
+            self.app.getComponent(IEggStorage).release(binding["project"], binding["fingerprint"])
 
         self._get_message(slot)
 

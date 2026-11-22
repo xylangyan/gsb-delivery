@@ -10,7 +10,7 @@ from twisted.application.service import IServiceCollection
 from twisted.python import filepath
 from twisted.web import resource, static
 
-from scrapyd.interfaces import IEggStorage, IPoller, ISpiderScheduler
+from scrapyd.interfaces import IEggStorage, IJobRegistry, IPoller, ISpiderScheduler
 from scrapyd.utils import local_items
 
 
@@ -178,6 +178,10 @@ class Root(resource.Resource):
     @property
     def eggstorage(self):
         return self.app.getComponent(IEggStorage)
+
+    @property
+    def jobregistry(self):
+        return self.app.getComponent(IJobRegistry)
 
     @property
     def poller(self):

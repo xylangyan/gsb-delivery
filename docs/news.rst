@@ -10,10 +10,17 @@ Added
 ~~~~~
 
 - Add DEBUG-level messages to the :ref:`schedule.json` and :ref:`cancel.json` webservices.
+- Bind each accepted job to the exact egg content (resolved version and SHA-256 fingerprint) at acceptance time, and retain that content across withdrawal or republication until the last authorized job ends.
+- Add the ``_request_id`` parameter to :ref:`schedule.json`, so retries of the same caller request return the original binding.
+- Add the ``egg_fingerprint`` field to :ref:`schedule.json` responses and to pending jobs in :ref:`listjobs.json`.
+- Add the :ref:`jobregistry` setting and the ``held`` state in :ref:`status.json` for jobs that lack start evidence after a daemon restart.
 
 Changed
 ~~~~~~~
 
+- The default version selected by :ref:`schedule.json` is resolved to a concrete version name and fingerprint at acceptance time, instead of being re-resolved when the job starts.
+- The runner uses the accepted egg fingerprint and fails with ``EggFingerprintError`` if the resolved content does not match.
+- The spider list cache is keyed by egg content fingerprint, so republishing a version name no longer serves stale spider lists.
 - Clarify error message when the launcher fails to spawn processes.
 
 Removed
