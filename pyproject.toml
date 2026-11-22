@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools >= 77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiostream"
+dynamic = ["version"]
+description = "Generator-based operators for asynchronous iteration"
+readme = {file = "README.rst", content-type = "text/x-rst"}
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+authors = [
+    { name = "Vincent Michel", email = "vxgmichel@gmail.com" },
+]
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "typing-extensions",
+]
+
+[project.urls]
+Homepage = "https://github.com/vxgmichel/aiostream"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
+
+[tool.setuptools]
+packages = ["aiostream", "aiostream.stream"]
+
+[tool.setuptools.dynamic]
+version = {attr = "aiostream.__version__"}
+
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --cov aiostream"
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.pyright]
+strict = [
+    "aiostream/aiter_utils.py",
+    "aiostream/manager.py",
+    "aiostream/pipe.py",
+    "aiostream/test_utils.py",
+    "aiostream/core.py",
+]
+
+[tool.mypy]
+packages = ["aiostream", "examples"]
+strict = true
+# Name modules after their directory (e.g `tests.test_core`), even without `__init__.py`
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# Tests are not fully annotated, keep mypy default checks for them
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = false
+disallow_any_generics = false
+# Those are meant for pyright, which checks unannotated functions
+warn_unused_ignores = false
+
+[tool.black]
+line-length = 88
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "assert False"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501", "F403"]
