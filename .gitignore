@@ -1,0 +1,18 @@
+# Python cruft
+*.pyc
+*.pyd
+venv
+.eggs
+cython_debug/*
+build/
+_build/
+.benchmarks/
+*.egg-info
+
+# Extension building cruft
+*.so
+/simdjson/csimdjson.cpp
+
+# coverage.py default output file
+.coverage
+.idea
