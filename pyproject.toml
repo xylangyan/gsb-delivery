@@ -71,6 +71,7 @@ Homepage = "https://github.com/john-kurkowski/tldextract"
 
 [project.scripts]
 tldextract = "tldextract.cli:main"
+tldextract-precheck = "tldextract.precheck_cli:main"
 
 [build-system]
 requires = [

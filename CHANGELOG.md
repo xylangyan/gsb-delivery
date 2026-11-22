@@ -3,6 +3,15 @@
 After upgrading, update your cache file by deleting it or via `tldextract
 --update`.
 
+## Unreleased
+
+* Features
+  * Add `SiteLogPrecheck`, a replayable site-log precheck pipeline with
+    versioned missing-value policies, per-source/day/record identities, and
+    withdrawal-plus-classification update streams
+  * Add the `tldextract-precheck` command for JSON Lines events, state
+    snapshots, correction streams, and reconciliation reports
+
 ## 5.4.0 (2026-10-03)
 
 * Features

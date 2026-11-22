@@ -168,6 +168,39 @@ $ tldextract --update  # Update cached suffix list
 $ tldextract --help    # See all options
 ```
 
+### How to precheck site-log rows and send corrections
+
+`tldextract` also ships a small, event-sourced precheck pipeline for JSON Lines
+site logs. It splits each row into `archived`, `ip`, `internal`, `suffix_only`,
+`invalid`, `missing`, or `pending`, and can revise an already-sent
+classification when a provider delivers a late rule.
+
+Each row is keyed by `source`, `day`, and `record_no`. The fallback address is
+used only when the primary value is missing under the configuration effective on
+that data day. A rule can declare which tokens mean missing and which are raw
+review text:
+
+```json
+{"type": "row", "source": "jia", "day": "2026-11-02", "record_no": "8", "revision": 1, "primary": "-", "fallback": "shop.example.com"}
+{"type": "config", "source": "jia", "revision": 1, "missing_values": [], "review_values": ["-"], "effective_from": "2026-11-02"}
+```
+
+Rules and rows may arrive in either order. Corrections are emitted as a
+replayable `withdraw` followed by a new `classify`, so a consumer can apply the
+stream without double counting:
+
+```zsh
+$ tldextract-precheck --state precheck.json \
+    --updates corrections.jsonl events.jsonl
+```
+
+Load an existing snapshot with `--state`; the CLI reuses it, applies only the
+new events, and writes back the updated facts. Use `--full-updates` to give a
+fresh downstream consumer the whole stream, and `--report` for reconciliation
+counts. Only local suffix rules are read: pass `--suffix-list` or rely on the
+bundled snapshot. The same engine is available as
+`tldextract.SiteLogPrecheck`.
+
 ## Understanding Domain Parsing
 
 ### Public Suffix List
