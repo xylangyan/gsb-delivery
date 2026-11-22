@@ -1,0 +1,907 @@
+# -*- coding: utf-8 -*-
+""" mdf_skeleton module describing basic mdf structure and methods
+
+Created on Thu Sept 24 2015
+
+:Author: `Aymeric Rateau <https://github.com/ratal/mdfreader>`__
+
+
+Dependencies
+-------------------
+- Python >3.4 <http://www.python.org>
+- Numpy >1.6 <http://numpy.scipy.org>
+
+
+mdf
+--------------------------
+"""
+from __future__ import annotations
+
+import atexit
+import shutil
+import tempfile
+from collections import OrderedDict, defaultdict
+from copy import deepcopy
+from datetime import datetime as _datetime, timedelta as _timedelta, timezone as _timezone
+from io import open
+from itertools import chain
+from random import choice
+from string import ascii_letters
+from time import time
+from typing import Any, Sequence
+from warnings import warn
+from zipfile import ZipFile, is_zipfile
+from numpy import array_repr, set_printoptions, recarray, frombuffer
+try:
+    from pandas import set_option
+except ImportError:
+    warn('Pandas export will not be possible', ImportWarning)
+set_printoptions(threshold=100, edgeitems=1)
+_notAllowedChannelNames = set(dir(recarray))
+try:
+    CompressionPossible = True
+    from blosc import compress, decompress
+except ImportError:
+    # Cannot compress data, please install bcolz and blosc
+    CompressionPossible = False
+
+descriptionField = 'description'
+unitField = 'unit'
+dataField = 'data'
+masterField = 'master'
+masterTypeField = 'masterType'
+conversionField = 'conversion'
+attachmentField = 'attachment'
+idField = 'id'
+
+
+class MdfSkeleton(dict):
+    __slots__ = ['masterChannelList', 'fileName', 'MDFVersionNumber', 'multiProc',
+                 'convertAfterRead', 'filterChannelNames', 'fileMetadata', 'convertTables',
+                 '_pandasframe', 'info', '_compression_level', '_noDataLoading',
+                 'fid', 'zipfile']
+    """ MdfSkeleton class
+
+    Attributes
+    --------------
+    fileName : str
+        file name
+    MDFVersionNumber : int
+        mdf file version number
+    masterChannelList : dict
+        Represents data structure: a key per master channel with corresponding value containing a list of channels
+        One key or master channel represents then a data group having same sampling interval.
+    multiProc : bool
+        Flag to request channel conversion multi processed for performance improvement.
+        One thread per data group.
+    convertAfterRead : bool
+        flag to convert raw data to physical just after read
+    filterChannelNames : bool
+        flag to filter long channel names from its module names separated by '.'
+    fileMetadata : dict
+        file metadata with minimum keys : author, organisation, project, subject, comment, time, date
+
+    Methods
+    ------------
+    add_channel(channel_name, data, master_channel, master_type=1, unit='', description='', conversion=None)
+        adds channel to mdf dict
+    remove_channel(channel_name)
+        removes channel from mdf dict and returns its content
+    rename_channel(channel_name, new_channel_name)
+         renames a channel and returns its content
+    copy()
+        copy a mdf class
+    add_metadata(author, organisation, project, subject, comment, date, time)
+        adds basic metadata from file
+    """
+
+    def __init__(
+        self,
+        file_name: str | None = None,
+        channel_list: Sequence[str] | set[str] | None = None,
+        convert_after_read: bool = True,
+        filter_channel_names: bool = False,
+        no_data_loading: bool = False,
+        compression: bool | str | int = False,
+        convert_tables: bool = True,
+        metadata: int = 2,
+        finalization_writing_to_file: bool = False,
+        force_file_integrity_check: bool = False,
+    ) -> None:
+        """ mdf_skeleton class constructor.
+
+        Parameters
+        ----------------
+        file_name : str, optional
+            file name
+
+        channel_list : list of str, optional
+            list of channel names to be read.
+            If you use channelList, reading might be much slower but it will
+            save you memory. Can be used to read big files.
+
+        convert_after_read : bool, optional
+            flag to convert channel after read, True by default.
+            If you use convertAfterRead by setting it to false, all data from
+            channels will be kept raw, no conversion applied.
+            If many float are stored in file, you can gain from 3 to 4 times
+            memory footprint.
+            To calculate value from channel, you can then use
+            method .get_channel_data()
+
+        filter_channel_names : bool, optional
+            flag to filter long channel names from its module names
+            separated by '.'
+
+        compression : bool optional
+            flag to compress data in memory.
+
+        metadata: int, optional, default = 2
+            Reading metadata has impact on performance, especially for mdf 4.x using xml.
+            2: minimal metadata reading (mostly channel blocks)
+            1: used for noDataLoading
+            0: all metadata reading, including Source Information, Attachment, etc..
+
+        finalization_writing_to_file : bool, optional, False by default
+            If file is detected not finalised (id_unfin_flags!=0), file is corrected
+            writing in the blocks if set to True, otherwise correction is done only
+            to file representation in memory. Valid from version MDF 4.11
+
+        force_file_integrity_check : bool, optional, False by default
+            Perform block sizes check for potentially corrupted file without finalization
+            flags (id_unfin_flags==0). Combined with finalization_writing_to_file is
+            very experimental and risky, correction should be tried in memory first.
+        """
+        self.masterChannelList = OrderedDict()
+        # flag to control multiprocessing, default deactivate,
+        # giving priority to mdfconverter
+        self.multiProc = False
+        self.fileMetadata = dict()
+        self.fileMetadata['author'] = ''
+        self.fileMetadata['organisation'] = ''
+        self.fileMetadata['project'] = ''
+        self.fileMetadata['subject'] = ''
+        self.fileMetadata['comment'] = ''
+        # time in seconds since epoch, floating
+        self.fileMetadata['time'] = time()
+        self.MDFVersionNumber = 300
+        self.filterChannelNames = filter_channel_names
+        # by default, do not convert table conversion types, taking lot of time and memory
+        self.convertTables = convert_tables
+        self._pandasframe = False
+        self.info = None
+        self._compression_level = 9  # default compression level
+        self._noDataLoading = False  # in case reading with this argument activated
+        # clears class from previous reading and avoid to mess up
+        self.clear()
+        self.fileName = file_name
+        if file_name is not None:
+            self.read(file_name, channel_list=channel_list,
+                      convert_after_read=convert_after_read,
+                      filter_channel_names=filter_channel_names,
+                      no_data_loading=no_data_loading,
+                      compression=compression,
+                      metadata=metadata,
+                      finalization_writing_to_file=finalization_writing_to_file,
+                      force_file_integrity_check=force_file_integrity_check)
+
+    def add_channel(
+        self,
+        channel_name: str,
+        data: Any,
+        master_channel: str,
+        master_type: int = 1,
+        unit: str = '',
+        description: str = '',
+        conversion: Any = None,
+        info: Any = None,
+        compression: bool | str | int = False,
+        identifier: Any = None,
+    ) -> None:
+        """ adds channel to mdf dict.
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        data : numpy array
+            numpy array of channel's data
+        master_channel : str
+            master channel name
+        master_type : int, optional
+            master channel type : 0=None, 1=Time, 2=Angle, 3=Distance, 4=index
+        unit : str, optional
+            unit description
+        description : str, optional
+            channel description
+        conversion : info class, optional
+            conversion description from info class
+        info : info class for CNBlock, optional
+            used for CABlock axis creation and channel conversion
+        compression : bool
+            flag to ask for channel data compression
+        identifier : tuple
+            tuple of int and str following below structure:
+            (data group number, channel group number, channel number),
+            (channel name, channel source, channel path),
+            (group name, group source, group path)
+        """
+        if not self._noDataLoading:
+            channel_dict = {
+                unitField: unit,
+                descriptionField: description,
+                masterField: master_channel,
+                masterTypeField: 1 if self.MDFVersionNumber < 400 else master_type,
+            }
+            if not compression:
+                channel_dict[dataField] = data
+            if identifier is not None:
+                channel_dict[idField] = identifier
+            mlist = self.masterChannelList.get(master_channel)
+            if mlist is None:
+                mlist = []
+                self.masterChannelList[master_channel] = mlist
+            mlist.append(channel_name)
+            self[channel_name] = channel_dict
+        else:
+            self.set_channel_data(channel_name, data, compression)
+            if identifier is not None:
+                self[channel_name][idField] = identifier
+        if compression:
+            self.set_channel_data(channel_name, data, compression)
+        if conversion is not None:
+            cc_type = conversion.get('cc_type')
+            if self.MDFVersionNumber >= 400:  # mdf4
+                if cc_type == 0:
+                    pass  # 1:1 identity conversion, no conversion dict needed
+                elif cc_type == 1 and 'cc_val' in conversion and len(conversion['cc_val']) >= 2 and \
+                        conversion['cc_val'][0] in (0.0, -0.0) and conversion['cc_val'][1] == 1.0:
+                    pass  # 1:1 identity linear scaling, no conversion dict needed
+                else:
+                    params = {}
+                    if 'cc_val' in conversion:
+                        params['cc_val'] = conversion['cc_val']
+                    if 'cc_ref' in conversion:
+                        params['cc_ref'] = conversion['cc_ref']
+                    self[channel_name]['conversion'] = {
+                        'type': cc_type,
+                        'parameters': params,
+                    }
+            else:  # mdf3
+                params = conversion.get('conversion', {})
+                if cc_type == 0 and params.get('P2') == 1.0 and params.get('P1') in (0.0, -0.0):
+                    pass  # 1:1 identity conversion
+                else:
+                    self[channel_name]['conversion'] = {
+                        'type': cc_type,
+                        'parameters': params,
+                    }
+        if info is not None and 'CABlock' in info:  # axis from CABlock
+            ca_block = info
+            axis = []
+            while 'CABlock' in ca_block:
+                ca_block = ca_block['CABlock']
+                if 'ca_axis_value' in ca_block:
+                    if isinstance(ca_block['ca_dim_size'], list):
+                        index = 0
+                        for ndim in ca_block['ca_dim_size']:
+                            axis.append(
+                                tuple(ca_block['ca_axis_value'][index:index+ndim]))
+                            index += ndim
+                    else:
+                        axis = ca_block['ca_axis_value']
+            self[channel_name]['axis'] = axis
+
+    def remove_channel(self, channel_name: str) -> Any:
+        """ removes channel from mdf dict.
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        value of mdf dict key=channel_name
+        """
+        master = self.get_channel_master(channel_name)
+        if master in self.masterChannelList:
+            self.masterChannelList[master].remove(channel_name)
+        return self.pop(channel_name)
+
+    def rename_channel(self, channel_name: str, new_name: str) -> None:
+        """Modifies name of channel
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        new_name : str
+            new channel name
+        """
+        if channel_name in self and new_name not in self:
+            # add the new name to the same master
+            self.masterChannelList[self.get_channel_master(
+                channel_name)].append(new_name)
+            # remove the old name
+            self.masterChannelList[self.get_channel_master(
+                channel_name)].remove(channel_name)
+            self[new_name] = self.pop(channel_name)  # copy the data
+            if channel_name in self.masterChannelList:  # it is a master channel
+                self.masterChannelList[new_name] = self.masterChannelList.pop(
+                    channel_name)
+                for channel in self.masterChannelList[new_name]:
+                    self.set_channel_master(channel, new_name)
+            return self[new_name]
+        else:
+            return None
+
+    def remove_channel_conversion(self, channel_name):
+        """ removes conversion key from mdf channel dict.
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        removed value from dict
+        """
+        return self._remove_channel_field(channel_name, conversionField)
+
+    def _remove_channel_field(self, channel_name, field):
+        """general purpose function to remove key from channel dict in mdf
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        field : str
+            channel dict key
+
+        Returns
+        -------
+        removed value from dict
+        """
+        if field in self.get_channel(channel_name):
+            return self[channel_name].pop(field)
+
+    def get_channel_unit(self, channel_name: str) -> str:
+        """Returns channel unit string
+        Implemented for a future integration of pint
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -----------
+        str
+            unit string description
+        """
+        temp = self._get_channel_field(channel_name, field=unitField)
+        if isinstance(temp, (dict, defaultdict)):
+            try:
+                return temp['Comment']
+            except KeyError:
+                return ''
+        return temp
+
+    def get_channel_desc(self, channel_name: str) -> str:
+        """Extract channel description information from mdf structure
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        channel description string
+        """
+        return self._get_channel_field(channel_name, field=descriptionField)
+
+    def get_channel_master(self, channel_name: str) -> str | None:
+        """Extract channel master name from mdf structure
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        channel master name string
+        """
+        return self._get_channel_field(channel_name, field=masterField)
+
+    def get_channel_master_type(self, channel_name: str) -> int | None:
+        """Extract channel master type information from mdf structure
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        channel mater type integer : 0=None, 1=Time, 2=Angle, 3=Distance, 4=index
+        """
+        return self._get_channel_field(channel_name, field=masterTypeField)
+
+    def get_channel_conversion(self, channel_name: str) -> dict[str, Any] | None:
+        """Extract channel conversion dict from mdf structure
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        channel conversion dict
+        """
+        return self._get_channel_field(channel_name, field=conversionField)
+
+    def get_channel(self, channel_name: str) -> dict[str, Any] | None:
+        """Extract channel dict from mdf structure
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        channel dictionnary containing data, description, unit, etc.
+        """
+        try:
+            return self[channel_name]
+        except KeyError:
+            return None
+
+    def _get_channel_field(self, channel_name: str, field: str | None = None) -> Any:
+        """General purpose function to extract channel dict key value from mdf class
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        field : str
+            channel dict key
+
+        Returns
+        -------
+        channel description string
+        """
+        channel = self.get_channel(channel_name)
+        if channel is not None:
+            try:
+                return channel[field]
+            except KeyError:
+                return ''
+        else:
+            return None
+
+    def set_channel_unit(self, channel_name: str, unit: str) -> None:
+        """Modifies unit of channel
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        unit : str
+            channel unit
+        """
+        self._set_channel(channel_name, unit, field=unitField)
+
+    def set_channel_data(self, channel_name: str, data: Any, compression: bool | str | int = False) -> None:
+        """Modifies data of channel
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        data : numpy array
+            channel data
+        compression : bool or str
+            trigger for data compression
+        """
+        if compression and CompressionPossible:
+            temp = CompressedData()
+            temp.compression(data)
+            self._set_channel(channel_name, temp, field=dataField)
+        else:
+            self._set_channel(channel_name, data, field=dataField)
+
+    def set_channel_desc(self, channel_name: str, desc: str) -> None:
+        """Modifies description of channel
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        desc : str
+            channel description
+        """
+        self._set_channel(channel_name, desc, field=descriptionField)
+
+    def set_channel_master(self, channel_name: str, master: str) -> None:
+        """Modifies channel master name
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        master : str
+            master channel name
+        """
+        self._set_channel(channel_name, master, field=masterField)
+
+    def set_channel_master_type(self, channel_name: str, master_type: int) -> None:
+        """Modifies master channel type
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        master_type : int
+            master channel type
+        """
+        self._set_channel(channel_name, master_type, field=masterTypeField)
+
+    def set_channel_conversion(self, channel_name: str, conversion: Any) -> None:
+        """Modifies conversion dict of channel
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        conversion : dict
+            conversion dictionary
+        """
+        self._set_channel(channel_name, conversion, field=conversionField)
+
+    def set_channel_attachment(self, channel_name: str, attachment: Any) -> None:
+        """Modifies channel attachment
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        attachment
+            channel attachment
+        """
+        self._set_channel(channel_name, attachment, field=attachmentField)
+
+    def _set_channel(self, channel_name: str, item: Any, field: str | None = None) -> None:
+        """General purpose method to modify channel values
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+        item
+            new replacing item
+        field : str
+            channel dict key of item
+        """
+        try:
+            self[channel_name][field] = item
+        except KeyError:
+            warn(f'Channel {channel_name} not in dictionary')
+
+    def _channel_in_mdf(self, channel_name: str) -> bool:
+        """Efficiently assess if channel is already in mdf
+
+        Parameters
+        ----------------
+        channel_name : str
+            channel name
+
+        Returns
+        -------
+        bool
+        """
+        return channel_name in self.masterChannelList[masterField] or channel_name in self.masterChannelList
+
+    def add_metadata(
+        self,
+        author: str = '',
+        organisation: str = '',
+        project: str = '',
+        subject: str = '',
+        comment: str = '',
+        time: float | int = 0,
+        time_offset: float | None = None,
+    ) -> None:
+        """adds basic metadata to mdf class
+
+        Parameters
+        ----------------
+        author : str
+            author of file
+        organisation : str
+            organisation of author
+        project : str
+        subject : str
+        comment : str
+        time : float (epoch)
+
+        Notes
+        =====
+        All fields are optional, default being empty string
+        """
+        self.fileMetadata['author'] = author
+        self.fileMetadata['organisation'] = organisation
+        self.fileMetadata['project'] = project
+        self.fileMetadata['subject'] = subject
+        self.fileMetadata['comment'] = comment
+        self.fileMetadata['time'] = time
+        self.fileMetadata['time_offset'] = time_offset
+
+    @property
+    def start_datetime(self):
+        """Recording start time as a timezone-aware datetime.datetime.
+
+        Returns None if timestamp is 0 or unset.
+        For MDF3 < 3.20 (no timezone in header), UTC is assumed; the stored
+        timestamp may reflect local machine time at recording.
+        """
+        t = self.fileMetadata.get('time', 0)
+        if not t:
+            return None
+        offset_seconds = self.fileMetadata.get('time_offset', None)
+        tz = _timezone(_timedelta(seconds=int(offset_seconds))) if offset_seconds is not None else _timezone.utc
+        try:
+            return _datetime.fromtimestamp(t, tz=tz)
+        except (OSError, OverflowError, ValueError):
+            return None
+
+    def __str__(self):
+        """representation a mdf_skeleton class data structure
+
+        Returns
+        ------------
+        string of mdf class ordered as below
+        "master_channel_name
+            channel_name   description
+            numpy_array    unit"
+        """
+        output = list()
+        if self.fileName is not None:
+            output.append(f'file name : {self.fileName}\n')
+        else:
+            output.append('')
+        for m in self.fileMetadata:
+            if self.fileMetadata[m] is not None:
+                output.append(f'{m} : {self.fileMetadata[m]}\n')
+        if not self._pandasframe:
+            output.append('\nchannels listed by data groups:\n')
+            for d in self.masterChannelList:
+                if d is not None:
+                    output.append(f'{d}\n')
+                for c in self.masterChannelList[d]:
+                    output.append(f'  {c} : ')
+                    desc = self.get_channel_desc(c)
+                    if desc is not None:
+                        try:
+                            output.append(str(desc))
+                        except Exception:
+                            pass
+                    output.append('\n    ')
+                    data = self.get_channel_data(c)
+                    # not byte, impossible to represent
+                    if data.dtype.kind != 'V':
+                        output.append(array_repr(data[:],
+                                                 precision=3, suppress_small=True))
+                    unit = self.get_channel_unit(c)
+                    if unit is not None:
+                        output.append(f' {unit}\n')
+            return ''.join(output)
+        else:
+            set_option('max_rows', 3)
+            set_option('expand_frame_repr', True)
+            set_option('max_colwidth', 6)
+            for master in self.masterGroups:
+                output.append(master)
+                output.append(str(self[master]))
+            return ''.join(output)
+
+    def copy(self):
+        """copy a mdf class
+
+        Returns
+        ------------
+        mdf_skeleton: class instance
+            copy of a mdf_skeleton class
+        """
+        yop = MdfSkeleton()
+        yop.multiProc = self.multiProc
+        yop.fileName = self.fileName
+        yop.masterChannelList = deepcopy(self.masterChannelList)
+        yop.fileMetadata = deepcopy(self.fileMetadata)
+        yop.MDFVersionNumber = self.MDFVersionNumber
+        yop.filterChannelNames = self.filterChannelNames
+        yop.convertTables = self.convertTables
+        for channel in self:
+            yop[channel] = self[channel]
+        return yop
+
+
+def _open_mdf(file_name: str) -> tuple[Any, str, bool]:
+    """ Opens mdf, make a few checks and returns fid
+
+    Parameters
+    -----------
+    file_name : str
+        filename string
+
+    Returns
+    --------
+    fid
+        file identifier
+    """
+
+    try:
+        fid = open(file_name, 'rb')
+    except IOError:
+        raise Exception(f'Can not find file {file_name}')
+    zipfile = False
+    # Check whether file is MDF file -- assumes that every MDF file starts
+    # with the letters MDF
+    if fid.read(3) not in ('MDF', b'MDF'):
+        if is_zipfile(file_name):
+            # this is .mfxz file, compressed zip file
+            zipfile = True
+            fid.close()
+            zip_class = ZipFile(file_name, 'r')
+            zip_name = zip_class.namelist()[0]  # there should be only one file
+            _tmp_dir = tempfile.mkdtemp()
+            atexit.register(shutil.rmtree, _tmp_dir, True)
+            zip_name = zip_class.extract(zip_name, path=_tmp_dir)
+            fid = open(zip_name, 'rb')
+            file_name = zip_name
+        else:
+            raise Exception(f'file {file_name} is not an MDF file!')
+    return (fid, file_name, zipfile)
+
+
+def _bits_to_bytes_aligned(n_bits, numeric=True):
+    """ Converts number of bits into number of aligned bytes
+
+    Parameters
+    -------------
+    n_bits : int
+        number of bits
+    numeric: bool
+        flag to indicate channel is numeric
+
+    Returns
+    ----------
+    number of equivalent aligned bytes
+    """
+    if numeric:
+        if n_bits == 0:
+            n_bytes = 0
+        elif n_bits <= 8:
+            n_bytes = 1
+        elif n_bits <= 16:
+            n_bytes = 2
+        elif n_bits <= 32:
+            n_bytes = 4
+        elif n_bits <= 64:
+            n_bytes = 8
+        else:
+            warn('error converting bits into bytes for a numeric channel, too many bits')
+            n_bytes = _bits_to_bytes_not_aligned(n_bits)
+    else:
+        n_bytes = _bits_to_bytes_not_aligned(n_bits)
+    return n_bytes
+
+
+def _bits_to_bytes_not_aligned(n_bits):
+    """ Converts number of bits into number of not aligned bytes
+
+    Parameters
+    -------------
+    n_bits : int
+        number of bits
+
+    Returns
+    ----------
+    number of equivalent not aligned bytes
+    """
+    n_bytes = n_bits // 8
+    if not n_bits % 8 == 0:
+        n_bytes += 1
+    return n_bytes
+
+
+def _convert_name(channel_name):
+    """ Check if channelName is valid python identifier
+    to be removed with next function if no more need
+    """
+
+    if channel_name.isidentifier():
+        return channel_name
+    else:
+        channel_identifier = str(_sanitize_identifier(channel_name))
+    # all characters of channel are not compliant to python
+    if not channel_identifier:
+        # generate random name for recarray
+        channel_identifier = ''.join(
+            [choice(ascii_letters) for n in range(32)])
+    if channel_identifier in _notAllowedChannelNames:
+        # limitation from recarray object attribute
+        channel_identifier = ''.join([channel_identifier, '_'])
+    return channel_identifier
+
+
+def _gen_valid_identifier(seq):
+    # get an iterator
+    itr = iter(seq)
+    # pull characters until we get a legal one for first in identifier
+    for ch in itr:
+        if ch == '_' or ch.isalpha():
+            yield ch
+            break
+        elif ch.isdigit():
+            itr = chain(itr, ch)
+
+    # pull remaining characters and yield legal ones for identifier
+    for ch in itr:
+        if ch == '_' or ch.isalpha() or ch.isdigit():
+            yield ch
+        else:
+            yield '_'
+
+
+def _sanitize_identifier(name):
+    return ''.join(_gen_valid_identifier(name))
+
+
+class CompressedData:
+    __slots__ = ['data', 'dtype']
+    """ class to represent compressed data by blosc
+    """
+
+    def __init__(self):
+        """ data compression method
+
+        Attributes
+        -------------
+        data : numpy array compressed
+            compressed data
+        dtype : numpy dtype object
+            numpy array dtype
+        """
+        self.data = None
+        self.dtype = None
+
+    def compression(self, a):
+        """ data compression method
+
+        Parameters
+        -------------
+        a : numpy array
+            data to be compresses
+        """
+        self.data = compress(a.tobytes())
+        self.dtype = a.dtype
+
+    def decompression(self):
+        """ data decompression
+
+        Returns
+        -------------
+        uncompressed numpy array
+        """
+        return frombuffer(decompress(self.data), dtype=self.dtype)
+
+    def __str__(self):
+        """ prints compressed_data object content
+        """
+        return self.decompression()

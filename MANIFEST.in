@@ -1,0 +1,7 @@
+include LICENSE
+include COPYING
+include README.md
+include mdfreader/dataRead.pyx
+recursive-include mdfconverter *.ui
+prune mdfreader/tests/MDF4
+prune mdfreader/tests/mdf3
