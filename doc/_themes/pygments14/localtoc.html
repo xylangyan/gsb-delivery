@@ -1,0 +1,25 @@
+{#
+    basic/localtoc.html
+    ~~~~~~~~~~~~~~~~~~~
+
+    Sphinx sidebar template: local table of contents.
+
+    This file can be removed once https://github.com/sphinx-doc/sphinx/pull/9815 has landed.
+
+    :copyright: Copyright 2007-2021 by the Sphinx team, see AUTHORS.
+    :license: BSD, see LICENSE for details.
+#}
+{%- if display_toc %}
+  <div>
+    <h3><a href="{{ pathto(root_doc)|e }}">{{ _('Table of Contents') }}</a></h3>
+    {%- if toc_dropdown %}
+    <select style="width:100%;" onchange="if (this.value) location.hash = this.value;">
+      {% for title, anchor in toc_entries %}
+      <option value="{{ anchor }}" {%- if loop.first %}selected{%- endif %}>{{ title|e }}</option>
+      {%- endfor %}
+    </select>
+    {%- else %}
+    {{ toc }}
+    {%- endif %}
+  </div>
+{%- endif %}
