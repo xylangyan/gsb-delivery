@@ -1,0 +1,18 @@
+pytest
+pytest-cov
+pytest-profiling
+numpydoc
+setuptools
+wheel
+twine
+networkx
+sphinx_rtd_theme
+numpy
+pylint
+pycodestyle
+pydot
+pygments>=2.7.4 # not directly required, pinned by Snyk to avoid a vulnerability
+pylint>=2.7.0 # not directly required, pinned by Snyk to avoid a vulnerability
+sphinx>=3.0.4 # not directly required, pinned by Snyk to avoid a vulnerability
+twine
+packaging
