@@ -31,11 +31,13 @@ A Python implementation of the [Table Schema](http://specs.frictionlessdata.io/t
     - [Working with Table](#working-with-table)
     - [Working with Schema](#working-with-schema)
     - [Working with Field](#working-with-field)
+    - [Working with Intake](#working-with-intake)
   - [API Reference](#api-reference)
     - [`cli`](#cli)
     - [`Table`](#table)
     - [`Schema`](#schema)
     - [`Field`](#field)
+    - [`Intake`](#intake)
     - [`Storage`](#storage)
     - [`validate`](#validate)
     - [`infer`](#infer)
@@ -329,6 +331,23 @@ Data values can be cast to native Python objects with a Field instance. Type ins
 Casting a value will check the value is of the expected type, is in the correct format, and complies with any constraints imposed by a schema. E.g. a date value (in ISO 8601 format) can be cast with a DateType instance. Values that can't be cast will raise an `InvalidCastError` exception.
 
 Casting a value that doesn't meet the constraints will raise a `ConstraintError` exception.
+
+### Working with Intake
+
+```python
+from tableschema import Table, Intake
+
+# Receive several sources at the same time
+intake = Intake(unique=['article', 'delivery'])
+intake.add('a', Table('a.csv', schema=schema), integrity={'hash': '...'})
+intake.add('b', Table('b.csv', schema=schema), integrity={'hash': '...'})
+
+# Stream the events
+for event in intake.run():
+    print(event.type, event.key)
+```
+
+An intake commits a source only after it has passed its integrity check (declared `size`/`hash`) at the end of the file. While reading, every accepted row is emitted as a `pending` event so consumers can pre-check the unique fields; the final `committed`, `revoked` or `conflict` state follows under the same `(source, row_number)` key. Uniqueness is checked on cast values (the text `007` equals the integer `7`). Decisions are deterministic - they only depend on the receive order of the sources and the row order inside each source. Each source is read once from beginning to end; rows that have to wait are reported as `waiting` events while the other sources keep being read. Rows with cast or foreign key errors are reported as `error` events keeping the error positions, the original values and the successfully cast fields queryable, and distinguishing missing columns from empty values.
 
 ## API Reference
 
@@ -1040,6 +1059,66 @@ __Arguments__
 __Returns__
 
 `bool`: returns if value is compliant to the field
+
+
+### `Intake`
+```python
+Intake(self, unique=())
+```
+Coordinated intake of multiple tabular sources into a storage.
+
+The intake receives several sources (e.g. CSV files) at the same time and
+decides which rows are committed to the storage. A source is committed
+only if it passes its integrity check (declared size/hash) after being
+read completely. While reading, the intake emits a `pending` event for
+every accepted row so consumers can pre-check unique values (e.g. article
+and delivery numbers) before the final `committed`/`revoked`/`conflict`
+state follows - correlated by the same `(source, row_number)` key.
+
+Uniqueness of the fields given in `unique` is checked on cast values
+(e.g. the text "007" equals the integer 7) across all sources.
+
+Decisions are deterministic: they only depend on the receive order of the
+sources (the order of `add` calls) and the row order inside each source,
+never on which source happens to finish reading first. Each source is
+read once from beginning to end; waiting rows are reported as `waiting`
+events while the intake continues reading the other sources.
+
+__Arguments__
+- __unique (str[])__: field names checked for uniqueness on cast values
+
+#### `intake.add`
+```python
+intake.add(name, table, integrity=None, relations=None)
+```
+Register a source. The order of calls defines the receive order.
+
+__Arguments__
+- __name (str)__: source identifier used in every event key
+- __table (Table)__: table to read (must have a schema); it is read once from beginning to end
+- __integrity (dict)__: optional `{'size': bytes, 'hash': sha256}` the source is checked against when read completely; a source that fails the check is not committed at all
+- __relations (dict)__: optional foreign key references in the form `{resource: [{field: value, ...}, ...]}` used to validate the schema's foreign keys row by row
+
+#### `intake.run`
+```python
+intake.run()
+```
+Read all sources once and yield intake events.
+
+Row events are: `pending` (provisional hold on its unique values), `waiting` (blocked by an earlier row or withdrawn hold), `committed` (final, in the storage), `revoked` (terminal withdrawal of a hold), `conflict` (terminal uniqueness conflict with a committed row) and `error` (row could not be cast or violates a foreign key). Source events are `verified` (integrity check passed) and `integrity-error` (check failed; all its rows are revoked).
+
+__Returns__
+
+`Iterator[Event]`: yields events in deterministic order
+
+#### `intake.results`
+Current state of every seen row as `{(source, row_number): state}`.
+
+#### `intake.committed`
+Keys of all committed rows in receive/row order.
+
+#### `intake.history`
+All events emitted so far, in emission order.
 
 
 ### `Storage`

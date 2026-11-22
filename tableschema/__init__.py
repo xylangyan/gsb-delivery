@@ -16,6 +16,7 @@ from .field import Field
 from .storage import Storage
 from .validate import validate
 from .infer import infer
+from .intake import Intake
 from .schema import FailedCast
 from .exceptions import DataPackageException
 from .exceptions import TableSchemaException
