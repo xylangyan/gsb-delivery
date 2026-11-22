@@ -711,6 +711,61 @@ plugins list in the `MyPy configuration file
     [mypy]
     plugins = tinydb.mypy_plugin
 
+.. _transactions:
+
+Cross-table Transactions
+------------------------
+
+Sometimes a change spans several tables and must be applied atomically: for
+example backfilling a new device into a ``devices`` table together with its
+repair parts in a ``parts`` table that reference the device's document ID.
+The :class:`~tinydb.transactions.TransactionManager` provides this on top of
+any storage (including ``JSONStorage`` wrapped in
+:class:`~tinydb.middlewares.CachingMiddleware`):
+
+.. code-block:: python
+
+    from tinydb import TinyDB, JSONStorage, TransactionManager
+
+    db = TinyDB('repo.json', storage=JSONStorage)
+    manager = TransactionManager(db)
+
+    with manager.transaction() as tx:
+        # Reserves a new device ID right away ...
+        device_id = tx.insert('devices', {'kind': 'pump'})
+        # ... so parts can reference it immediately
+        tx.insert('parts', {'device_id': device_id, 'name': 'seal'})
+
+Everything staged in a transaction is invisible to other readers until it
+commits, and a commit writes all tables in a single storage write: after
+reopening the database you either see all of a transaction's changes or none
+of them. If the ``with`` block (or a callback passed to ``manager.run()``)
+raises, the transaction is rolled back. Document IDs are handed out by a
+shared, persisted allocator, so a second user working on the same repository
+at the same time receives a different new ID, and their committed changes
+are preserved when your transaction commits afterwards.
+
+Every commit returns a :class:`~tinydb.transactions.Receipt`. If a commit's
+outcome was uncertain (e.g. the write was never confirmed), the receipt can
+be used to finish the transaction later:
+
+.. code-block:: python
+
+    receipt = tx.receipt          # also available before/without commit
+    final = manager.recommit(receipt)
+
+``recommit`` is idempotent: an already-committed transaction is simply
+confirmed. If a document ID the transaction uses has meanwhile been taken by
+different content, :class:`~tinydb.transactions.ConflictError` is raised and
+nothing is written -- staged documents are never re-attached to an ID that
+now belongs to someone else.
+
+For auditing, the manager exposes which references were handed out
+(``manager.issued_references()``), which revision actually took effect
+(``manager.revision()`` and ``receipt.revision``) and the commit journal
+(``manager.committed_transactions()``). This metadata lives in a reserved
+``_txmeta`` table inside the same database file, so it survives reopens.
+
 What's next
 -----------
 

@@ -164,6 +164,15 @@ details.
 
             Optional: Close open file handles, etc.
 
+``tinydb.transactions``
+-----------------------
+
+.. automodule:: tinydb.transactions
+    :members: TransactionManager, Transaction, Receipt, ConflictError
+    :special-members:
+    :exclude-members: __weakref__
+    :member-order: bysource
+
 ``tinydb.utils``
 ----------------
 

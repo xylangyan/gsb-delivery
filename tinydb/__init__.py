@@ -28,6 +28,13 @@ Usage example:
 from .queries import Query, where
 from .storages import Storage, JSONStorage
 from .database import TinyDB
+from .transactions import (
+    ConflictError,
+    Receipt,
+    Transaction,
+    TransactionManager,
+)
 from .version import __version__
 
-__all__ = ('TinyDB', 'Storage', 'JSONStorage', 'Query', 'where')
+__all__ = ('TinyDB', 'Storage', 'JSONStorage', 'Query', 'where',
+           'ConflictError', 'Receipt', 'Transaction', 'TransactionManager')
