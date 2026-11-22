@@ -559,6 +559,77 @@ Finally, you can get a list with the names of all tables in your database:
 >>> db.tables()
 {'_default', 'table_name'}
 
+.. _table_generations:
+
+Table Generations, Merging and References
+.........................................
+
+Sometimes a table has to be merged into another one, for example when two
+registration tables ``north`` and ``south`` are consolidated into a single
+``units`` table. Both source tables may contain a document with the same ID
+(such as ID 7) even though they describe different devices. TinyDB keeps
+these generations apart so old references keep pointing at the right data.
+
+To merge tables, use ``db.merge_tables(...)``. Every moved document receives a
+fresh ID in the target table, so duplicate IDs never collide. The returned
+mapping translates the old IDs to the new ones:
+
+>>> id_maps = db.merge_tables('units', ['north', 'south'])
+>>> id_maps['north'][7]
+[7]
+>>> id_maps['south'][7]
+[8]
+
+The merged table names are *retired*. Handles that were already opened stay
+readable -- their data is now served from the merge target under the original
+IDs -- but reject writes with
+:class:`~tinydb.references.TableRetiredError`. If a caller has only consumed
+part of an iteration, ``table.snapshot()`` pins a read-only view so the
+remaining documents are read from the same version:
+
+>>> pinned = north.snapshot()
+>>> # ... merge happens here ...
+>>> pinned.all()  # still the pre-merge data
+
+A name can be reused afterwards. The reused table is a brand-new, empty
+generation with a higher generation number, so a late change addressed to the
+old generation can never reach it:
+
+>>> new_north = db.reuse_table_name('north')
+>>> new_north.version
+2
+
+References
+..........
+
+A work order that only stored a table name and a document ID can capture a
+:class:`~tinydb.references.TableRef`. Use ``table.current_ref(doc_id=...)``
+while the handle is open to also remember the table generation:
+
+>>> ref = north.current_ref(doc_id=7)
+>>> ref
+TableRef(name='north', version=1, doc_id=7)
+
+Back on any (possibly reopened) database, ``db.resolve_ref(ref)`` follows the
+merge history and returns where the document lives now:
+
+>>> db.resolve_ref(ref)
+ResolvedLocation(table='units', doc_id=7)
+
+When the work order only stored the bare table name (``version=None``) and
+that name was reused, both the old generation's merge target and the new
+table are valid candidates. TinyDB never guesses:
+``db.resolve_candidates(...)`` returns both candidates, while
+``db.resolve_ref(...)`` raises
+:class:`~tinydb.references.AmbiguousReference`. A reference that matches no
+known generation raises :class:`~tinydb.references.UnresolvableReference`
+instead of silently assuming the same-named newer table.
+
+.. note::
+   The generation information is stored in a reserved ``__tinydb_meta__``
+   entry. Databases that never use merging keep their original file layout
+   exactly, with no extra metadata.
+
 .. _default_table:
 
 Default Table

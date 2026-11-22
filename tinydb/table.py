@@ -12,7 +12,16 @@ from typing import (
     overload
 )
 
+from . import registry
 from .queries import QueryLike
+from .references import (
+    AmbiguousReference,
+    DEFAULT_TABLE_VERSION,
+    ResolvedLocation,
+    TableRef,
+    TableRetiredError,
+    UnresolvableReference,
+)
 from .storages import Storage
 from .utils import LRUCache
 
@@ -69,6 +78,8 @@ class Table:
     :param name: The table name
     :param cache_size: Maximum capacity of query cache
     :param persist_empty: Store new table even with no operations on it
+    :param version: The table generation this handle belongs to. It is
+                    resolved lazily from the database metadata when not given.
     """
 
     #: The class used to represent documents
@@ -96,7 +107,8 @@ class Table:
         storage: Storage,
         name: str,
         cache_size: int = default_query_cache_capacity,
-        persist_empty: bool = False
+        persist_empty: bool = False,
+        version: Optional[int] = None
     ):
         """
         Create a table instance.
@@ -104,14 +116,36 @@ class Table:
 
         self._storage = storage
         self._name = name
+        self._version = version
         self._query_cache: LRUCache[QueryLike, list[Document]] \
             = self.query_cache_class(capacity=cache_size)
+
+        # When not ``None``, all reads are served from this fixed database
+        # state instead of the storage. This is how a table handle keeps
+        # iterating the generation it was opened with after a merge.
+        self._snapshot: Optional[dict] = None
 
         self._next_id: Optional[int] = None
         # Only persist a brand-new empty table. Never clear existing documents
         # when reopen/construct with persist_empty=True (see issue #636).
         if persist_empty and not self._read_table():
             self._update_table(lambda table: table.clear())
+
+    @property
+    def version(self) -> int:
+        """
+        The generation of the table data this handle reads from.
+
+        For a regular handle this is the table's current generation as
+        recorded in the database metadata. A snapshot handle keeps reporting
+        the generation it was created with even after the table name is
+        merged or reused.
+        """
+
+        if self._version is not None:
+            return self._version
+
+        return registry.get_version(self._read_data(), self.name)
 
     def __repr__(self):
         args = [
@@ -261,10 +295,13 @@ class Table:
         """
 
         # First, we check the query cache to see if it has results for this
-        # query
-        cached_results = self._query_cache.get(cond)
-        if cached_results is not None:
-            return cached_results[:]
+        # query. Reads redirected through a merge alias bypass the cache:
+        # the merge target can keep changing while this retired handle is
+        # never written through, so its cache would never be invalidated.
+        if self._redirected_alias() is None:
+            cached_results = self._query_cache.get(cond)
+            if cached_results is not None:
+                return cached_results[:]
 
         # Perform the search by applying the query to all documents.
         # Then, only if the document matches the query, convert it
@@ -290,7 +327,7 @@ class Table:
         # are cacheable.
         is_cacheable: Callable[[], bool] = getattr(cond, 'is_cacheable',
                                                    lambda: True)
-        if is_cacheable():
+        if is_cacheable() and self._redirected_alias() is None:
             # Update the query cache
             self._query_cache[cond] = docs[:]
 
@@ -776,6 +813,264 @@ class Table:
 
         return next_id
 
+    def snapshot(self) -> 'Table':
+        """
+        Return a read-only table handle pinned to the current state.
+
+        The snapshot keeps serving the exact documents and generation visible
+        at call time. Later merges, writes or table-name reuse in the same
+        database do not affect it, so a caller that has started iterating can
+        finish reading the same version through the snapshot.
+
+        Write operations on a snapshot raise :class:`TableRetiredError`.
+        """
+
+        pinned = registry.normalize_data(self._storage.read())
+        snap = type(self)(
+            self._storage,
+            self._name,
+            cache_size=0,
+            version=self.version,
+        )
+        snap._snapshot = pinned
+
+        return snap
+
+    def current_ref(self, doc_id: Optional[int] = None) -> TableRef:
+        """
+        Capture a :class:`~tinydb.references.TableRef` for this table.
+
+        :param doc_id: document ID to include in the reference, if the
+                       caller only needs a single document.
+        """
+
+        return TableRef(self.name, self.version, doc_id)
+
+    def merge_table(self, target: 'Table') -> dict[int, list[int]]:
+        """
+        Move every document of this table into ``target`` and retire this name.
+
+        Each moved document gets a fresh ID in ``target`` (duplicate IDs, such
+        as ID 7 existing in both source and target, never collide). The return
+        value maps every old source ID to the list of new IDs it received in
+        ``target`` -- a list because the same ID may be used by several
+        documents in exotic storages.
+
+        After the merge this table's name is recorded as retired with an alias
+        pointing at ``target``, so references captured through
+        :meth:`current_ref` keep resolving to the moved documents. Handles of
+        the retired table stay readable but reject writes.
+
+        :param target: the table that receives the documents.
+        """
+
+        if self._snapshot is not None or target._snapshot is not None:
+            raise ValueError('Cannot merge a read-only snapshot')
+        if self._storage is not target._storage:
+            raise ValueError('Tables must share the same storage to merge')
+        if self.name == target.name:
+            raise ValueError('Cannot merge a table into itself')
+
+        # Refuse the merge if either side has already been retired.
+        self._guard_writable()
+        target._guard_writable()
+
+        source_version = self.version
+        id_map: dict[int, list[int]] = {}
+
+        tables = self._storage.read()
+        if tables is None:
+            tables = {}
+        registry.ensure_meta(tables)
+
+        source_raw = tables.pop(self.name, {})
+        target_raw = tables.setdefault(target.name, {})
+
+        for old_id, doc in sorted(
+            source_raw.items(),
+            key=lambda item: self.document_id_class(item[0]),
+        ):
+            old_doc_id = self.document_id_class(old_id)
+            new_doc_id = (
+                max(
+                    (self.document_id_class(key) for key in target_raw.keys()),
+                    default=0,
+                ) + 1
+            )
+            target_raw[str(new_doc_id)] = doc
+            id_map.setdefault(old_doc_id, []).append(new_doc_id)
+
+        registry.retire_name(tables, self.name)
+        serialized_map = {
+            str(old_id): new_ids for old_id, new_ids in id_map.items()
+        }
+        registry.add_alias(
+            tables, self.name, source_version, target.name, serialized_map
+        )
+        # Older generations whose documents were already living in this table
+        # must follow it to the new merge target, with composed ID maps.
+        registry.rewrite_aliases_pointing_at(
+            tables, self.name, target.name, id_map
+        )
+        target._version = registry.register_table(tables, target.name)
+
+        self._storage.write(tables)
+
+        # Every cached query result is potentially stale now.
+        self.clear_cache()
+        target.clear_cache()
+        target._next_id = None
+
+        return id_map
+
+    def is_retired(self) -> bool:
+        """
+        Return whether this handle's table generation no longer accepts writes.
+
+        A table is retired when its name has been merged away, reused for a
+        newer generation, or when an unpinned handle cannot uniquely identify
+        a single generation to write to. Retired handles remain usable for
+        reads whenever the generation can still be located.
+        """
+
+        if self._snapshot is not None:
+            return False
+
+        try:
+            self._check_generation(self._storage.read())
+        except TableRetiredError:
+            return True
+
+        return False
+
+    def _guard_writable(self) -> None:
+        """
+        Raise if this handle must not perform writes.
+        """
+
+        if self._snapshot is not None:
+            raise TableRetiredError(
+                f'Table {self.name!r} is a read-only snapshot'
+            )
+
+        self._check_generation(self._storage.read())
+
+    def _check_generation(self, data: Optional[dict]) -> None:
+        """
+        Validate that this handle's generation is still the live one.
+
+        Databases without any generation metadata only ever contain
+        first-generation tables, so there is nothing to enforce there.
+        """
+
+        if not registry.get_meta(data):
+            return
+
+        generations = registry.generations_for(data, self.name)
+        if not generations:
+            # The table has never been persisted: this is a brand-new table
+            # whose first write will register it in the metadata.
+            return
+
+        # Pin on first write when the name still denotes a single live
+        # generation without any merge history.
+        if self._version is None:
+            if registry.latest_alias_entry(data, self.name) is not None:
+                raise TableRetiredError(
+                    f'Table {self.name!r} has multiple generations; open a '
+                    f'generation-specific handle before writing'
+                )
+            if not registry.is_live(data, self.name):
+                raise TableRetiredError(
+                    f'Table {self.name!r} has been retired by a merge'
+                )
+            self._version = registry.get_version(data, self.name)
+
+        if registry.alias_entry(data, self.name, self._version) is not None:
+            raise TableRetiredError(
+                f'Table {self.name!r} generation {self._version} has '
+                f'been retired by a merge'
+            )
+        if (
+            not registry.is_live(data, self.name)
+            or registry.get_version(data, self.name) != self._version
+        ):
+            raise TableRetiredError(
+                f'Table {self.name!r} generation {self._version} has '
+                f'been retired; the name is now used by generation '
+                f'{registry.get_version(data, self.name)}'
+            )
+
+    def _read_data(self) -> Optional[dict]:
+        """
+        Read the whole database state, honoring a pinned snapshot.
+
+        On first contact with a metadata-aware database the handle pins
+        itself to the current live generation, so a long-lived handle keeps
+        reading the generation it was opened with even after the name is
+        merged or reused later. A freshly opened handle naturally pins to the
+        newest generation, so normal table access reads the current table.
+        """
+
+        if self._snapshot is not None:
+            return self._snapshot
+
+        data = self._storage.read()
+
+        if self._version is not None:
+            return data
+
+        if registry.get_meta(data):
+            # Pin to the current live generation on first contact. A freshly
+            # opened handle thus naturally follows the newest generation,
+            # while an already opened handle keeps the generation it captured.
+            if registry.is_live(data, self.name):
+                self._version = registry.get_version(data, self.name)
+        elif data is not None and self.name in data:
+            # A table written before generations existed is implicitly part
+            # of the first generation. Pinning here protects handles that are
+            # already open before the first merge introduces metadata.
+            self._version = DEFAULT_TABLE_VERSION
+
+        return data
+
+    def _read_context(
+        self, data: dict
+    ) -> tuple[str, Optional[dict]]:
+        """
+        Decide how this handle should read its table from ``data``.
+
+        Returns a ``(mode, entry)`` tuple where ``mode`` is:
+
+        - ``'physical'``: read the live table directly,
+        - ``'alias'``: read through the merge alias ``entry``,
+        - ``'ambiguous'``: a merge target and a newer same-named table both
+          match and the handle carries no generation to choose between them,
+        - ``'unresolvable'``: the handle's pinned generation no longer exists.
+        """
+
+        if not registry.get_meta(data):
+            return 'physical', None
+
+        if self._version is not None:
+            entry = registry.alias_entry(data, self.name, self._version)
+            if entry is not None:
+                return 'alias', entry
+            if (
+                registry.is_live(data, self.name)
+                and registry.get_version(data, self.name) == self._version
+            ):
+                return 'physical', None
+            return 'unresolvable', None
+
+        alias = registry.latest_alias_entry(data, self.name)
+        if alias is None:
+            return 'physical', None
+        if registry.is_live(data, self.name):
+            return 'ambiguous', None
+
+        return 'alias', alias
+
     def _read_table(self) -> dict[str, Mapping]:
         """
         Read the table data from the underlying storage.
@@ -783,23 +1078,78 @@ class Table:
         Documents and doc_ids are NOT yet transformed, as
         we may not want to convert *all* documents when returning
         only one document for example.
+
+        When the table generation this handle belongs to has been merged
+        away, the data is read through the recorded alias instead: the merge
+        target's documents are presented under their original IDs. When both
+        a merge target and a newer same-named table match, the lack of
+        generation information is reported instead of silently guessing.
         """
 
         # Retrieve the tables from the storage
-        tables = self._storage.read()
+        data = self._read_data()
 
-        if tables is None:
+        if data is None:
             # The database is empty
             return {}
 
+        mode, entry = self._read_context(data)
+
+        if mode == 'ambiguous':
+            raise AmbiguousReference(
+                TableRef(self.name, None),
+                [
+                    ResolvedLocation(table=table)
+                    for _, table in registry.generations_for(data, self.name)
+                ],
+            )
+        if mode == 'unresolvable':
+            raise UnresolvableReference(TableRef(self.name, self._version))
+        if mode == 'alias':
+            return self._read_through_alias(data, entry)
+
         # Retrieve the current table's data
         try:
-            table = tables[self.name]
+            table = data[self.name]
         except KeyError:
             # The table does not exist yet, so it is empty
             return {}
 
         return table
+
+    def _redirected_alias(self) -> Optional[dict]:
+        """
+        Return the merge alias currently redirecting this handle's reads.
+        """
+
+        data = self._read_data()
+        if data is None:
+            return None
+
+        mode, entry = self._read_context(data)
+        return entry if mode == 'alias' else None
+
+    def _read_through_alias(
+        self, data: dict, alias: dict
+    ) -> dict[str, Mapping]:
+        """
+        Build the old-generation view of the table from its merge target.
+        """
+
+        target_table = data.get(alias['table'], {})
+        view: dict[str, Mapping] = {}
+
+        for old_id, new_ids in registry.alias_doc_ids(
+            data, self.name, alias['version']
+        ).items():
+            if not new_ids:
+                continue
+
+            doc = target_table.get(str(new_ids[0]))
+            if doc is not None:
+                view[str(old_id)] = doc
+
+        return view
 
     def _update_table(self, updater: Callable[[dict[int, Mapping]], None]):
         """
@@ -815,11 +1165,21 @@ class Table:
         document class, as the table data will *not* be returned to the user.
         """
 
+        if self._snapshot is not None:
+            raise TableRetiredError(
+                f'Table {self.name!r} is a read-only snapshot'
+            )
+
         tables = self._storage.read()
 
         if tables is None:
             # The database is empty
             tables = {}
+
+        # Reject writes addressed at a generation that was merged away or
+        # superseded by a name reuse. This reuses the read above so a normal
+        # write does not cost any extra storage access.
+        self._check_generation(tables)
 
         try:
             raw_table = tables[self.name]
@@ -838,6 +1198,12 @@ class Table:
 
         # Perform the table update operation
         updater(table)
+
+        # Only maintain generation metadata once the database has opted into
+        # it (via a merge or a table-name reuse). Plain databases keep the
+        # exact historical file layout.
+        if registry.get_meta(tables):
+            self._version = registry.register_table(tables, self.name)
 
         # Convert the document IDs back to strings.
         # This is required as some storages (most notably the JSON file format)

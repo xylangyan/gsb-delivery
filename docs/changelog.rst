@@ -19,6 +19,31 @@ see `semver.org <http://semver.org/>`_
           syntax (``Query()['some']['nested']['field']``) that will
           not break even when new methods are added to the ``Query`` API.
 
+Unreleased
+^^^^^^^^^^
+
+- Add table generations, table merging and generation-aware references.
+  ``TinyDB.merge_tables()`` moves documents from one or more source tables
+  into a target table, reassigning document IDs so duplicates (e.g. ID 7 in
+  two different tables) never collide, and retires the source names. Already
+  opened source handles stay readable through a recorded alias (under the
+  original IDs) but reject writes with ``TableRetiredError``;
+  ``Table.snapshot()`` pins a read-only view for finishing a partial
+  iteration.
+- Add ``TinyDB.reuse_table_name()`` which creates a new, empty generation
+  under a previously retired name. Late writes addressed to the old
+  generation cannot reach the new table.
+- Add ``Table.current_ref()``, ``TinyDB.resolve_ref()`` and
+  ``TinyDB.resolve_candidates()`` together with the ``TableRef``,
+  ``ResolvedLocation``, ``AmbiguousReference`` and
+  ``UnresolvableReference`` types. A reference that only stores a table name
+  and matches several generations yields all candidates (or an exception)
+  instead of guessing; an unresolvable reference never falls back to a
+  same-named newer table.
+- The generation metadata is stored in a reserved ``__tinydb_meta__`` entry
+  and is only written once merging or name reuse is used. Databases that only
+  perform regular CRUD keep their exact previous file layout.
+
 v4.9.0 (2026-08-06)
 ^^^^^^^^^^^^^^^^^^^
 

@@ -4,7 +4,13 @@ This module contains the main component of TinyDB: the database.
 
 from collections.abc import Iterator
 
-from . import JSONStorage
+from . import JSONStorage, registry
+from .references import (
+    AmbiguousReference,
+    ResolvedLocation,
+    TableRef,
+    UnresolvableReference,
+)
 from .storages import Storage
 from .table import Table, Document
 from .utils import with_typehint
@@ -134,35 +140,24 @@ class TinyDB(TableBase):
 
     def tables(self) -> set[str]:
         """
-        Get the names of all tables in the database.
+        Get the names of all live tables in the database.
+
+        Only currently existing, non-retired tables are returned. The
+        generation metadata entry is never part of the result.
 
         :returns: a set of table names
         """
 
-        # TinyDB stores data as a dict of tables like this:
-        #
-        #   {
-        #       '_default': {
-        #           0: {document...},
-        #           1: {document...},
-        #       },
-        #       'table1': {
-        #           ...
-        #       }
-        #   }
-        #
-        # To get a set of table names, we thus construct a set of this main
-        # dict which returns a set of the dict keys which are the table names.
-        #
-        # Storage.read() may return ``None`` if the database file is empty,
-        # so we need to consider this case to and return an empty set in this
-        # case.
+        data = self.storage.read()
 
-        return set(self.storage.read() or {})
+        return registry.physical_table_names(data)
 
     def drop_tables(self) -> None:
         """
         Drop all tables from the database. **CANNOT BE REVERSED!**
+
+        This also clears the table generation metadata, so the database is
+        returned to a fully empty state.
         """
 
         # We drop all tables from this database by writing an empty dict
@@ -176,6 +171,10 @@ class TinyDB(TableBase):
     def drop_table(self, name: str) -> None:
         """
         Drop a specific table from the database. **CANNOT BE REVERSED!**
+
+        Both the physical table and every recorded generation/alias entry of
+        the name are removed, so the name can later be reused as a fresh
+        first-generation table.
 
         :param name: The name of the table to drop.
         """
@@ -191,12 +190,21 @@ class TinyDB(TableBase):
         if data is None:
             return
 
+        had_meta = bool(registry.get_meta(data))
+
         # The table does not exist, there's nothing to do
-        if name not in data:
+        if name not in registry.physical_table_names(data):
+            # Still clean up stale metadata for a previously retired name,
+            # but don't introduce metadata into a legacy database.
+            if had_meta:
+                registry.forget_name(data, name)
+                self.storage.write(data)
             return
 
         # Remove the table from the data dict
         del data[name]
+        if had_meta:
+            registry.forget_name(data, name)
 
         # Store the updated data back to the storage
         self.storage.write(data)
@@ -210,6 +218,157 @@ class TinyDB(TableBase):
         :rtype: Storage
         """
         return self._storage
+
+    def merge_tables(
+        self, target_name: str, source_names: list[str]
+    ) -> dict[str, dict[int, list[int]]]:
+        """
+        Merge one or more tables into another table and retire their names.
+
+        All documents of every table in ``source_names`` are moved into the
+        table ``target_name`` (which is created on demand). Duplicate document
+        IDs across the sources and the target do not collide: every moved
+        document receives a fresh ID in the target. The returned mapping
+        reports the old-ID -> new-ID(s) translation per source table.
+
+        Every source name is retired afterwards: an alias records that its
+        documents now live in ``target_name``, so references captured before
+        the merge (see :meth:`tinydb.table.Table.current_ref`) still resolve
+        to the moved data. Already opened source handles stay readable but
+        reject further writes.
+
+        :param target_name: The table that receives all documents.
+        :param source_names: The tables that are merged away.
+        """
+
+        if target_name in source_names:
+            raise ValueError('A table cannot be merged into itself')
+
+        data = self.storage.read()
+        if registry.get_meta(data) and not registry.is_live(
+            data, target_name
+        ) and registry.generations_for(data, target_name):
+            raise ValueError(
+                f'Table {target_name!r} has been retired; call '
+                f'reuse_table_name() before merging into it again'
+            )
+
+        target = self.table(target_name)
+        id_maps: dict[str, dict[int, list[int]]] = {}
+
+        for source_name in source_names:
+            source = self.table(source_name)
+            id_maps[source_name] = source.merge_table(target)
+
+            # Forget the retired handle; a later ``table()`` call opens a
+            # fresh, generation-aware handle instead.
+            self._tables.pop(source_name, None)
+
+        return id_maps
+
+    def reuse_table_name(self, name: str) -> Table:
+        """
+        Create a new, empty table under a name that was merged or dropped.
+
+        The reused table receives a brand-new generation number, one higher
+        than any generation the name previously had. Documents and references
+        of the old generation keep pointing at the merge target, so a late
+        write addressed to the old generation can never reach this table.
+
+        :param name: The table name to reuse.
+        :returns: The fresh, empty table handle.
+        """
+
+        data = self.storage.read()
+        if data is None:
+            data = {}
+
+        registry.ensure_meta(data)
+
+        if registry.is_live(data, name):
+            raise ValueError(
+                f'Table {name!r} still exists; drop or merge it before '
+                f'reusing the name'
+            )
+
+        new_version = registry.bump_version(data, name)
+        data[name] = {}
+        self.storage.write(data)
+
+        # Replace any cached handle of the retired generation.
+        self._tables.pop(name, None)
+        table = self.table_class(
+            self.storage, name, version=new_version
+        )
+        self._tables[name] = table
+
+        return table
+
+    def resolve_candidates(self, ref: TableRef) -> list[ResolvedLocation]:
+        """
+        Return every location a :class:`~tinydb.references.TableRef` may mean.
+
+        - A reference carrying a generation returns at most one location: the
+          live table when the generation is current, or the merge target
+          recorded for that generation.
+        - A reference that only stores a table name returns one location per
+          generation known for that name. When the name was reused, this
+          naturally contains both the old generation's merge target and the
+          new table.
+        - An unknown name/generation returns an empty list -- the caller then
+          knows the evidence is insufficient instead of guessing.
+
+        :param ref: The reference captured by a work order.
+        """
+
+        data = self.storage.read()
+
+        # Databases without any generation metadata only ever contain
+        # first-generation tables. A reference to an existing physical table
+        # therefore resolves directly, including references that only stored
+        # the bare table name.
+        if not registry.get_meta(data):
+            if (
+                ref.name in registry.physical_table_names(data)
+                and ref.version in (None, 1)
+            ):
+                return [ResolvedLocation(table=ref.name, doc_id=ref.doc_id)]
+            return []
+
+        generations = registry.generations_for(data, ref.name)
+
+        if ref.version is not None:
+            generations = [
+                (version, table)
+                for version, table in generations
+                if version == ref.version
+            ]
+
+        return [
+            ResolvedLocation(table=table, doc_id=ref.doc_id)
+            for _, table in generations
+        ]
+
+    def resolve_ref(self, ref: TableRef) -> ResolvedLocation:
+        """
+        Resolve a reference to exactly one current location.
+
+        :raises AmbiguousReference: if the reference carries no generation and
+            several generations match. The exception exposes the candidates.
+        :raises UnresolvableReference: if no generation matches and there is
+            not enough evidence to pick a location. The new table is never
+            assumed automatically.
+        """
+
+        candidates = self.resolve_candidates(ref)
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        if len(candidates) > 1:
+            raise AmbiguousReference(ref, candidates)
+
+        raise UnresolvableReference(ref)
 
     def close(self) -> None:
         """
