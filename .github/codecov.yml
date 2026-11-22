@@ -1,0 +1,17 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 100
+        threshold: 0.1
+    patch:
+      default:
+        target: 100
+  ignore:
+    - "tests/**"
+comment:
+  layout: "diff, files"
+  behavior: default
+  require_changes: true  # if true: only post the comment if coverage changes
+  branches:               # branch names that can post comment
+    - "main"

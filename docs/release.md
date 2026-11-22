@@ -1,0 +1,1283 @@
+# Release notes
+
+<!--
+# Unindent the section between releases in order
+# to document your changes. On releases it will be
+# re-indented so that it does not show up in the notes.
+
+(unreleased)=
+
+## Unreleased
+-->
+
+(unreleased)=
+
+## Unreleased
+
+### Maintenance
+
+* Build wheels for CPython 3.15 and free-threaded CPython 3.15t, using cibuildwheel 4.3.5,
+  and run the test suite on both. {issue}`874`
+* Build and test on the macos-15 and macos-15-intel runners, replacing the retired
+  macos-14 runner. {pr}`878`
+* Run the i386 tests in a 32-bit Alpine Docker container instead of through the
+  `jirutka/setup-alpine` action, which broke on the Ubuntu 26.04 `ubuntu-latest` image.
+* Only fail CI on Codecov upload errors in the upstream repository, so test runs on
+  forks without a `CODECOV_TOKEN` can pass.
+* Trim CI: run the test suite against every built wheel, test non-Linux-x86 platforms
+  on Python 3.12 and 3.14t only, run workflows on pushes to `main` (and tags for
+  wheels) rather than every branch, test the oldest supported and latest Zarr
+  releases, use Alpine's numpy in the i386 job, and remove the unused release-notes
+  labeler.
+* Run mypy in strict mode over `src`, in CI as well as in pre-commit (now mypy 2.4.1), and
+  stop ignoring missing imports globally.
+* Check the behavior every codec promises through `numcodecs.abc.Codec` in a new
+  `tests/test_codec_contract.py`, and add strict static type tests in `tests/typing`, run by
+  mypy and pyright in a new `typing` CI job.
+
+### Fixes
+
+* `import numcodecs` no longer fails when a zfpy post-release such as 1.0.1.post0 is
+  installed. zfpy versions are now parsed with `packaging`, which becomes a dependency,
+  and the `zfpy` extra now requires zfpy >= 1.0.1. {issue}`892`
+* `decode(buf, out=out)` now returns `out` itself for every codec, as the `Codec`
+  docstring describes. Zlib, BZ2, LZMA, Base64, Shuffle, ZFPY, PCodec, the three VLen
+  codecs, and every codec built on `numcodecs.compat.ndarray_copy` returned a flattened view
+  of `out` instead, or a new ndarray when `out` was a `bytearray`. The decoded bytes were
+  already written into `out`; only the returned object changes.
+* `JenkinsLookup3.decode` accepts any contiguous writable buffer as `out`, not only an
+  ndarray, and raises `ValueError` when `out` has the wrong size.
+* `JenkinsLookup3.get_config()` reports `prefix` as a list of ints, so a configuration
+  with a prefix can be serialized to JSON and passed back to `get_codec`. It held a numpy
+  array, which `json.dumps` rejected and `get_codec` could not compare. The constructor
+  accepts a list of ints as well as a bytes-like `prefix`.
+* CRC32, Adler32 and CRC32C check the byte length of the input to `decode`, not its
+  length along the first axis, before looking for the checksum.
+* `Fletcher32.decode` without `out` returns a `uint8` ndarray, like the other checksum
+  codecs, instead of a Cython memoryview slice.
+* Correct type annotations that described something other than what the code does:
+  `numcodecs.registry.codec_registry` holds codec classes (`dict[str, type[Codec]]`) and
+  `entries` holds single entry points (`dict[str, EntryPoint]`). `numcodecs.compat`
+  functions now annotate their parameters, and `ndarray_copy` returns the type of `dst`
+  (or of `src` when `dst` is `None`). The `NDArrayLike`, `DType` and `FlagsObj` protocols
+  declare read-only properties, so `numpy.ndarray` now satisfies `NDArrayLike` for type
+  checkers, and `numcodecs.ndarray_like.BufferLike` names "a buffer or an ndarray-like".
+* `numcodecs` defines `__all__`, so type checkers treat its re-exported codec classes as
+  public. `from numcodecs import *` now imports only those names.
+* `register_codec` raises `ValueError` for a class without a `codec_id` when no id is
+  given, instead of registering it under `None`.
+* `Codec.codec_id` no longer defaults to `None`. Abstract intermediate classes such as
+  `Checksum32` leave it unset, so reading it raises `AttributeError`; every concrete codec
+  sets it.
+
+### Enhancements
+
+* Annotate `numcodecs.abc.Codec`. `encode` and `decode` take and return
+  `numcodecs.ndarray_like.BufferLike` (an object exporting the buffer protocol, or an
+  ndarray-like), with `buf` positional-only, and `decode(buf, out=out)` is typed to return
+  the type of `out`. `get_config` returns `Mapping[str, Any]` and `from_config` returns
+  `Self`. Previously pyright inferred that `encode` and `decode` return `None`.
+* Add structural protocols `numcodecs.abc.CodecProtocol`, `BytesBytesCodec`,
+  `ArrayArrayCodec` and `ArrayBytesCodec` for code that accepts any object implementing the
+  codec interface.
+* numcodecs now ships a `py.typed` marker (PEP 561), so type checkers use its annotations
+  and stubs instead of treating the package as untyped. Downstream projects can drop
+  `ignore_missing_imports` for numcodecs. Third-party codecs that subclass `Codec` are
+  type-checked against it for the first time, which may surface two one-line fixes: a
+  `# type: ignore[misc]` on `class X(Codec)` that is no longer needed, and a
+  `from_config(cls, config: dict[...])` override that must accept a `Mapping`.
+* Annotate the concrete codecs. Each `get_config` returns a TypedDict naming the codec's
+  parameters (`ZlibConfig`, `BloscConfig`, ...), all subclasses of
+  `numcodecs.abc.CodecConfig`, which carries the `id` and declares any further keys as
+  read-only JSON values (PEP 728 `extra_items`). `numcodecs.abc.JSON` names a
+  JSON-serializable value. Compressors: Zlib, GZip, BZ2, LZMA, Base64, Blosc, Zstd and LZ4.
+  Checksums: CRC32, Adler32, CRC32C, JenkinsLookup3 and Fletcher32. Filters: AsType,
+  Delta, Quantize, FixedScaleOffset, BitRound, PackBits, Shuffle and Categorize. Object
+  and array-to-bytes codecs: JSON, MsgPack, Pickle (whose `decode` returns `Any`), the VLen
+  codecs, ZFPY and PCodec.
+  `typing_extensions` >= 4.13 is now required.
+* Ship `.pyi` type stubs for the Cython extension modules (`blosc`, `zstd`, `lz4`, `vlen`,
+  `fletcher32`, `jenkins`, `compat_ext` and `_shuffle`), checked against the compiled
+  modules with `mypy.stubtest` in CI. Type checkers previously saw the Blosc, Zstd, LZ4,
+  Fletcher32 and VLen codecs as unknown.
+
+### Deprecations
+
+* Loading a codec through the `numcodecs.codecs` entry point group whose class does not
+  subclass `numcodecs.abc.Codec` now emits a `DeprecationWarning`.
+
+(release_0.17.1)=
+
+## 0.17.1
+
+### Security
+
+* `Pickle.decode` now refuses to unpickle data unless the process opts in, because
+  unpickling can execute arbitrary code and the `pickle` codec can be selected by
+  untrusted array metadata. Decoding raises `numcodecs.errors.UnsafeDecodeError` by
+  default. To read trusted pickle-encoded data, set
+  `numcodecs.pickles.ALLOW_UNSAFE_PICKLE_DECODE = True`, or set the environment variable
+  `NUMCODECS_ALLOW_UNSAFE_PICKLE_DECODE=1` (or `"yes"` / `"true"`) before importing numcodecs.
+  These settings only affect decoding. Encoding with the pickle codec remains allowed by default.
+  See [GHSA-jqc8-qjfv-5m6r](https://github.com/zarr-developers/numcodecs/security/advisories/GHSA-jqc8-qjfv-5m6r).
+
+### Maintenance
+
+* Allow building against a system Zlib. Note, this is only required if blosc is still
+  vendored, and a vendored Zlib is no longer built if blosc is not.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`860`
+
+(release_0.17.0)=
+
+## 0.17.0
+
+### Breaking changes
+
+* The minimum supported Python version is now 3.12, and the minimum supported NumPy
+  version is now 2.0, following
+  [SPEC-0](https://scientific-python.org/specs/spec-0000/).
+  By {user}`Max Jones <maxrjones>`, {issue}`834`
+
+* Tests are no longer installed as part of the `numcodecs` package. They have moved from
+  `numcodecs/tests/` to a top-level `tests/` directory, so `numcodecs.tests` (including
+  `numcodecs.tests.common`) can no longer be imported from an installed copy of
+  `numcodecs`. Downstream packages that reused the test helpers should vendor the
+  helpers they need. The tests and the `fixture/` data are still shipped in the source
+  distribution, so downstream packagers can continue to run the suite from an unpacked
+  sdist.
+  By {user}`Max Jones <maxrjones>`, {issue}`829`
+
+* The `DISABLE_NUMCODECS_CEXT` environment variable is no longer supported, as a
+  consequence of the migration to meson-python (see Maintenance below).
+  By {user}`Max Jones <maxrjones>`, {issue}`826`
+
+* The `pcodec` optional dependency now requires `pcodec>=1,<2`, up from
+  `pcodec>=0.3,<0.4`.
+  By {user}`Martin Loncaric <mwlon>`, {issue}`817`
+
+* Two behavioral changes in `numcodecs.blosc` accompany the free-threading work (see
+  Enhancements below): the undocumented `numcodecs.blosc.get_mutex` function is removed,
+  replaced by a private `threading.Lock` that also guards `set_nthreads`, `_init`,
+  `_destroy` and the global-context decompression path; and on platforms where
+  `multiprocessing.Lock()` raises (no `sem_open`), Blosc's internal threads are now used
+  from the main thread instead of always falling back to the single-threaded context
+  functions.
+  By {user}`Kumar Aditya <kumaraditya303>`, {issue}`858`
+
+### Deprecations
+
+* `PCodec(delta_spec="none")` is deprecated in favor of `PCodec(delta_spec="no_op")` and
+  now emits a `DeprecationWarning`. The `"none"` spelling still works and produces
+  identical output, but it will be removed in a future version.
+  By {user}`Martin Loncaric <mwlon>`, {issue}`817`
+
+### Enhancements
+
+* Add support for free-threaded CPython (3.14t). All Cython extensions are declared
+  `freethreading_compatible`, so importing `numcodecs` no longer re-enables the GIL;
+  free-threaded wheels are now built and 3.14t is part of the test matrix. Building from
+  source now requires Cython 3.1 or newer. See Breaking changes above for the
+  accompanying `numcodecs.blosc` changes.
+  By {user}`Kumar Aditya <kumaraditya303>`, {issue}`858`
+
+### Maintenance
+
+* **Migrate the build system from setuptools/`setup.py` to meson-python.** This replaces
+  the 386-line `setup.py` with declarative `meson.build` files. Benefits include correct
+  SIMD detection for cross-compilation, native support for linking against
+  system-installed Blosc/Zstd/LZ4 libraries (via `-Dsystem_blosc=enabled` etc.), and
+  alignment with the build system used by numpy, scipy, and scikit-learn.
+
+  The `DISABLE_NUMCODECS_AVX2` and `DISABLE_NUMCODECS_SSE2` environment variables
+  continue to work for backwards compatibility. The preferred way to control SIMD is now
+  via meson options:
+
+  ```
+  pip install numcodecs --no-binary numcodecs \
+      --config-settings=setup-args=-Davx2=disabled
+  ```
+
+  By {user}`Max Jones <maxrjones>`, {issue}`826`
+
+* Move source code from `numcodecs/` to `src/numcodecs/` (src layout). This avoids import
+  shadowing issues where the source tree's `numcodecs/` package (without compiled C
+  extensions) would shadow the installed package.
+  By {user}`Max Jones <maxrjones>`, {issue}`826`
+
+* Rewrite the contributing guide with uv development environment instructions.
+  By {user}`Max Jones <maxrjones>`, {issue}`826`
+
+* Convert documentation from reStructuredText to Markdown using MyST.
+  By {user}`Max Jones <maxrjones>`, {issue}`830`
+
+* Convert the README to Markdown and fix the badges.
+  By {user}`Max Jones <maxrjones>`, {issue}`827`
+
+* Build the documentation with a pinned readthedocs build image.
+  By {user}`Max Jones <maxrjones>`, {issue}`833`
+
+* Suppress a NumPy 2.4 `VisibleDeprecationWarning` for `align=0` dtype descriptors in the
+  backwards compatibility tests.
+  By {user}`Max Jones <maxrjones>`, {issue}`822`
+
+* Exclude the tests directory from coverage reporting.
+  By {user}`Max Jones <maxrjones>`, {issue}`803`, {issue}`823`
+
+* Drop `crc32c` from the test extras, as zarr-python no longer depends on it.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`840`
+
+* Fix a Meson mixup between Conda and system Python headers in CI.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`839`
+
+* Update the macOS Intel CI runner.
+  By {user}`Ian Hunt-Isaak <ianhi>`, {issue}`819`
+
+* Bump ruff and update the pre-commit legacy alias.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`791`
+
+* Fix typos throughout the codebase.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`832`
+
+* Pin pytest and deduplicate the dependency groups.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`844`
+
+* Skip `test_pyzstd` when `pyzstd` cannot be imported.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`845`
+
+* Add `pytest-cov` to the dev dependency group.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`846`
+
+* Set an explicit python-version for the test-crc32c and test-zarr CI jobs.
+  By {user}`Max Jones <maxrjones>`, {issue}`856`
+
+* Bump GitHub actions.
+  By {user}`dependabot <dependabot>`, {issue}`838`
+
+
+(release_0.16.5)=
+
+## 0.16.5
+
+### Fixes
+
+* Restore prior optional dependency behavior for `'crc32c'` group.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`802`
+
+(release_0.16.4)=
+
+## 0.16.4
+
+### Enhancements
+
+* The Zstandard codec can now decode bytes containing multiple frames.
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`757`
+
+* Add Python 3.14 support to the test matrix.
+  By {user}`Max Jones <maxrjones>`, {issue}`799`
+
+* Add Python 3.14 wheel builds.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`796`
+
+### Fixes
+
+* Fix `PCodec.decode()` to handle numpy arrays by calling `ensure_bytes` on input buffers.
+  By {user}`Sam Levang <slowjazz>`, {issue}`756`
+
+### Maintenance
+
+* Replace `crc32c` dependency with `google-crc32c`.
+  By {user}`Joe Hamman <jhamman>`, {issue}`792`
+
+* Refactor `numcodecs.zarr3` to re-export classes from `zarr.codecs._numcodecs`
+  instead of defining them locally.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`780`
+
+* Add testing against zarr-python main branch.
+  By {user}`Max Jones <maxrjones>`, {issue}`800`
+
+* Add pcodec and zfpy to 32-bit CI testing.
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`786`
+
+* Improve CRC32C codec test skipping to properly report skipped tests using `pytest.skipif`.
+  By {user}`Agriya Khetarpal <agriyakhetarpal>`, {issue}`740`
+
+* Add nightly wheel upload to scientific-python channel.
+  By {user}`Ian Hunt-Isaak <ianhi>`, {issue}`787`
+
+* Fetch tags to version nightly wheels correctly.
+  By {user}`Ian Hunt-Isaak <ianhi>`, {issue}`790`
+
+* Bump `pypa/cibuildwheel` from 2.23.2 to 3.1.3.
+  By {user}`dependabot <dependabot>`, {issue}`771`
+
+* Bump `actions/checkout` from 4 to 5.
+  By {user}`dependabot <dependabot>`, {issue}`775`
+
+* Bump `actions/download-artifact` from 4 to 6.
+  By {user}`dependabot <dependabot>`, {issue}`794`
+
+* Bump `prefix-dev/setup-pixi` from 0.8.14 to 0.9.0.
+  By {user}`dependabot <dependabot>`, {issue}`783`
+
+* Bump `jirutka/setup-alpine` from 1.2.0 to 1.3.0.
+  By {user}`dependabot <dependabot>`, {issue}`789`
+
+* Bump `conda-incubator/setup-miniconda` from 3.1.1 to 3.2.0.
+  By {user}`dependabot <dependabot>`, {issue}`753`
+
+
+(release_0.16.3)=
+
+## 0.16.3
+
+### Fixes
+
+* Fix Zstd decompression negative size issue on 32-bit platforms.
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`782`
+
+### Maintenance
+
+* Test 32-bit support via x86 Alpine Setup Action Linux.
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`784`
+
+* Bump to main branch of c-blosc to fix gcc15 compilation.
+  By {user}`Thomas Caswell <tacaswell>`, {issue}`772`
+
+
+(release_0.16.2)=
+
+## 0.16.2
+
+### Enhancements
+
+* Add streaming decompression for ZSTD_CONTENTSIZE_UNKNOWN case.
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`707`
+
+### Maintenance
+
+* Handle zarr 3.1.0 compatibility.
+  By {user}`Davis Bennett <d-v-b>`, {issue}`766`
+
+
+(release_0.16.1)=
+
+## 0.16.1
+
+### Enhancements
+
+* In `vlen`, define and use `const` `HEADER_LENGTH`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`723`
+
+* All codecs are now pickleable.
+  By {user}`Tom Nicholas <TomNicholas>`, {issue}`745`
+
+### Fixes
+
+* Fix `const` discard warnings in `fletcher32`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`728`
+
+* Update `license*` metadata and include third-party licenses.
+  By {user}`John Kirkham <jakirkham>`, {issue}`729`
+
+* Add `#ifndef` guard around `PyBytes_RESIZE`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`732`
+
+* Remove `typesize` from `Blosc.get_config` output.
+  By {user}`Ilan Gold <ilan-gold>`, {issue}`739`
+
+
+(release_0.16.0)=
+
+## 0.16.0
+
+### Enhancements
+
+* Add `typesize` argument to `Blosc` to allow for buffers that are passed to `encode`
+  use that information.  zarr v3 currently has its Blosc codec as bytes-to-bytes but does retain
+  the size information so using it here allows for massive compression ratio gains.
+  By {user}`Ilan Gold <ilan-gold>`
+* Add support for the Linux aarch64 architecture,
+  By {user}`Agriya Khetarpal <agriyakhetarpal>`, {issue}`288`.
+* Preallocate output buffers and resize directly as needed.
+  By {user}`John Kirkham <jakirkham>`, {issue}`656`
+* `Checksum32` is now an abstract base clase, with `checksum()` as an abstract method.
+  This helps ensure that any subclasses implement the `checksum()` method.
+  {issue}`711`
+
+### Removals
+
+The following `blosc` funcitons are removed, with no replacement.
+This is because they were not intended to be public API.
+
+- `numcodecs.blosc.init`
+- `numcodecs.blosc.destroy`
+- `numcodecs.blosc.compname_to_compcode`
+- `numcodecs.blosc.cbuffer_sizes`
+- `numcodecs.blosc.cbuffer_metainfo`
+
+In addition, `numcodecs.blosc.decompress_partial` is removed as
+has always been experimental and there is no equivalent in the official
+blsoc Python package.
+By {user}`David Stansby <dstansby>`, {issue}`712`
+
+### Maintenance
+
+* Replace internal `Buffer` usage with `memoryview`s.
+  By {user}`John Kirkham <jakirkham>`, {issue}`656`
+* Bump the minimum macOS deployment target for x86_64 to 10.13.
+  By {user}`Agriya Khetarpal <agriyakhetarpal>`, {issue}`288`.
+
+
+## 0.15.1
+
+### Improvements
+
+* Add streaming decompression for ZSTD ({issue}`699`)
+  By {user}`Mark Kittisopikul <mkitti>`.
+* Raise a custom `UnknownCodecError` when trying to retrieve an unavailable codec.
+  By {user}`Cas Wognum <cwognum>`.
+
+### Fixes
+
+* Remove redundant `id` from codec metadata serialization in Zarr3 codecs.
+  By {user}`Norman Rzepka <normanrz>`, {issue}`685`
+
+(release_0.15.0)=
+
+## 0.15.0
+
+### Breaking changes
+
+* All arguments to the `PCodec` constructor except for `level`
+  are now keyword only, to support the updated API.
+  By {user}`Sam Levang <slevang>`, {issue}`623`
+
+### Deprecations
+
+The following `blosc` functions are deprecated, with no replacement.
+This is because they are not intended to be public API.
+
+- `numcodecs.blosc.init`
+- `numcodecs.blosc.destroy`
+- `numcodecs.blosc.compname_to_compcode`
+- `numcodecs.blosc.cbuffer_sizes`
+- `numcodecs.blosc.cbuffer_metainfo`
+
+In addition, `numcodecs.blosc.decompress_partial` is deprecated as
+has always been experimental and there is no equivalent in the official
+blsoc Python package.
+By {user}`David Stansby <dstansby>`, {issue}`619`
+
+### Fixes
+
+* Fixes issue with `Delta` Zarr 3 codec not working with `astype`.
+  By {user}`Norman Rzepka <normanrz>`, {issue}`664`
+* Cleanup `PCodec` soft dependency.
+  Previously importing `numcodecs.pcodec` would work if `pcodec` is not installed,
+  but now it will fail to import. This mirrors the behaviour of other optional dependencies.
+  By {user}`John Kirkham <jakirkham>`, {issue}`647`
+* Fixes issues with the upcoming `zarr` 3.0.0 release.
+  By {user}`Norman Rzepka <normanrz>`, {issue}`675`
+
+* Removed Version Check: The previous code included a check for the `NumPy` version
+  and a warning if the version was incompatible with `zfpy`.
+  This check has been removed because `zfpy` now supports the newer versions of `NumPy`.
+  By {user}`Meher Gajula <me-her>`, {issue}`672`
+
+### Improvements
+
+* Add support for `pcodec` 0.3. This exposes the new `delta_spec`
+  and `paging_spec` arguments, but maintains full backwards
+  compatibility for data written with older package versions.
+  By {user}`Sam Levang <slevang>`, {issue}`623`
+* If an import error is raised when trying to define a codec that is *not*
+  an optional dependency, it is no longer silently caught. Instead it will
+  be propagated to the user, as this indicates an issue with the installed
+  package.
+
+  Import errors caused by optional dependencies (ZFPY, MsgPack, CRC32C, and PCodec)
+  are still silently caught.
+  By {user}`David Stansby <dstansby>`, {issue}`550`.
+
+(release_0.14.1)=
+
+## 0.14.1
+
+### Fixes
+
+* Cleanups to the `crc32c` soft dependency.
+  Whereas in `numcodecs` 0.14.0 a runtime error was raised if
+  the `CRC32C` codec used without the `crc32c` installed,
+  the `CRC32C` codec is no longer defined at import time if
+  `crc32c` is not installed. This has been changed to match
+  the behaviour of other optional dependencies/codecs.
+  By {user}`John Kirkham <jakirkham>`, {issue}`637`
+
+### Improvements
+
+* Add `noexcept` to `_utils` C-equiv functions
+  By {user}`John Kirkham <jakirkham>`, {issue}`641`.
+
+(release_0.14.0)=
+
+## 0.14.0
+
+### Enhancements
+
+* Add Crc32c checksum codec.
+  By {user}`Norman Rzepka <normanrz>`, {issue}`613`.
+* Add codec wrappers for Zarr 3.
+  By {user}`Norman Rzepka <normanrz>`, {issue}`524`
+* Added mypy type checking to continuous integration.
+  By {user}`David Stansby <dstansby>`, {issue}`460`.
+
+### Fixes
+
+* Fix in-place mutation of input array in `BitRound`.
+  By {user}`Sam Levang <slevang>`, {issue}`608`
+* Fix an issue where importing numcodecs would lock the state of `multiprocessing`
+  and prevent user code to call `multiprocessing.set_start_method("spawn")`
+  subsequently.
+  By {user}`Clement Robert <neutrinoceros>` {issue}`522`
+
+### Maintenance
+
+* The minimum supported Python version is now Python 3.11.
+  By {user}`David Stansby <dstansby>`, {issue}`622`
+* The minimum supported numpy version is now 1.24.
+  By {user}`David Stansby <dstansby>`, {issue}`622`
+
+(release_0.13.1)=
+
+## 0.13.1
+
+### Breaking changes
+
+* `Zstd.default_level`, `Zstd.min_level`, and `Zstd.max_level` are now class methods
+  instead of properties. This means they must now be called like `Zstd.default_level()`
+  instead of `Zstd.default_level`. This breaking change has been made because Python 3.13
+  removes support for class properties.
+  By {user}`David Stansby <dstansby>`, {issue}`576`.
+
+### Enhancements
+
+* Update bundled c-blosc to v1.26.1. This updates Zlib to v1.3.1
+  and Zstd to v1.5.6.
+  By {user}`David Stansby <dstansby>`, {issue}`560`.
+* Added support for Python 3.13 {user}`David Stansby <dstansby>`, {issue}`576`.
+* Cleaned up the table of contents in the documentation to list codecs by category
+  {user}`David Stansby <dstansby>`, {issue}`458`.
+
+### Maintenance
+
+* Change format() and old string formatting to f-strings.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`439`.
+* Remove pin on Sphinx
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`552`.
+
+
+(release_0.13.0)=
+
+## 0.13.0
+
+### Enhancements
+
+* Add checksum flag to zstd and sets the default level to 0.
+  By {user}`Norman Rzepka <normanrz>`, {issue}`519`.
+* Add PCodec
+  By {user}`Ryan Abernathey <rabernat>`, {issue}`501`.
+* Use PyData theme for docs
+  By {user}`John Kirkham <jakirkham>`, {issue}`485`.
+* Improve the structure of docs
+  By {user}`David Stansby <dstansby>`, {issue}`458`.
+
+### Fix
+
+* Fix VLenUTF8 encoding for read-only buffers.
+  By {user}`Isaac Virshup <ivirshup>`, {issue}`514`.
+* Fix skip of entry points backport tests
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`487`.
+* Fix Upgrade to Zstd 1.5.5 due to potential corruption.
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`429`
+* Add version constraint(<2.0) for numpy in zfpy.
+  By {user}`Tom Liang <px39n>`, {issue}`540`.
+
+### Maintenance
+
+* The minimum supported Python version is now Python 3.10.
+  By {user}`David Stansby <dstansby>`, {issue}`531`
+* Add numpy 2 compatibility.
+  By {user}`David Stansby <dstansby>`, {issue}`535`
+* Update c-blosc to 1.21.0 to 1.21.5, zstd from 1.4.8 to 1.5.5,
+  lz4 from 1.9.3 to 1.9.4, and zlib from 1.2.8 to to 1.2.13
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`500`
+
+
+(release_0.12.1)=
+
+## 0.12.1
+
+### Fix
+
+* `Codec` is now derived from `abc.ABC`
+  By {user}`Mads R. B. Kristensen <madsbk>`, {issue}`472`.
+* Fix handling of entry points on older Python versions where `importlib_metadata` compatibility is concerned
+  By {user}`Vyas Ramasubramani <vyasr>`, {issue}`478`.
+* Make shuffle pyx functions `noexcept`
+  By {user}`Martin Durant <martindurant>`, {issue}`477`.
+
+(release_0.12.0)=
+
+## 0.12.0
+
+### Enhancements
+
+* Add `fletcher32` checksum codec
+  By {user}`Martin Durant <martindurant>`, {issue}`410`.
+* Add `jenkins_lookup3` checksum codec
+  By {user}`Mark Kittisopkul <mkitti>`, {issue}`445`.
+* Support Python 3.12.
+  By {user}`John Kirkham <jakirkham>`, {issue}`471`.
+
+### Fix
+
+* Fixed docs/Makefile error message when sphinx is not present
+  By {user}`Mark Kittisopikul <mkitti>`, {issue}`451`.
+* Add missing RTD requirements
+  By {user}`John Kirkham <jakirkham>`, {issue}`455`.
+
+### Maintenance
+
+* Cleanup `import`s in `adhoc/blosc_memleak_check.py`
+  By {user}`John Kirkham <jakirkham>`, {issue}`408`.
+
+(release_0.11.0)=
+
+## 0.11.0
+
+### Fix
+
+* Speed up isinstance checks of {class}`numcodecs.ndarray_like.NDArrayLike`,
+  {class}`numcodecs.ndarray_like.DType` and {class}`numcodecs.ndarray_like.FlagsObj`.
+  By {user}`Andreas Poehlmann <ap-->`, {issue}`379`.
+
+### Maintenance
+
+* Remove unnecessary None argument to .get(), it is the default value.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`395`.
+
+* Apply refurb suggestions.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`372`.
+
+* Migrate codespell configuration to pyproject.toml and get rid of setup.cfg.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>` {issue}`374`.
+
+* Unvendor cpuinfo.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>` {issue}`373`.
+
+* Drop headers.
+  By {user}`John Kirkham <jakirkham>`, {issue}`375`.
+
+* Remove Python 2 code.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>` {issue}`368`,
+  {issue}`387`.
+
+* Support Python 3.11.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`369`.
+
+* Drop Python 3.7.
+  By {user}`John Kirkham <jakirkham>`,, {issue}`405` {issue}`406`.
+
+* Test with zfpy 1.0.0.
+  By {user}`John Kirkham <jakirkham>`, {issue}`385`.
+
+* Remove vendored C files and re-generate them on the fly using Cython.
+  Add a pyproject.toml file to define Cython as a build dependency.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`369`.
+
+* Update cpuinfo to 9.0.0.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>` {issue}`370`.
+
+* Add tests for all registry classes.
+  By {user}`Josh Moore <joshmoore>`, {issue}`349`.
+
+* Add workflow to label PRs with "needs release notes".
+  By {user}`Saransh Chopra <Saransh-cpp>` {issue}`396`.
+
+* Finish `pyproject.toml` migration.
+  By {user}`John Kirkham <jakirkham>` {issue}`382`.
+
+* Drop tox.
+  By {user}`John Kirkham <jakirkham>`, {issue}`384`.
+
+* Update ReadTheDocs.
+  By {user}`John Kirkham <jakirkham>`, {issue}`383`.
+
+* Use `conda-incubator/setup-miniconda@v2.2.0` (and use Conda on Linux).
+  By {user}`John Kirkham <jakirkham>` {issue}`398`.
+
+* Bring coverage back up to 100%.
+  By {user}`John Kirkham <jakirkham>` and {user}`Martin Durant <martindurant>`,
+  {issue}`392` and {issue}`393`.
+
+* Collect coverage on all OSes & enable Codecov.
+  By {user}`John Kirkham <jakirkham>`, {issue}`386`, {issue}`388`,
+  {issue}`390`, {issue}`391`.
+
+(release_0.10.2)=
+
+## 0.10.2
+
+### Fix
+
+* Add BitRound (0.10.0) to registry.
+  By {user}`Josh Moore <joshmoore>`, {issue}`342`.
+
+(release_0.10.1)=
+
+## 0.10.1
+
+### Maintenance
+
+* Add entrypoints to setup.py.
+  By {user}`Josh Moore <joshmoore>`, {issue}`332`.
+
+* Fix spelling.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`336`.
+
+* Drop Python 3.6 from tests
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`,
+  {issue}`338`, {issue}`339`.
+
+* Remove trailing spaces and empty lines.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`341`.
+
+* Add LGTM.com configuration file
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`, {issue}`337`.
+
+(release_0.10.0)=
+
+## 0.10.0
+
+### Enhancements
+
+* Add support of alternative array classes (other than NumPy arrays)
+  By {user}`Mads R. B. Kristensen <madsbk>`, {issue}`305`.
+
+* Add ability to find codecs via entrypoint `numcodecs.codecs`.
+  By {user}`Martin Durant <martindurant>`, {issue}`290`.
+
+* Add bitround codec
+  By {user}`Ryan Abernathy <rabernat>` and {user}`Martin Durant <martindurant>`, {issue}`298`.
+
+* Introduce a flat option to ensure_contiguous_ndarray to switch off flatten for ZFPY codec
+  By {user}`Haiying Xu <halehawk>`, {issue}`307`.
+
+### Bug fixes
+
+* Fix a flatten array error for ZFPY, ZFPY codec is supported on Python 3.9
+  and 3.10 on Linux and MacOS, the docs about ZFPY is also available.
+  By {user}`Haiying Xu <halehawk>`, {user}`John Kirkham <jakirkham>`,
+  {user}`Ryan Abernathey <rabernat>` {issue}`303`.
+
+* Codex: make encode and decode @abstractmethods
+  By {user}`Mads R. B. Kristensen <madsbk>`, {issue}`306`.
+
+* Fix expected result test for Shuffle.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`282`.
+
+### Maintenance
+
+* Multiple code linting fixes.
+  By {user}`Dimitri Papadopoulos Orfanos <DimitriPapadopoulos>`,
+  {issue}`295`, {issue}`294`, {issue}`293`, and {issue}`292`.
+
+* Drop Python 3.6
+  By {user}`Josh Moore <joshmoore>`, {issue}`318`.
+
+* Fix macOS Python 3.10
+  By {user}`John Kirkham <jakirkham>`, {issue}`311`.
+
+* chore: bump cibuildwheel version, use action
+  By {user}`Henry Schreiner <henryiii>`, {issue}`309`.
+
+* Specify `language` as `'en'` instead of `None`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`329`.
+
+* Move `master` to `main`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`322`.
+
+* Drop `fastparquet` benchmark.
+  By {user}`John Kirkham <jakirkham>`, {issue}`321`.
+
+* Trim wheel builds.
+  By {user}`John Kirkham <jakirkham>`, {issue}`320`.
+
+(release_0.9.1)=
+
+## 0.9.1
+
+* Fix inaccurate docstrings for Blosc.
+  By {user}`James Webber <jamestwebber>`, {issue}`287`.
+
+(release_0.9.0)=
+
+## 0.9.0
+
+* c-blosc upgrade 1.18.1 -> 1.21.0.
+  Warning: this temporarily removes support for snappy compression!
+  By {user}`kindjacket <kindjacket>`, {issue}`283`.
+
+* Fix an ImportError with Blosc on Android.
+  By {user}`Daniel Jewell <danieldjewell>`, {issue}`284`.
+
+(release_0.8.1)=
+
+## 0.8.1
+
+* Fix an ImportError with Blosc on Android.
+  By {user}`Daniel Jewell <danieldjewell>`, {issue}`284`.
+
+(release_0.8.0)=
+
+## 0.8.0
+
+* The {class}`numcodecs.zfpy.ZFPY` codec is now supported on Python 3.8 if
+  [zfpy==0.5.5](https://pypi.org/project/zfpy/) is installed.
+  By {user}`haiying xu <halehawk>`, {issue}`229`.
+
+* Add support for byte Shuffle filter
+  By {user}`Paul Branson <pbranson>` and {user}`Martin Durant <martindurant>` {issue}`273`.
+
+* Update Windows + Mac CI to run all tests.
+  By {user}`Jackson Maxfield Brown <JacksonMaxfield>`, {issue}`276`.
+  Help from {user}`Oleg Hoefling <hoefling>`, {issue}`273`.
+
+* Update cpuinfo to 8.0.0.
+  By {user}`Florian Jetter <fjetter>`, {issue}`280`.
+
+* Drop out-of-date manual release docs.
+  By {user}`John Kirkham <jakirkham>`, {issue}`272`.
+
+* Add support for Python 3.9 and Update GitHub Actions.
+
+(release_0.7.3)=
+
+## 0.7.3
+
+* Add support for Python 3.9 and Update GitHub Actions.
+  By {user}`Jackson Maxfield Brown <JacksonMaxfield>`, {issue}`270`.
+
+* Remove support for Python 3.5 which is end of life. While the code base might
+  still be compatible; the source dist and wheel are marked as Python 3.6+ and
+  pip will not install them. Continuous integration on Python 3.5 has been
+  disabled.
+  By {user}`Matthias Bussonnier <Carreau>`, {issue}`266` and {issue}`267`.
+
+(release_0.7.2)=
+
+## 0.7.2
+
+* Disable avx2 for wheel.
+  By {user}`Grzegorz Bokota <Czaki>`, {issue}`253`.
+
+* Add Base64 fixtures.
+  By {user}`John Kirkham <jakirkham>`, {issue}`251`.
+
+* Update docs regarding wheels.
+  By {user}`Josh Moore <joshmoore>`, {issue}`250`.
+
+
+(release_0.7.1)=
+
+## 0.7.1
+
+* Fix build of wheels.
+  By {user}`Grzegorz Bokota <Czaki>`, {issue}`244`.
+
+(release_0.7.0)=
+
+## 0.7.0
+
+* Automatically release to PyPI.
+  By {user}`Josh Moore <joshmoore>`, {issue}`241`.
+
+* Build wheels on github actions.
+  By {user}`Grzegorz Bokota <Czaki>`, {issue}`224`.
+
+* Add Base64 codec.
+  By {user}`Trevor Manz <manzt>`, {issue}`176`.
+
+* Add partial decompression of Blosc compressed arrays.
+  By {user}`Andrew Fulton <andrewfulton9>`, {issue}`235`.
+
+* Remove LegacyJSON codec.
+  By {user}`James Bourbeau  <jrbourbeau>`, {issue}`226`.
+
+* Remove LegacyMsgPack codec.
+  By {user}`James Bourbeau  <jrbourbeau>`, {issue}`218`.
+
+* Drop support for Python 2.
+  By {user}`James Bourbeau <jrbourbeau>`, {issue}`220`.
+
+
+(release_0.6.4)=
+
+## 0.6.4
+
+* Update Cython to 0.29.14.
+  By {user}`John Kirkham <jakirkham>`, {issue}`168`, {issue}`177`, {issue}`204`.
+
+* The bundled c-blosc sources have been upgraded to version 1.17.0.
+  This fixes compilation with newer versions of gcc.
+  By {user}`Joe Jevnik <llllllllll>`, {issue}`194`.
+
+* Create `.pep8speaks.yml`. By {user}`Alistair Miles <alimanfoo>`.
+
+* Simplify datetime/timedelta check.
+  By {user}`John Kirkham <jakirkham>`, {issue}`170`, {issue}`171`.
+
+* Update URL metadata for PyPI.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`178`.
+
+* Enable pytest rewriting in test helper functions.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`185`.
+
+* Rewrites the `ensure_text` implementation.
+  By {user}`John Kirkham <jakirkham>`, {issue}`201`, {issue}`205`, {issue}`206`.
+
+* Add macOS to CI.
+  By {user}`Alistair Miles <alimanfoo>`, {issue}`192`.
+
+* Fix test failures on big-endian systems.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`186`.
+
+* Use unittest.mock on Python 3.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`179`.
+
+* Don't mask compile errors in setup.py.
+  By {user}`Joe Jevnik <llllllllll>`, {issue}`197`.
+
+* Allow pickles when loading test fixture data.
+  By {user}`Elliott Sales de Andrade <QuLogic>`, {issue}`193`.
+
+* Update `cpuinfo.py`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`202`.
+
+* Use `ensure_text` in JSON codecs.
+  By {user}`John Kirkham <jakirkham>`, {issue}`207`.
+
+* Support Python 3.8.
+  By {user}`John Kirkham <jakirkham>`, {issue}`208`.
+
+
+(release_0.6.3)=
+
+## 0.6.3
+
+* Drop support for 32-bit Windows.
+  By {user}`Alistair Miles <alimanfoo>`, {issue}`97`, {issue}`156`.
+
+* Raise a `TypeError` if an `object` array is passed to `ensure_bytes`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`162`.
+
+* Update Cython to 0.29.3.
+  By {user}`John Kirkham <jakirkham>`, {issue}`165`.
+
+
+(release_0.6.2)=
+
+## 0.6.2
+
+* Handle (new) buffer protocol conforming types in `Pickle.decode`.
+  By {user}`John Kirkham <jakirkham>`, {issue}`143`, {issue}`150`.
+
+* Use (new) buffer protocol in `MsgPack` codec `decode()` method.
+  By {user}`John Kirkham <jakirkham>`, {issue}`148`.
+
+* Use (new) buffer protocol in `JSON` codec `decode()` method.
+  By {user}`John Kirkham <jakirkham>`, {issue}`151`.
+
+* Avoid copying into data in `GZip`'s `decode()` method on Python 2.
+  By {user}`John Kirkham <jakirkham>`, {issue}`152`.
+
+* Revert ndarray coercion of encode returned data.
+  By {user}`John Kirkham <jakirkham>`, {issue}`155`.
+
+* The bundled c-blosc sources have been upgraded to version 1.15.0. By
+  {user}`Alistair Miles <alimanfoo>` and {user}`John Kirkham <jakirkham>`, {issue}`142`, {issue}`145`.
+
+(release_0.6.1)=
+
+## 0.6.1
+
+* Resolved minor issue in backwards-compatibility tests (by {user}`Alistair Miles
+  <alimanfoo>`, {issue}`138`, {issue}`139`).
+
+
+(release_0.6.0)=
+
+## 0.6.0
+
+* The encoding format used by the {class}`JSON` and {class}`MsgPack` codecs has been
+  changed to resolve an issue with correctly encoding and decoding some object arrays.
+  Now the encoded data includes the original shape of the array, which enables the
+  correct shape to be restored on decoding. The previous encoding format is still
+  supported, so that any data encoded using a previous version of numcodecs can still be
+  read. Thus no changes to user code and applications should be required, other
+  than upgrading numcodecs. By {user}`Jerome Kelleher <jeromekelleher>`; {issue}`74`,
+  {issue}`75`.
+
+* Updated the msgpack dependency (by {user}`Jerome Kelleher <jeromekelleher>`;
+  {issue}`74`, {issue}`75`).
+
+* Added support for ppc64le architecture by updating `cpuinfo.py` from upstream (by
+  {user}`Anand S <anandtrex>`; {issue}`82`).
+
+* Allow {class}`numcodecs.blosc.Blosc` compressor to run on systems where locks are not present (by
+  {user}`Marcus Kinsella <mckinsel>`, {issue}`83`; and {user}`Tom White <tomwhite>`,
+  {issue}`93`).
+
+* Drop Python 3.4 (by {user}`John Kirkham <jakirkham>`; {issue}`89`).
+
+* Add Python 3.7 (by {user}`John Kirkham <jakirkham>`; {issue}`92`).
+
+* Add codec {class}`numcodecs.gzip.GZip` to replace `gzip` alias for `zlib`,
+  which was incorrect (by {user}`Jan Funke <funkey>`; {issue}`87`; and {user}`John Kirkham <jakirkham>`, {issue}`134`).
+
+* Corrects handling of `NaT` in `datetime64` and `timedelta64` in various
+  compressors (by {user}`John Kirkham <jakirkham>`; {issue}`127`, {issue}`131`).
+
+* Improvements to the compatibility layer used for normalising inputs to encode
+  and decode methods in most codecs. This removes unnecessary memory copies for
+  some codecs, and also simplifies the implementation of some codecs, improving
+  code readability and maintainability. By {user}`John Kirkham <jakirkham>` and
+  {user}`Alistair Miles <alimanfoo>`; {issue}`119`, {issue}`121`, {issue}`128`.
+
+* Return values from encode() and decode() methods are now returned as numpy
+  arrays for consistency across codecs. By {user}`John Kirkham <jakirkham>`,
+  {issue}`136`.
+
+* Improvements to handling of errors in the {class}`numcodecs.blosc.Blosc` and
+  {class}`numcodecs.lz4.LZ4` codecs when the maximum allowed size of an input
+  buffer is exceeded. By {user}`Jerome Kelleher <jeromekelleher>`, {issue}`80`,
+  {issue}`81`.
+
+
+(release_0.5.5)=
+
+## 0.5.5
+
+* The bundled c-blosc sources have been upgraded to version 1.14.3 ({issue}`72`).
+
+
+(release_0.5.4)=
+
+## 0.5.4
+
+* The bundled c-blosc sources have been upgraded to version 1.14.0 ({issue}`71`).
+
+
+(release_0.5.3)=
+
+## 0.5.3
+
+* The test suite has been migrated to use pytest instead of nosetests
+  ({issue}`61`, {issue}`62`).
+
+* The bundled c-blosc library has been updated to version 1.13.4 ({issue}`63`,
+  {issue}`64`).
+
+
+(release_0.5.2)=
+
+## 0.5.2
+
+* Add support for encoding None values in VLen... codecs ({issue}`59`).
+
+
+(release_0.5.1)=
+
+## 0.5.1
+
+* Fixed a compatibility issue with the Zlib codec to ensure it can handle
+  bytearray objects under Python 2.7 ({issue}`57`).
+* Restricted the {class}`numcodecs.categorize.Categorize` codec to object
+  ('O') and unicode ('U') dtypes and disallowed bytes ('S') dtypes because
+  these do not round-trip through JSON configuration.
+
+
+(release_0.5.0)=
+
+## 0.5.0
+
+* Added new codecs for encoding arrays with variable-length unicode strings
+  ({class}`numcodecs.vlen.VLenUTF8`), variable-length byte strings
+  ({class}`numcodecs.vlen.VLenBytes`) and variable-length numerical arrays
+  ({class}`numcodecs.vlen.VLenArray`) ({issue}`56`).
+
+
+(release_0.4.1)=
+
+## 0.4.1
+
+* Resolved an issue where providing an array with dtype `object` as the destination
+  when decoding could cause segfaults with some codecs ({issue}`55`).
+
+
+(release_0.4.0)=
+
+## 0.4.0
+
+* Added a new {class}`numcodecs.json.JSON` codec as an alternative for encoding of
+  object arrays ({issue}`54`).
+
+
+(release_0.3.1)=
+
+## 0.3.1
+
+* Revert the default shuffle argument to SHUFFLE (byte shuffle) for the
+  {class}`numcodecs.blosc.Blosc` codec for compatibility and consistency with previous
+  code.
+
+
+(release_0.3.0)=
+
+## 0.3.0
+
+* The {class}`numcodecs.blosc.Blosc` codec has been made robust for usage in both
+  multithreading and multiprocessing programs, regardless of whether Blosc has been
+  configured to use multiple threads internally or not ({issue}`41`, {issue}`42`).
+
+* The {class}`numcodecs.blosc.Blosc` codec now supports an `AUTOSHUFFLE` argument
+  when encoding (compressing) which activates bit- or byte-shuffle depending on the
+  itemsize of the incoming buffer ({issue}`37`, {issue}`42`). This is also now the
+  default.
+
+* The {class}`numcodecs.blosc.Blosc` codec now raises an exception when an invalid
+  compressor name is provided under all circumstances ({issue}`40`, {issue}`42`).
+
+* The bundled version of the c-blosc library has been upgraded to version 1.12.1
+  ({issue}`45`, {issue}`42`).
+
+* An improvement has been made to the system detection capabilities during compilation
+  of C extensions (by {user}`Prakhar Goel <newt0311>`; {issue}`36`, {issue}`38`).
+
+* Arrays with datetime64 or timedelta64 can now be passed directly to compressor codecs
+  ({issue}`39`, {issue}`46`).
+
+
+(release_0.2.1)=
+
+## 0.2.1
+
+The bundled c-blosc library has been upgraded to version 1.11.3 ({issue}`34`, {issue}`35`).
+
+
+(release_0.2.0)=
+
+## 0.2.0
+
+New codecs:
+
+* The {class}`numcodecs.quantize.Quantize` codec, which provides support for reducing the precision
+  of floating-point data, has been ported over from Zarr ({issue}`28`, {issue}`31`).
+
+Other changes:
+
+* The {class}`numcodecs.zlib.Zlib` codec is now also registered under the alias 'gzip'
+  ({issue}`29`, {issue}`32`).
+
+Maintenance work:
+
+* A data fixture has been added to the test suite to add some protection against changes to codecs
+  that break backwards-compatibility with data encoded using a previous release of numcodecs
+  ({issue}`30`, {issue}`33`).
+
+
+(release_0.1.1)=
+
+## 0.1.1
+
+This release includes a small modification to the setup.py script to provide greater control over
+how compiler options for different instruction sets are configured ({issue}`24`,
+{issue}`27`).
+
+
+(release_0.1.0)=
+
+## 0.1.0
+
+New codecs:
+
+* Two new compressor codecs {class}`numcodecs.zstd.Zstd` and {class}`numcodecs.lz4.LZ4`
+  have been added ({issue}`3`, {issue}`22`). These provide direct support for
+  compression/decompression using [Zstandard](https://github.com/facebook/zstd) and
+  [LZ4](https://github.com/lz4/lz4) respectively.
+
+* A new {class}`numcodecs.msgpacks.MsgPack` codec has been added which uses
+  [msgpack-python](https://github.com/msgpack/msgpack-python) to perform encoding/decoding,
+  including support for arrays of Python objects
+  ([Jeff Reback](https://github.com/jreback); {issue}`5`, {issue}`6`, {issue}`8`,
+  {issue}`21`).
+
+* A new {class}`numcodecs.pickles.Pickle` codec has been added which uses the Python pickle protocol
+  to perform encoding/decoding, including support for arrays of Python objects
+  ([Jeff Reback](https://github.com/jreback); {issue}`5`, {issue}`6`, {issue}`21`).
+
+* A new {class}`numcodecs.astype.AsType` codec has been added which uses NumPy to perform type
+  conversion ([John Kirkham](https://github.com/jakirkham); {issue}`7`, {issue}`12`,
+  {issue}`14`).
+
+Other new features:
+
+* The {class}`numcodecs.lzma.LZMA` codec is now supported on Python 2.7 if
+  [backports.lzma](https://pypi.python.org/pypi/backports.lzma) is installed
+  ([John Kirkham](https://github.com/jakirkham); {issue}`11`, {issue}`13`).
+
+* The bundled c-blosc library has been upgraded to version
+  [1.11.2](https://github.com/Blosc/c-blosc/releases/tag/v1.11.2) ({issue}`10`,
+  {issue}`18`).
+
+* An option has been added to the {class}`numcodecs.blosc.Blosc` codec to allow the block size to
+  be manually configured ({issue}`9`, {issue}`19`).
+
+* The representation string for the {class}`numcodecs.blosc.Blosc` codec has been tweaked to
+  help with understanding the shuffle option ({issue}`4`, {issue}`19`).
+
+* Options have been added to manually control how the C extensions are built regardless of the
+  architecture of the system on which the build is run. To disable support for AVX2 set the
+  environment variable "DISABLE_NUMCODECS_AVX2". To disable support for SSE2 set the environment
+  variable "DISABLE_NUMCODECS_SSE2". To disable C extensions altogether set the environment variable
+  "DISABLE_NUMCODECS_CEXT" ({issue}`24`, {issue}`26`).
+
+Maintenance work:
+
+* CI tests now run under Python 3.6 as well as 2.7, 3.4, 3.5 ({issue}`16`, {issue}`17`).
+
+* Test coverage is now monitored via
+  [coveralls](https://coveralls.io/github/alimanfoo/numcodecs?branch=master)
+  ({issue}`15`, {issue}`20`).
+
+
+(release_0.0.1)=
+
+## 0.0.1
+
+Fixed project description in setup.py.
+
+
+(release_0.0.0)=
+
+## 0.0.0
+
+First release. This version is a port of the `codecs` module from [Zarr](https://zarr.readthedocs.io) 2.1.0. The following changes have been made from
+the original Zarr module:
+
+* Codec classes have been re-organized into separate modules, mostly one per
+  codec class, for ease of maintenance.
+* Two new codec classes have been added based on 32-bit checksums:
+  {class}`numcodecs.checksum32.CRC32` and {class}`numcodecs.checksum32.Adler32`.
+* The Blosc extension has been refactored to remove code duplications related
+  to handling of buffer compatibility.
