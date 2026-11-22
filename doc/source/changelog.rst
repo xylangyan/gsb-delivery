@@ -6,6 +6,18 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- :class:`LMDB` now supports atomic batches with conditional commits
+  (:meth:`LMDB.stage_batch`, :meth:`LMDB.commit_staged`,
+  :meth:`LMDB.commit_items`). Batches are staged to a local on-disk journal, so a
+  single-pass manifest can be replayed after ``MDB_MAP_FULL`` without being read
+  twice, and a version conflict never publishes part of a batch. The map grows
+  automatically up to a configurable ``max_map_size`` and raises
+  :class:`MapSizeExceededError` when the cap is reached
+- :class:`LMDB` gained :meth:`LMDB.snapshot`, a read-only view pinned to one
+  database revision that is unaffected by concurrent commits, and a ``readonly``
+  constructor flag
+- Invalid batch items now raise :class:`BatchItemError` carrying the original
+  position of the bad key or value in the input stream
 
 
 3.0.0 - 2023-04-17

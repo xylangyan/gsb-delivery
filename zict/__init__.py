@@ -5,7 +5,13 @@ from zict.cache import WeakValueMapping as WeakValueMapping
 from zict.file import File as File
 from zict.func import Func as Func
 from zict.keymap import KeyMap as KeyMap
+from zict.keymap import KeyMap as KeyMap
+from zict.lmdb import BatchItemError as BatchItemError
+from zict.lmdb import JournalError as JournalError
 from zict.lmdb import LMDB as LMDB
+from zict.lmdb import LMDBSnapshot as LMDBSnapshot
+from zict.lmdb import MapSizeExceededError as MapSizeExceededError
+from zict.lmdb import VersionConflictError as VersionConflictError
 from zict.lru import LRU as LRU
 from zict.sieve import Sieve as Sieve
 from zict.utils import InsertionSortedSet as InsertionSortedSet
