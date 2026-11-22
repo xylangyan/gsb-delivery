@@ -1,0 +1,15 @@
+Planned or possible future developments for mrcfile.py
+======================================================
+
+* Lazy loading for high-performance filesystems - like mmap, but using much
+  larger chunk sizes (mmap uses 4 KB chunks which cause inefficent access on
+  high-performance parallel filesystems).
+
+* Fixing of invalid files
+
+* Handling of additional extended header types
+
+* Data axis swapping (would need clarity about whether header fields such as
+  cell size and dimensions apply to axes before or after swapping)
+
+* Raise a ResourceWarning if __del__ is called before close()
