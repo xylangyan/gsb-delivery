@@ -3,7 +3,7 @@ import contextvars
 import threading
 import time
 from collections import UserDict
-from concurrent.futures import Executor, Future
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 
 import pytest
 
@@ -124,10 +124,13 @@ async def test_close_during_evict(check_thread_leaks):
     assert buff.futures
 
     buff.close()
-    await asyncio.wait(buff.futures)
+    if buff.futures:
+        await asyncio.wait(buff.futures)
     assert not buff.futures
-    assert buff.fast
-    assert buff.slow
+    # A graceful close no longer cancels accepted evictions halfway: every write that
+    # was accepted before the close runs to completion before the buffer shuts down.
+    assert not buff.fast
+    assert len(buff.slow) == 100
 
 
 @pytest.mark.asyncio
@@ -270,3 +273,158 @@ async def test_external_executor():
     assert buff.slow == {"y": 2}
     assert n_submit == 2
     buff.close()
+
+
+class _InstrumentedSlowDict(UserDict):
+    """Slow store with a blocking point on the B write and optional failure."""
+
+    def __init__(self, fail_on=None):
+        super().__init__()
+        self.fail_on = fail_on
+        self.in_b_write = threading.Event()
+        self.release_b_write = threading.Event()
+        self.n_close = 0
+
+    def __setitem__(self, key, value):
+        if key == "B":
+            # Deterministic mid-write blocking point, shared by both test variants.
+            self.in_b_write.set()
+            assert self.release_b_write.wait(timeout=5)
+            if key == self.fail_on:
+                raise RuntimeError(f"injected failure while writing {key!r}")
+        super().__setitem__(key, value)
+
+    def close(self):
+        self.n_close += 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_async_close_from_offloaded_callback(check_thread_leaks, fail):
+    """Graceful and failing shutdown orchestrated from a running eviction callback.
+
+    Run 1 (fail=False): the stuck callback requests a close before returning; the outer
+    loop requests it too and cancels a waiter. The stale eviction of the old A is
+    cancelled without erasing the newer A, which is then evicted together with B. On
+    reopen only the new A and the full B are visible.
+
+    Run 2 (fail=True): the accepted B write fails halfway. The failure is broadcast to
+    every waiter, the half-written B is not handed off to slow, and the previously
+    persisted A survives.
+    """
+    in_first_callback = threading.Event()
+    release_first_callback = threading.Event()
+    callback_finished = threading.Event()
+    is_first_callback = True
+    close_from_callback = None
+
+    slow = _InstrumentedSlowDict(fail_on="B" if fail else None)
+    slow.data["seed"] = "s"
+
+    def fast_to_slow_callback(key, value):
+        nonlocal is_first_callback, close_from_callback
+        if is_first_callback:
+            is_first_callback = False
+            in_first_callback.set()
+            assert release_first_callback.wait(timeout=5)
+            # Request the close from the worker thread, before the callback returns.
+            # Keep the result for the outer loop; do not wait on it here.
+            close_from_callback = buff.async_close()
+            callback_finished.set()
+
+    buff = AsyncBuffer(
+        {}, slow, n=1, fast_to_slow_callbacks=[fast_to_slow_callback]
+    )
+
+    # 1. Evict the old value of A. The slow write completes, then the callback stalls.
+    buff["A"] = "old"
+    buff.async_evict_until_below_target(0)
+    assert in_first_callback.wait(timeout=5)
+    assert slow.data == {"A": "old", "seed": "s"}
+    assert "A" in buff.fast
+
+    # 2. Overwrite A and accept a brand new B while the old callback is still stuck.
+    buff["A"] = "new"
+    buff["B"] = "bval"
+
+    # Release the callback: it requests the close itself and returns immediately,
+    # giving the single worker thread back instead of waiting on the close.
+    release_first_callback.set()
+    assert callback_finished.wait(timeout=5)
+    close_future = buff.async_close()
+    assert close_future is close_from_callback
+
+    # The B write is gated, so the shutdown is still in flight when the waiter gives up.
+    assert slow.in_b_write.wait(timeout=5)
+    waiter = asyncio.ensure_future(asyncio.wrap_future(close_future))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    # Cancelling a waiter must not cancel the shared shutdown result.
+    assert not close_future.cancelled()
+
+    # New offloads are explicitly rejected once the close has started.
+    rejected = buff.async_get(["seed"])
+    assert rejected.cancelled()
+    with pytest.raises(asyncio.CancelledError):
+        await rejected
+    # An eviction request is rejected too: it must not queue any new work.
+    n_pending = len(buff._pending)
+    buff.async_evict_until_below_target(0)
+    assert len(buff._pending) == n_pending
+
+    # Let the accepted B write settle: successfully, or failing halfway.
+    slow.release_b_write.set()
+
+    if fail:
+        with pytest.raises(RuntimeError, match="injected failure"):
+            close_future.result(timeout=5)
+        # Every later waiter retrieves the very same failure result.
+        assert buff.async_close() is close_future
+        with pytest.raises(RuntimeError, match="injected failure"):
+            await asyncio.wrap_future(buff.async_close())
+
+        # The half-written B must not be handed off to slow; it stays in fast instead.
+        assert "B" not in slow.data
+        assert buff.fast.d["B"] == "bval"
+        # The A that was successfully written earlier is not lost.
+        assert slow.data["A"] == "new"
+    else:
+        close_future.result(timeout=5)
+        # Stale cancellation of the old A must not erase the newer value.
+        assert slow.data == {"A": "new", "B": "bval", "seed": "s"}
+        assert not buff.fast
+
+    # Everything accepted ran on the single worker, which was released by the callback;
+    # the underlying store is closed exactly once, at the very end.
+    assert not buff._pending
+    assert slow.n_close == 1
+    assert buff._shutdown_thread is not None
+    buff._shutdown_thread.join(timeout=5)
+    assert not buff._shutdown_thread.is_alive()
+
+    # Reopen onto the same slow storage with an empty fast layer.
+    reopened = AsyncBuffer({}, slow, n=1)
+    if fail:
+        assert set(reopened) == {"A", "seed"}
+        assert reopened["A"] == "new"
+    else:
+        assert set(reopened) == {"A", "B", "seed"}
+        assert reopened["A"] == "new"
+        assert reopened["B"] == "bval"
+    reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_async_close_keeps_external_executor_running(check_thread_leaks):
+    ex = ThreadPoolExecutor(2)
+    try:
+        buff = AsyncBuffer({}, {}, n=1, executor=ex)
+        close_future = buff.async_close()
+        assert close_future.result(timeout=5) is None
+        buff._shutdown_thread.join(timeout=5)
+        # The buffer does not own this executor: unrelated work keeps running on it.
+        assert ex.submit(lambda: 42).result(timeout=5) == 42
+    finally:
+        ex.shutdown(wait=True)
