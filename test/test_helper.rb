@@ -1,0 +1,52 @@
+# frozen_string_literal: true
+
+# Ensure that we cleanup every object before comparing with valgrind.
+at_exit { GC.start } if ENV["LD_PRELOAD"]&.include? "valgrind"
+
+require "minitest/autorun"
+require "minitest/pride"
+require_relative "../lib/rgeo"
+require "psych"
+
+# Only here for Psych 4.0.0 breaking change.
+# See https://github.com/ruby/psych/pull/487
+def psych_load(*args)
+  if Psych.respond_to?(:unsafe_load)
+    Psych.unsafe_load(*args)
+  else
+    Psych.load(*args)
+  end
+end
+
+# Check if GEOS version match requirement, this will
+# be either the CAPI or FFI depending on installation.
+def geos_version_match(requirement)
+  Gem::Requirement.new(requirement).satisfied_by? Gem::Version.new(RGeo::Geos.version)
+end
+
+require_relative "common/factory_tests"
+require_relative "common/geometry_collection_tests"
+require_relative "common/line_string_tests"
+require_relative "common/multi_line_string_tests"
+require_relative "common/multi_point_tests"
+require_relative "common/multi_polygon_tests"
+require_relative "common/point_tests"
+require_relative "common/polygon_tests"
+require_relative "common/validity_tests"
+
+require_relative "support/minitest/assert_wkt_similar"
+require_relative "support/minitest/fixtures"
+
+# Static test for missed references in our CAPI codebase (or FFI interface).
+# See https://alanwu.space/post/check-compaction/
+if defined?(GC.verify_compaction_references) == "method"
+  if Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.2.0")
+    GC.verify_compaction_references(expand_heap: true, toward: :empty)
+  else
+    GC.verify_compaction_references(double_heap: true, toward: :empty)
+  end
+end
+
+# Live test for our implementation of Ruby's compaction methods (rb_gc_mark_movable
+# and rb_gc_location), enabling compaction for every major collection.
+GC.auto_compact = true if defined?(GC.auto_compact) == "method"
