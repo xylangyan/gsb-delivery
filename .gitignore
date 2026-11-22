@@ -1,0 +1,27 @@
+
+# build
+*.egg-info
+dist
+*.pyc
+*.pyo
+build
+MANIFEST
+*.swp
+
+# virtualenvs
+env
+.env
+.venv
+.venv2
+.venv3
+
+# IDEs
+.idea
+.vscode
+
+# osx
+.DS_Store
+
+# local testing
+/data/
+/test.py
