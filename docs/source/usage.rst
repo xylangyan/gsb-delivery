@@ -529,6 +529,50 @@ WCS
   ... my_wcs.contents['AverageChlorophyllScaled'].timepositions
   [datetime.datetime(2015, 1, 1, 0, 0), datetime.datetime(2015, 2, 1, 0, 0), datetime.datetime(2015, 3, 1, 0, 0), datetime.datetime(2015, 4, 1, 0, 0), datetime.datetime(2015, 5, 1, 0, 0), datetime.datetime(2015, 7, 1, 0, 0)]
 
+Plan physical index ranges for a request
+...........................................
+
+``plan_subset`` turns a geographic rectangle and explicit sampling times into
+the physical index ranges that must be fetched. The grid description is used
+as published, so storage order need not match request order and negative
+offsets or rotated grids are honoured. ``index_ranges`` is in storage-axis
+order; ``request_index_ranges`` is the same selection in request order.
+
+.. code-block:: python
+
+  >>> cvg = my_wcs.contents['AverageChlorophyllScaled']
+  >>> plan = cvg.plan_subset(bbox=(-10, 40, 0, 50),
+  ...                        times=['2015-01-02T00:00:00Z'])
+  >>> plan.index_ranges            # storage order: Lat, Long, unix
+  {'Lat': IndexRange(26, 33), 'Long': IndexRange(113, 119), 'unix': IndexRange(0, 0)}
+  >>> plan.request_index_ranges    # request order: Long, Lat, time
+  (IndexRange(113, 119), IndexRange(26, 33), IndexRange(0, 0))
+  >>> plan.cells[0].xy             # true position of the first returned cell
+  (-9.75, 50.25)
+
+A cell that only partly intersects the rectangle is reported as ``partial``
+(``cell.proven`` is ``False``); its value is unknown and must not be written as
+zero. A requested instant matches the nearest published sampling position only
+within half a step; anything farther raises ``GridSubsetError`` instead of
+silently reading a different sample.
+
+If a service cannot subset an axis, pass the axes it does support. The plan
+then gives the larger range that must be read and the local slice to keep:
+
+.. code-block:: python
+
+  >>> plan = cvg.plan_subset(bbox=(-10, 40, 0, 50),
+  ...                        times=['2015-01-02T00:00:00Z'],
+  ...                        supported_axes=['Lat', 'Long'])
+  >>> plan.read_ranges['unix']     # whole axis is read
+  IndexRange(0, 5)
+  >>> plan.clip_ranges['unix']     # keep these positions after reading
+  (0, 1)
+
+Use ``plan_grid_batches`` (or ``plan_grid_batches(..., batch_times=True)``) to
+produce one ingest batch per sampling instant, with optional ``chunk`` limits
+on the spatial block.
+
 
 
 CSW

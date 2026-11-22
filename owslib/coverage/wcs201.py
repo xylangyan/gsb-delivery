@@ -421,6 +421,23 @@ class ContentMetadata(object):
 
     axisDescriptions = property(_getAxisDescriptionsProperty, None)
 
+    def plan_subset(self, bbox=None, times=None, **kwargs):
+        """Plan physical index ranges for a request against this coverage.
+
+        See :func:`owslib.coverage.gridsubset.plan_grid_subset`.  The returned
+        ranges are in storage-axis order, with request-order equivalents and
+        true cell positions.
+        """
+        from owslib.coverage.gridsubset import plan_grid_subset
+
+        return plan_grid_subset(self.grid, bbox=bbox, times=times, **kwargs)
+
+    def plan_subset_from_subsets(self, subsets, **kwargs):
+        """Plan physical index ranges from GetCoverage-style SUBSET triples."""
+        from owslib.coverage.gridsubset import plan_subset_from_subsets
+
+        return plan_subset_from_subsets(self.grid, subsets, **kwargs)
+
 
 # Adding classes to represent gml:grid and gml:rectifiedgrid. One of these is used for the cvg.grid property
 # (where cvg is a member of the contents dictionary)
@@ -451,6 +468,23 @@ class Grid(object):
             ].text.split(" "):
                 self.axislabels.append(axis)
 
+    def plan_subset(self, bbox=None, times=None, **kwargs):
+        """Plan physical index ranges for a request.
+
+        Returns an :class:`owslib.coverage.gridsubset.GridSubset` whose
+        ``index_ranges`` are in storage-axis order, with request-order ranges,
+        true cell positions and read/clip ranges for unsupported axes.
+        """
+        from owslib.coverage.gridsubset import plan_grid_subset
+
+        return plan_grid_subset(self, bbox=bbox, times=times, **kwargs)
+
+    def plan_subset_from_subsets(self, subsets, **kwargs):
+        """Plan physical index ranges from GetCoverage-style SUBSET triples."""
+        from owslib.coverage.gridsubset import plan_subset_from_subsets
+
+        return plan_subset_from_subsets(self, subsets, **kwargs)
+
 
 class RectifiedGrid(Grid):
     """ RectifiedGrid class, extends Grid with additional offset vector information """
@@ -480,6 +514,23 @@ class ReferenceableGridByVectors(Grid):
             "{http://www.opengis.net/gml/3.3/rgrid}generalGridAxis/{http://www.opengis.net/gml/3.3/rgrid}GeneralGridAxis/{http://www.opengis.net/gml/3.3/rgrid}offsetVector"  # noqa
         ):
             self.offsetvectors.append(offset.text.split())
+        # Irregular axes (typically time) list their actual ordinates instead of
+        # a constant step.  Keep them keyed by the axis they span so subset
+        # planning can select the real samples.
+        self.axis_coefficients = {}
+        for elem in refereceablegridbyvectors.findall(
+            "{http://www.opengis.net/gml/3.3/rgrid}generalGridAxis"
+        ):
+            spanned = elem.find(
+                "{http://www.opengis.net/gml/3.3/rgrid}GeneralGridAxis/{http://www.opengis.net/gml/3.3/rgrid}gridAxesSpanned"  # noqa
+            )
+            coefficients = elem.find(
+                "{http://www.opengis.net/gml/3.3/rgrid}GeneralGridAxis/{http://www.opengis.net/gml/3.3/rgrid}coefficients"  # noqa
+            )
+            if spanned is None or coefficients is None or not coefficients.text:
+                continue
+            values = [value.replace('"', "") for value in coefficients.text.split(" ")]
+            self.axis_coefficients[spanned.text] = values
 
 
 class AxisDescription(object):
