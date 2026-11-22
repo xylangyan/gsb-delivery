@@ -1,0 +1,40 @@
+.idea/workspace.xml
+build/
+dist/
+_build/
+_generate/
+.cache*
+.tox*
+.eggs*
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+ChangeLog
+*.so
+*.py[cod]
+*.egg-info
+.coverage
+.pypirc
+uv.lock
+jupyter/.ipynb*
+/.venv/
+/.vscode/
+.idea/
+
+# Internal benchmarking / research work product (harnesses, reports, profiling,
+# cross-impl studies) — kept local, never published with the OSS library.
+benchmarks/
+saxpy_benchmark_report.html
+
+# Cursor / Claude / agent artifacts — never commit
+.cursor/
+.claude/
+audit/
+audit-report.html
+AGENTS.md
+*.mdc
+
+# UCR benchmark datasets — 440 MB, local-only; keep only the four tracked benchmark files
+resources/data/*
+!resources/data/Gun_Point/
+!resources/data/cbf/

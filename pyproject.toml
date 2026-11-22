@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "saxpy"
+version = "2.0.1"
+description = "SAX, HOT-SAX, and SAX-VSM implementations for time series symbolic discretization in Python"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-2.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "Pavel Senin", email = "seninp@gmail.com" }]
+keywords = ["sax", "time-series", "discretization", "hot-sax", "discord", "motif", "data-mining"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+]
+
+[project.urls]
+Homepage = "https://github.com/seninp/saxpy"
+Documentation = "https://github.com/seninp/saxpy#readme"
+Repository = "https://github.com/seninp/saxpy"
+Changelog = "https://github.com/seninp/saxpy/blob/master/CHANGELOG.md"
+PyPI = "https://pypi.org/project/saxpy/2.0.1/"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["saxpy"]
+
+# Lean source distribution: only the package and the user-facing docs/metadata.
+# Hatchling's sdist target otherwise globs the whole working directory, so it is
+# pinned with an explicit allowlist; tests and example datasets stay in the repo
+# for development and CI rather than the release sdist. `.gitignore` is
+# force-included by Hatchling regardless of only-include, so it is excluded.
+[tool.hatch.build.targets.sdist]
+only-include = ["saxpy", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+exclude = [".gitignore"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+# Exploratory notebooks are not maintained package source.
+extend-exclude = ["jupyter"]
+
+[tool.ruff.lint]
+# Ruff defaults (E4/E7/E9, F) plus pycodestyle warnings (incl. W605 invalid
+# escape sequences), import sorting, pyupgrade, and bugbear.
+select = ["E4", "E7", "E9", "W", "F", "I", "UP", "B"]
+
+[tool.mypy]
+# python_version is intentionally not pinned: numpy 2.x ships PEP 695 stubs that
+# mypy refuses to parse under an older target. 3.10-syntax compatibility is
+# enforced by Ruff (target-version = py310) and the 3.10 test-matrix run instead.
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
