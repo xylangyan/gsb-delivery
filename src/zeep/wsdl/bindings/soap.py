@@ -10,9 +10,11 @@ from zeep.loader import parse_xml
 from zeep.utils import as_qname, get_media_type, qname_attr
 from zeep.wsdl.attachments import MessagePack
 from zeep.wsdl.definitions import Binding, Operation
+from zeep.wsdl.lazy import LazyMessagePack, document_uses_xop
 from zeep.wsdl.messages import DocumentMessage, RpcMessage
 from zeep.wsdl.messages.xop import process_xop
 from zeep.wsdl.utils import etree_to_string, url_http_to_https
+from zeep.xsd.context import XmlParserContext
 
 if typing.TYPE_CHECKING:
     from zeep.wsdl.wsdl import Definition
@@ -187,6 +189,7 @@ class SoapBinding(Binding):
         content_type = response.headers.get("Content-Type", "text/xml")
         media_type = get_media_type(content_type)
         message_pack = None
+        lazy_pack = None
 
         # If the reply is a multipart/related then we need to retrieve all the
         # parts
@@ -195,10 +198,10 @@ class SoapBinding(Binding):
                 response.content, content_type, response.encoding or "utf-8"
             )
             content = decoder.parts[0].content
-            if len(decoder.parts) > 1:
-                message_pack = MessagePack(parts=decoder.parts[1:])
+            attachment_parts = decoder.parts[1:]
         else:
             content = response.content
+            attachment_parts = []
 
         try:
             doc = parse_xml(content, self.transport, settings=client.settings)
@@ -210,8 +213,19 @@ class SoapBinding(Binding):
                 content=response.content,
             )
 
-        # Check if this is an XOP message which we need to decode first
-        if message_pack:
+        # When lazy MTOM handling is enabled and the envelope actually uses
+        # xop:Include references then keep the references in place and resolve
+        # the parts on demand instead of inlining every attachment eagerly.
+        if (
+            attachment_parts
+            and getattr(client.settings, "mtom_lazy", False)
+            and document_uses_xop(doc)
+        ):
+            lazy_pack = LazyMessagePack(parts=attachment_parts)
+        elif attachment_parts:
+            message_pack = MessagePack(parts=attachment_parts)
+
+            # Check if this is an XOP message which we need to decode first
             if process_xop(doc, message_pack):
                 message_pack = None
 
@@ -227,6 +241,14 @@ class SoapBinding(Binding):
         fault_node = doc.find("soap-env:Body/soap-env:Fault", namespaces=self.nsmap)
         if response.status_code != 200 or fault_node is not None:
             return self.process_error(doc, operation)
+
+        if lazy_pack is not None:
+            context = XmlParserContext(
+                settings=client.settings, message_pack=lazy_pack
+            )
+            result = operation.process_reply(doc, context=context)
+            lazy_pack._set_root(result)
+            return lazy_pack
 
         result = operation.process_reply(doc)
 
@@ -415,7 +437,7 @@ class SoapOperation(Operation):
         self.soapaction = soapaction
         self.style = style
 
-    def process_reply(self, envelope):
+    def process_reply(self, envelope, context=None):
         envelope_qname = etree.QName(self.nsmap["soap-env"], "Envelope")
         if envelope.tag != envelope_qname:
             raise XMLSyntaxError(
@@ -427,7 +449,7 @@ class SoapOperation(Operation):
             )
 
         if self.output:
-            return self.output.deserialize(envelope)
+            return self.output.deserialize(envelope, context=context)
 
     @classmethod
     def parse(cls, definitions, xmlelement, binding, nsmap):

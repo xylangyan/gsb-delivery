@@ -73,6 +73,10 @@ class AnySimpleType(AnyType):
         context: XmlParserContext = None,
         schema_type: "Type" = None,
     ) -> typing.Optional[typing.Union[str, CompoundValue, typing.List[etree._Element]]]:
+        if context is not None:
+            lazy_value = context.resolve_xop(xmlelement)
+            if lazy_value is not None:
+                return lazy_value
         if xmlelement.text is None:
             return None
         try:

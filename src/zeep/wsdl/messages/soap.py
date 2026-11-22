@@ -94,7 +94,7 @@ class SoapMessage(ConcreteMessage):
         }
         return SerializedMessage(path=None, headers=headers, content=envelope)
 
-    def deserialize(self, envelope):
+    def deserialize(self, envelope, context=None):
         """Deserialize the SOAP:Envelope and return a CompoundValue with the
         result.
 
@@ -105,7 +105,7 @@ class SoapMessage(ConcreteMessage):
         assert self.header
 
         body = envelope.find("soap-env:Body", namespaces=self.nsmap)
-        body_result = self._deserialize_body(body)
+        body_result = self._deserialize_body(body, context=context)
 
         header = envelope.find("soap-env:Header", namespaces=self.nsmap)
         headers_result = self._deserialize_headers(header)
@@ -376,7 +376,7 @@ class SoapMessage(ConcreteMessage):
 
         return header
 
-    def _deserialize_body(self, xmlelement):
+    def _deserialize_body(self, xmlelement, context=None):
         raise NotImplementedError()
 
     def _deserialize_headers(self, xmlelement):
@@ -441,7 +441,7 @@ class DocumentMessage(SoapMessage):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def _deserialize_body(self, xmlelement):
+    def _deserialize_body(self, xmlelement, context=None):
 
         if not self._is_body_wrapped:
             # TODO: For now we assume that the body only has one child since
@@ -449,7 +449,7 @@ class DocumentMessage(SoapMessage):
             # way better
             xmlelement = list(xmlelement)[0]
 
-        context = XmlParserContext(settings=self.wsdl.settings)
+        context = context or XmlParserContext(settings=self.wsdl.settings)
         result = self.body.parse(xmlelement, self.wsdl.types, context=context)
         return {"body": result}
 
@@ -535,7 +535,7 @@ class RpcMessage(SoapMessage):
                 elements.append(xsd.Element(name, msg.type))
         return xsd.Element(tag_name, xsd.ComplexType(xsd.Sequence(elements)))
 
-    def _deserialize_body(self, body_element):
+    def _deserialize_body(self, body_element, context=None):
         """The name of the wrapper element is not defined. The WS-I defines
         that it should be the operation name with the 'Response' string as
         suffix. But lets just do it really stupid for now and use the first
@@ -546,7 +546,7 @@ class RpcMessage(SoapMessage):
 
         response_element = list(body_element)[0]
         if self.body:
-            context = XmlParserContext(self.wsdl.settings)
+            context = context or XmlParserContext(self.wsdl.settings)
             result = self.body.parse(response_element, self.wsdl.types, context=context)
             return {"body": result}
         return {"body": None}

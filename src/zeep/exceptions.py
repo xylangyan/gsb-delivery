@@ -89,6 +89,11 @@ class IncompleteMessage(Error):
     pass
 
 
+class LazyAttachmentError(Error):
+    """Raised when a lazy MTOM attachment cannot be resolved or has been
+    released."""
+
+
 class IncompleteOperation(Error):
     pass
 

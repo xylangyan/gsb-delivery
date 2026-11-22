@@ -44,6 +44,14 @@ class Settings:
      order when parsing complex types. This is a workaround for servers that
      don't respect sequence order.
     :type xsd_ignore_sequence_order: boolean
+
+    :param mtom_lazy: when the response is a multipart/related MTOM message,
+     resolve the ``xop:Include`` attachments lazily instead of eagerly inlining
+     every attachment into the XML tree. Binary fields become
+     :class:`zeep.wsdl.lazy.LazyBinary` objects which read their part only when
+     the field is used, read each part only once even when it is referenced
+     several times, and keep parallel responses isolated by Content-ID.
+    :type mtom_lazy: bool
     """
 
     strict = attr.ib(default=True)
@@ -61,6 +69,9 @@ class Settings:
 
     # xsd workarounds
     xsd_ignore_sequence_order = attr.ib(default=False)
+
+    # mtom/xop attachments
+    mtom_lazy = attr.ib(default=False)
 
     _tls = attr.ib(default=attr.Factory(threading.local))
 
