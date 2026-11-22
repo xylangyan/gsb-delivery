@@ -1,0 +1,8 @@
+language: ruby
+script: make test
+install: gem install rspec
+rvm:
+  - 2.6
+  - 2.7
+  - 3.0
+  - ruby-head
