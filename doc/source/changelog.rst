@@ -6,6 +6,16 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- :class:`File` now publishes values crash-safely: each write is committed
+  with an atomic rename, so reopening the directory (also from another
+  process) never resurrects an unpublished file, while a version that was
+  published before an interruption remains the current one. Deletions are
+  committed with tombstones, so a deleted key never reappears on reopen even
+  when the OS refuses to unlink its files (e.g. while they are still
+  memory-mapped); such files are removed lazily on the next open, write, or
+  ``close()``. Old versions are unlinked only after their replacement has
+  been published, so readers holding memory maps of them keep reading
+  consistent data and never block publishing.
 
 
 3.0.0 - 2023-04-17
