@@ -1,0 +1,5 @@
+[run]
+plugins =
+    Cython.Coverage
+    coverage_excludes
+source = clickhouse_driver
