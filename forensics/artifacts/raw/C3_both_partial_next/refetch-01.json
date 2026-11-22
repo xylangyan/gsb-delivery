@@ -1,0 +1,64 @@
+{
+  "key": "P-0001",
+  "url": "http://host/service/Products('P-0001')?$select=ProductID%2CActive",
+  "parsed": {
+    "key": "P-0001",
+    "id": "http://host/service/Products('P-0001')",
+    "properties": {
+      "ProductID": {
+        "present": true,
+        "null": false,
+        "text": "P-0001"
+      },
+      "Active": {
+        "present": true,
+        "null": false,
+        "text": "true"
+      }
+    },
+    "field_presence": {
+      "ProductID": {
+        "present": true,
+        "null": false
+      },
+      "Name": {
+        "present": false,
+        "null": null
+      },
+      "Warehouse": {
+        "present": false,
+        "null": null
+      },
+      "BinSequence": {
+        "present": false,
+        "null": null
+      },
+      "Active": {
+        "present": true,
+        "null": false
+      },
+      "Region": {
+        "present": false,
+        "null": null
+      },
+      "Note": {
+        "present": false,
+        "null": null
+      }
+    },
+    "navs": [
+      {
+        "name": "Category",
+        "rel": "http://schemas.microsoft.com/ado/2007/08/dataservices/related/Category",
+        "href": "http://host/service/Products('P-0001')/Category",
+        "inline": null
+      }
+    ]
+  },
+  "decoded": {
+    "Active": {
+      "selected": true,
+      "value": true
+    }
+  }
+}

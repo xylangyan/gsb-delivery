@@ -1,0 +1,6 @@
+GET /service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3 HTTP/1.1
+Host: host
+accept: application/atom+xml
+dataserviceversion: 2.0; pyslet 0.7.20180305
+maxdataserviceversion: 2.0; pyslet 0.7.20180305
+

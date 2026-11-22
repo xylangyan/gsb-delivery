@@ -1,0 +1,59 @@
+{
+  "page": 2,
+  "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=2",
+  "query_options": {
+    "filter": "Warehouse eq 'W1'",
+    "expand": "Category",
+    "select": "BinSequence,Name,ProductID,Region,Warehouse",
+    "orderby": "BinSequence asc, ProductID asc",
+    "top": "2",
+    "skip": "2"
+  },
+  "request_equals_previous_next": false,
+  "previous_next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1",
+  "response_status": 200,
+  "entry_keys": [
+    "P-0003"
+  ],
+  "field_presence": {
+    "P-0003": {
+      "ProductID": {
+        "present": true,
+        "null": false
+      },
+      "Name": {
+        "present": true,
+        "null": false
+      },
+      "Warehouse": {
+        "present": true,
+        "null": false
+      },
+      "BinSequence": {
+        "present": true,
+        "null": false
+      },
+      "Active": {
+        "present": false,
+        "null": null
+      },
+      "Region": {
+        "present": true,
+        "null": true
+      },
+      "Note": {
+        "present": false,
+        "null": null
+      }
+    }
+  },
+  "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3",
+  "client_decisions": [
+    {
+      "key": "P-0003",
+      "kept": true,
+      "active_in_page": "<not selected>",
+      "reason": "Active not selected in page; targeted refetch value=True"
+    }
+  ]
+}

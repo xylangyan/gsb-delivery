@@ -1,0 +1,615 @@
+{
+  "service_root": "http://host/service/",
+  "model": "forensics/model.xml",
+  "server_topmax": 1,
+  "requested_top": 2,
+  "filter": "Warehouse eq 'W1'",
+  "orderby": "BinSequence asc,ProductID asc",
+  "expected_active_w1": [
+    "P-0001",
+    "P-0002",
+    "P-0003",
+    "P-0005"
+  ],
+  "expected_inactive_w1": [
+    "P-0004"
+  ],
+  "out_of_scope": [
+    "Q-0000"
+  ],
+  "region_null_key": "P-0003",
+  "filtered_count": 5,
+  "ledger": "forensics/artifacts/ledger.json",
+  "runs": {
+    "R0_baseline_full_next": {
+      "projection": "full",
+      "continuation": "next",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [
+        "P-0001",
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "missing_expected": [],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0004"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4"
+        },
+        {
+          "page": 5,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 6,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5",
+          "request_equals_previous_next": true,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=6"
+        }
+      ]
+    },
+    "R1_projection_only_partial_next": {
+      "projection": "partial",
+      "continuation": "next",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [],
+      "missing_expected": [
+        "P-0001",
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0004"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4"
+        },
+        {
+          "page": 5,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 6,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5",
+          "request_equals_previous_next": true,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=6"
+        }
+      ]
+    },
+    "R2_continuation_only_full_rebuilt": {
+      "projection": "full",
+      "continuation": "rebuilt",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [
+        "P-0001",
+        "P-0003",
+        "P-0005"
+      ],
+      "missing_expected": [
+        "P-0002"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=2",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=4",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=6",
+          "request_equals_previous_next": false,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=7"
+        }
+      ]
+    },
+    "R3_both_partial_rebuilt": {
+      "projection": "partial",
+      "continuation": "rebuilt",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [],
+      "missing_expected": [
+        "P-0001",
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=2",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=4",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=6",
+          "request_equals_previous_next": false,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=7"
+        }
+      ]
+    },
+    "C1_filter_only_partial_rebuilt": {
+      "projection": "partial",
+      "continuation": "rebuilt",
+      "client_filter": "selection_aware",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [
+        "P-0001",
+        "P-0003",
+        "P-0005"
+      ],
+      "missing_expected": [
+        "P-0002"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=2",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=4",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=6",
+          "request_equals_previous_next": false,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=7"
+        }
+      ]
+    },
+    "C2_next_only_partial_next": {
+      "projection": "partial",
+      "continuation": "next",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [],
+      "missing_expected": [
+        "P-0001",
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0004"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4"
+        },
+        {
+          "page": 5,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 6,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5",
+          "request_equals_previous_next": true,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=6"
+        }
+      ]
+    },
+    "C3_both_partial_next": {
+      "projection": "partial",
+      "continuation": "next",
+      "client_filter": "selection_aware",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [
+        "P-0001",
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "missing_expected": [],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0004"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4"
+        },
+        {
+          "page": 5,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4",
+          "request_equals_previous_next": true,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 6,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5",
+          "request_equals_previous_next": true,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=6"
+        }
+      ]
+    },
+    "C2b_next_only_pyslet_iterpage": {
+      "projection": "partial",
+      "continuation": "pyslet_iterpage",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": null,
+      "kept": [],
+      "missing_expected": [
+        "P-0001",
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=1",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=2",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0003"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=3",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0004"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=4"
+        },
+        {
+          "page": 5,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=4",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0005"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5"
+        },
+        {
+          "page": 6,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=5",
+          "request_equals_previous_next": null,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$select=BinSequence%2CName%2CProductID%2CRegion%2CWarehouse&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=6"
+        }
+      ]
+    },
+    "X1_wrong_cursor_full_rebuilt_skiptoken1": {
+      "projection": "full",
+      "continuation": "rebuilt",
+      "client_filter": "naive",
+      "continuation_filter": null,
+      "continuation_skiptoken": "1",
+      "kept": [
+        "P-0001",
+        "P-0002",
+        "P-0002",
+        "P-0002",
+        "P-0002"
+      ],
+      "missing_expected": [
+        "P-0003",
+        "P-0005"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=1",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 3,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=1",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 4,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=1",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        },
+        {
+          "page": 5,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skiptoken=1",
+          "request_equals_previous_next": false,
+          "entry_keys": [
+            "P-0002"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=2"
+        }
+      ]
+    },
+    "X2_wrong_filter_full_rebuilt": {
+      "projection": "full",
+      "continuation": "rebuilt",
+      "client_filter": "naive",
+      "continuation_filter": "Warehouse eq 'W2'",
+      "continuation_skiptoken": null,
+      "kept": [
+        "P-0001"
+      ],
+      "missing_expected": [
+        "P-0002",
+        "P-0003",
+        "P-0005"
+      ],
+      "pages": [
+        {
+          "page": 1,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=0",
+          "request_equals_previous_next": null,
+          "entry_keys": [
+            "P-0001"
+          ],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=1"
+        },
+        {
+          "page": 2,
+          "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W2'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=2",
+          "request_equals_previous_next": false,
+          "entry_keys": [],
+          "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W2'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=3"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "url": "http://host/service/Products('P-0003')?$expand=Category&$select=ProductID%2CName%2CWarehouse%2CBinSequence%2CActive%2CRegion",
+  "parsed": {
+    "key": "P-0003",
+    "id": "http://host/service/Products('P-0003')",
+    "properties": {
+      "ProductID": {
+        "present": true,
+        "null": false,
+        "text": "P-0003"
+      },
+      "Name": {
+        "present": true,
+        "null": false,
+        "text": "Gasket"
+      },
+      "Warehouse": {
+        "present": true,
+        "null": false,
+        "text": "W1"
+      },
+      "BinSequence": {
+        "present": true,
+        "null": false,
+        "text": "110"
+      },
+      "Active": {
+        "present": true,
+        "null": false,
+        "text": "true"
+      },
+      "Region": {
+        "present": true,
+        "null": true,
+        "text": null
+      }
+    },
+    "field_presence": {
+      "ProductID": {
+        "present": true,
+        "null": false
+      },
+      "Name": {
+        "present": true,
+        "null": false
+      },
+      "Warehouse": {
+        "present": true,
+        "null": false
+      },
+      "BinSequence": {
+        "present": true,
+        "null": false
+      },
+      "Active": {
+        "present": true,
+        "null": false
+      },
+      "Region": {
+        "present": true,
+        "null": true
+      },
+      "Note": {
+        "present": false,
+        "null": null
+      }
+    },
+    "navs": [
+      {
+        "name": "Category",
+        "rel": "http://schemas.microsoft.com/ado/2007/08/dataservices/related/Category",
+        "href": "http://host/service/Products('P-0003')/Category",
+        "inline": {
+          "kind": "entry",
+          "entry": {
+            "key": null,
+            "id": "http://host/service/Categories('C2')",
+            "properties": {
+              "CategoryID": {
+                "present": true,
+                "null": false,
+                "text": "C2"
+              },
+              "CategoryName": {
+                "present": true,
+                "null": false,
+                "text": "Seals"
+              },
+              "Region": {
+                "present": true,
+                "null": true,
+                "text": null
+              }
+            },
+            "field_presence": {
+              "ProductID": {
+                "present": false,
+                "null": null
+              },
+              "Name": {
+                "present": false,
+                "null": null
+              },
+              "Warehouse": {
+                "present": false,
+                "null": null
+              },
+              "BinSequence": {
+                "present": false,
+                "null": null
+              },
+              "Active": {
+                "present": false,
+                "null": null
+              },
+              "Region": {
+                "present": true,
+                "null": true
+              },
+              "Note": {
+                "present": false,
+                "null": null
+              }
+            },
+            "navs": []
+          }
+        }
+      }
+    ]
+  },
+  "decoded": {
+    "Region": {
+      "selected": true,
+      "value": null
+    },
+    "Category": {
+      "expanded": true,
+      "key": "C2",
+      "Region": {
+        "selected": true,
+        "value": null
+      },
+      "CategoryName": {
+        "selected": true,
+        "value": "Seals"
+      }
+    }
+  }
+}

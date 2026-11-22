@@ -1,0 +1,6 @@
+{
+  "url": "http://host/service/Products/$count?$filter=Warehouse%20eq%20'W1'",
+  "count": 5,
+  "request": "GET /service/Products/$count?$filter=Warehouse%20eq%20'W1' HTTP/1.1\r\nHost: host\r\naccept: text/plain\r\ndataserviceversion: 2.0; pyslet 0.7.20180305\r\nmaxdataserviceversion: 2.0; pyslet 0.7.20180305\r\n\r\n",
+  "response_body": "5"
+}

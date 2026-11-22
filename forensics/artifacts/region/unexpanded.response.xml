@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entry xmlns="http://www.w3.org/2005/Atom" xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices" xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" xml:base="http://host/service/">
+	<id>http://host/service/Products('P-0003')</id>
+	<title type="text"/>
+	<updated>2023-11-14T22:13:20Z</updated>
+	<link href="http://host/service/Products('P-0003')" rel="edit"/>
+	<link href="http://host/service/Products('P-0003')/Category" rel="http://schemas.microsoft.com/ado/2007/08/dataservices/related/Category" title="Category" type="application/atom+xml;type=entry"/>
+	<category scheme="http://schemas.microsoft.com/ado/2007/08/dataservices/scheme" term="Inventory.Product"/>
+	<content type="application/xml"><m:properties><d:ProductID>P-0003</d:ProductID><d:Name>Gasket</d:Name><d:Warehouse>W1</d:Warehouse><d:BinSequence>110</d:BinSequence><d:Active>true</d:Active><d:Region m:null="true"/></m:properties></content>
+</entry>

@@ -1,0 +1,6 @@
+GET /service/Products('P-0004')?$select=ProductID%2CActive HTTP/1.1
+Host: host
+accept: application/atom+xml;type=entry
+dataserviceversion: 2.0; pyslet 0.7.20180305
+maxdataserviceversion: 2.0; pyslet 0.7.20180305
+

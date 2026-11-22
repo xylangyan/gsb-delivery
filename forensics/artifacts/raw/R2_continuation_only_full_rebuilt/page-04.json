@@ -1,0 +1,18 @@
+{
+  "page": 4,
+  "request_url": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$top=2&$skip=6",
+  "query_options": {
+    "filter": "Warehouse eq 'W1'",
+    "expand": "Category",
+    "orderby": "BinSequence asc, ProductID asc",
+    "top": "2",
+    "skip": "6"
+  },
+  "request_equals_previous_next": false,
+  "previous_next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=5",
+  "response_status": 200,
+  "entry_keys": [],
+  "field_presence": {},
+  "next_link": "http://host/service/Products?$filter=Warehouse%20eq%20'W1'&$expand=Category&$orderby=BinSequence%20asc%2C%20ProductID%20asc&$skiptoken=7",
+  "client_decisions": []
+}
