@@ -1,0 +1,658 @@
+# Copyright 2020-2026 Ternaris
+# SPDX-License-Identifier: Apache-2.0
+"""Reader Tests."""
+
+from __future__ import annotations
+
+import shutil
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+from unittest.mock import MagicMock, patch
+
+import pytest
+from ruamel.yaml import YAML
+
+if sys.version_info >= (3, 14):
+    from compression import zstd
+else:  # pragma: no cover
+    from backports import zstd
+
+from rosbags.interfaces import (
+    Connection,
+    ConnectionExtRosbag2,
+    MessageDefinition,
+    MessageDefinitionFormat,
+    Qos,
+    QosDurability,
+    QosHistory,
+    QosLiveliness,
+    QosReliability,
+    QosTime,
+)
+from rosbags.rosbag2 import (
+    CompressionFormat,
+    CompressionMode,
+    Reader,
+    ReaderError,
+    StoragePlugin,
+    Writer,
+)
+from rosbags.rosbag2.metadata import Metadata
+from rosbags.rosbag2.reader import DirectoryReader
+from rosbags.typesys import Stores, get_typestore
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable
+
+    from rosbags.typesys.stores.latest import std_msgs__msg__Int8 as Int8
+
+
+METADATA = """
+rosbag2_bagfile_information:
+  version: 4
+  storage_identifier: mock
+  relative_file_paths:
+    - db0.dat{extension}
+    - db1.dat{extension}
+  duration:
+    nanoseconds: 42
+  starting_time:
+    nanoseconds_since_epoch: 666
+  message_count: 4
+  topics_with_message_count:
+    - topic_metadata:
+        name: /poly
+        type: geometry_msgs/msg/Polygon
+        serialization_format: cdr
+        offered_qos_profiles: ""
+      message_count: 1
+    - topic_metadata:
+        name: /magn
+        type: sensor_msgs/msg/MagneticField
+        serialization_format: cdr
+        offered_qos_profiles: ""
+      message_count: 2
+    - topic_metadata:
+        name: /joint
+        type: trajectory_msgs/msg/JointTrajectory
+        serialization_format: cdr
+        offered_qos_profiles: ""
+      message_count: 1
+  compression_format: {compression_format}
+  compression_mode: {compression_mode}
+"""
+
+METADATA_EMPTY = """
+rosbag2_bagfile_information:
+  version: 8
+  storage_identifier: mock
+  relative_file_paths:
+    - db0.dat
+    - db1.dat
+  duration:
+    nanoseconds: 0
+  starting_time:
+    nanoseconds_since_epoch: 0
+  message_count: 0
+  topics_with_message_count: []
+  compression_format: ""
+  compression_mode: ""
+  files:
+  - duration:
+      nanoseconds: 0
+    message_count: 0
+    path: db0.dat
+    starting_time:
+      nanoseconds_since_epoch: 0
+  - duration:
+      nanoseconds: 0
+    message_count: 0
+    path: db1.dat
+    starting_time:
+      nanoseconds_since_epoch: 0
+  custom_data:
+    key1: value1
+    key2: value2
+  ros_distro: rosbags
+"""
+
+
+@pytest.fixture(autouse=True)
+def mock_storage() -> Generator[MagicMock, None, None]:
+    """Inject fake storage plugin."""
+    mock_storage = MagicMock(name='MockStorage')
+
+    with patch.dict(
+        'rosbags.rosbag2.reader.DirectoryReader.STORAGE_PLUGINS', {'mock': mock_storage}
+    ):
+        yield mock_storage
+
+
+@pytest.fixture
+def empty_bag(tmp_path: Path) -> Path:
+    """Manually construct empty bag."""
+    _ = (tmp_path / 'metadata.yaml').write_text(METADATA_EMPTY)
+    (tmp_path / 'db0.dat').touch()
+    (tmp_path / 'db1.dat').touch()
+    return tmp_path
+
+
+@pytest.fixture
+def nonempty_bag(tmp_path: Path) -> Path:
+    """Manually construct empty bag."""
+    _ = (tmp_path / 'metadata.yaml').write_text(
+        METADATA.format(extension='', compression_format='""', compression_mode='""'),
+    )
+    (tmp_path / 'db0.dat').touch()
+    (tmp_path / 'db1.dat').touch()
+    return tmp_path
+
+
+@pytest.fixture(params=['none', 'file', 'message'])
+def bag_with_compression(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    mock_storage: MagicMock,
+) -> Path:
+    """Manually construct bag with compression."""
+    param = cast('str', request.param)
+    _ = (tmp_path / 'metadata.yaml').write_text(
+        METADATA.format(
+            extension='' if param != 'file' else '.zstd',
+            compression_format='""' if param == 'none' else 'zstd',
+            compression_mode='""' if param == 'none' else param.upper(),
+        ),
+    )
+
+    textcomp = zstd.compress if request.param == 'message' else bytes
+
+    db0 = tmp_path / 'db0.dat'
+    db0.write_bytes(b'mockdata0')
+
+    db1 = tmp_path / 'db1.dat'
+    db1.write_bytes(b'mockdata1')
+
+    if param == 'file':
+        for item in [db0, db1]:
+            with item.open('rb') as ifh, zstd.open(item.with_suffix('.dat.zstd'), 'wb') as ofh:
+                shutil.copyfileobj(ifh, ofh)
+            item.unlink()
+
+    defargs = (
+        MessageDefinition(MessageDefinitionFormat.NONE, ''),
+        '',
+        0,
+        ConnectionExtRosbag2('cdr', []),
+        None,
+    )
+
+    class MockStorage:
+        """Mock Storage."""
+
+        def __init__(self, path: Path) -> None:
+            """Initialize."""
+            self.index = int(path.stem[-1])
+            self.path = path
+            self.connections: list[Connection] = (
+                [
+                    Connection(201, '/poly', 'geometry_msgs/msg/Polygon', *defargs),
+                    Connection(101, '/magn', 'sensor_msgs/msg/MagneticField', *defargs),
+                    Connection(301, '/joint', 'trajectory_msgs/msg/JointTrajectory', *defargs),
+                ]
+                if self.index
+                else []
+            )
+
+        def open(self) -> None:
+            """Open storage."""
+            assert self.path.read_bytes().startswith(f'mockdata{self.index}'.encode())
+
+        def close(self) -> None:
+            """Close storage."""
+
+        def messages(
+            self,
+            connections: Iterable[Connection],
+            start: int | None = None,
+            stop: int | None = None,
+        ) -> Generator[tuple[Connection, int, bytes], None, None]:
+            """Messages."""
+            if not self.index:
+                return
+
+            cids = [x.id for x in connections]
+            start = start or 0
+            stop = stop or 1000
+
+            for cid, timestamp, data in (
+                (201, 666, textcomp(b'poly message')),
+                (101, 708, textcomp(b'magn message')),
+                (101, 708, textcomp(b'magn message')),
+                (301, 708, textcomp(b'joint message')),
+            ):
+                if cid in cids and start <= timestamp < stop:
+                    yield next(x for x in self.connections if x.id == cid), timestamp, data
+
+    mock_storage.side_effect = MockStorage
+
+    return tmp_path
+
+
+def test_empty_metadata_conforms_to_spec() -> None:
+    """Test empty metadata conforms to spec."""
+    yaml = YAML(typ='safe')
+    dct = cast(
+        'dict[str, Metadata]',
+        yaml.load(METADATA_EMPTY),
+    )
+    assert dct['rosbag2_bagfile_information'].keys() == Metadata.__annotations__.keys()
+
+
+def test_directory_reader_raises_on_broken_fs_layouts(tmp_path: Path) -> None:
+    """Test directory reader raises on broken filesystem layouts."""
+    with pytest.raises(FileNotFoundError, match=r'metadata file .* does not exist'):
+        DirectoryReader(tmp_path)
+
+    metadata = tmp_path / 'metadata.yaml'
+    metadata.touch()
+
+    with (
+        pytest.raises(PermissionError),
+        patch.object(Path, 'read_text', side_effect=PermissionError),
+    ):
+        DirectoryReader(tmp_path).open()
+
+    with (
+        pytest.raises(ReaderError, match='not read'),
+        patch.object(Path, 'read_text', side_effect=IsADirectoryError),
+    ):
+        DirectoryReader(tmp_path).open()
+
+    _ = metadata.write_text('  invalid:\nthis is not yaml')
+    with pytest.raises(ReaderError, match='not load YAML from'):
+        DirectoryReader(tmp_path).open()
+
+    _ = metadata.write_text('foo:')
+    with pytest.raises(ReaderError, match='key is missing'):
+        DirectoryReader(tmp_path).open()
+
+    _ = metadata.write_text(METADATA_EMPTY)
+    with pytest.raises(ReaderError, match='files are missing'):
+        DirectoryReader(tmp_path).open()
+
+
+def test_directory_reader_raises_on_unsupported_features(tmp_path: Path) -> None:
+    """Test directory reader raises if fs layout is broken."""
+    metadata = tmp_path / 'metadata.yaml'
+    (tmp_path / 'db0.dat').touch()
+    (tmp_path / 'db1.dat').touch()
+
+    _ = metadata.write_text(
+        METADATA.format(
+            extension='',
+            compression_format='""',
+            compression_mode='""',
+        ).replace('version: 4', 'version: 999'),
+    )
+    with pytest.raises(ReaderError, match='version 999'):
+        DirectoryReader(tmp_path).open()
+
+    _ = metadata.write_text(
+        METADATA.format(
+            extension='',
+            compression_format='""',
+            compression_mode='""',
+        ).replace('mock', 'hdf5'),
+    )
+    with pytest.raises(ReaderError, match='Storage plugin'):
+        DirectoryReader(tmp_path).open()
+
+    _ = metadata.write_text(
+        METADATA.format(
+            extension='',
+            compression_format='""',
+            compression_mode='""',
+        ).replace('cdr', 'bson'),
+    )
+    with pytest.raises(ReaderError, match='Serialization format'):
+        DirectoryReader(tmp_path).open()
+
+    _ = metadata.write_text(
+        METADATA.format(
+            extension='',
+            compression_format='"gz"',
+            compression_mode='"file"',
+        ),
+    )
+    with pytest.raises(ReaderError, match='Compression format'):
+        DirectoryReader(tmp_path).open()
+
+
+def test_directory_reader_raises_on_storage_open_exception(
+    empty_bag: Path,
+    mock_storage: MagicMock,
+) -> None:
+    """Test directory reader raises on storage open exception."""
+
+    class OpenError(Exception): ...
+
+    first = MagicMock()
+    second = MagicMock()
+    second.open.side_effect = OpenError
+    mock_storage.side_effect = [first, second]
+
+    with pytest.raises(OpenError):
+        DirectoryReader(empty_bag).open()
+
+    first.open.assert_called_once()
+    first.close.assert_called_once()
+    second.open.assert_called_once()
+    second.close.assert_not_called()
+
+
+def test_directory_reader_has_correct_metadata_on_empty_bag(
+    empty_bag: Path, mock_storage: MagicMock
+) -> None:
+    """Test directory reader has correct metadata on empty bag."""
+    storage = MagicMock()
+    mock_storage.return_value = storage
+
+    reader = DirectoryReader(empty_bag)
+    reader.open()
+    metadata = reader.metadata
+    assert metadata.message_count == 0
+    assert metadata.start_time == 2**63 - 1
+    assert metadata.end_time == 0
+    assert metadata.duration == 0
+    assert metadata.custom
+    assert metadata.custom['key1'] == 'value1'
+    assert metadata.custom['key2'] == 'value2'
+    assert metadata.ros_distro == 'rosbags'
+
+
+def test_directory_reader_has_correct_metadata_on_nonempty_bag(
+    nonempty_bag: Path, mock_storage: MagicMock
+) -> None:
+    """Test directory reader has correct metadata on empty bag."""
+    storage = MagicMock()
+    mock_storage.return_value = storage
+
+    reader = DirectoryReader(nonempty_bag)
+    reader.open()
+    metadata = reader.metadata
+    assert metadata.message_count == 4
+    assert metadata.start_time == 666
+    assert metadata.end_time == 709
+    assert metadata.duration == 43
+    assert not metadata.custom
+    assert not metadata.ros_distro
+
+
+def test_directory_reader_integrates_msgdefs_into_connections(
+    nonempty_bag: Path,
+    mock_storage: MagicMock,
+) -> None:
+    """Test directory reader integrates msgdefs into connections."""
+    storage = MagicMock()
+    storage.connections = [
+        Connection(
+            1,
+            '/poly',
+            'geometry_msgs/msg/Polygon',
+            MessageDefinition(MessageDefinitionFormat.MSG, 'uint8 foo'),
+            '',
+            0,
+            ConnectionExtRosbag2('cdr', []),
+            None,
+        )
+    ]
+    mock_storage.return_value = storage
+
+    reader = DirectoryReader(nonempty_bag)
+    reader.open()
+    assert reader.connections[0].msgdef.data == 'uint8 foo'
+
+
+def test_reader_raises_on_missing_path(tmp_path: Path) -> None:
+    """Test reader raises on missing path."""
+    with pytest.raises(FileNotFoundError):
+        _ = Reader(tmp_path / 'missing')
+
+
+def test_reader_selects_plugins(tmp_path: Path) -> None:
+    """Test reader raises on missing path."""
+    mockdir = MagicMock()
+    mockdb3 = MagicMock()
+    with patch.dict(
+        'rosbags.rosbag2.reader.Reader.STORAGE_PLUGINS', {'dir': mockdir, '.db3': mockdb3}
+    ):
+        _ = Reader(tmp_path)
+        mockdir.assert_called_once_with(tmp_path)
+        mockdb3.assert_not_called()
+        mockdir.reset_mock()
+
+        dbpath = tmp_path / 'foo.db3'
+        dbpath.touch()
+        _ = Reader(dbpath)
+        mockdir.assert_not_called()
+        mockdb3.assert_called_once_with(dbpath)
+
+        dbpath = tmp_path / 'unknown.plug'
+        dbpath.touch()
+        with pytest.raises(ReaderError, match='Unrecognized storage format'):
+            _ = Reader(dbpath)
+
+
+def test_reader_passes_messages_to_plugins(bag_with_compression: Path) -> None:
+    """Test reader passes messages to plugins."""
+    with Reader(bag_with_compression) as reader:
+        gen = reader.messages()
+
+        cmap = {x.topic: x for x in reader.connections}
+        assert next(gen) == (cmap['/poly'], 666, b'poly message')
+        assert next(gen) == (cmap['/magn'], 708, b'magn message')
+        assert next(gen) == (cmap['/magn'], 708, b'magn message')
+        assert next(gen) == (cmap['/joint'], 708, b'joint message')
+
+        with pytest.raises(StopIteration):
+            _ = next(gen)
+
+        magn_connections = [x for x in reader.connections if x.topic == '/magn']
+        gen = reader.messages(connections=magn_connections)
+        assert next(gen)[0] == cmap['/magn']
+        assert next(gen)[0] == cmap['/magn']
+        with pytest.raises(StopIteration):
+            _ = next(gen)
+
+        gen = reader.messages(reader.connections, start=667)
+        assert next(gen)[0] == cmap['/magn']
+        assert next(gen)[0] == cmap['/magn']
+        assert next(gen)[0] == cmap['/joint']
+        with pytest.raises(StopIteration):
+            _ = next(gen)
+
+        gen = reader.messages(reader.connections, stop=667)
+        assert next(gen)[0] == cmap['/poly']
+        with pytest.raises(StopIteration):
+            _ = next(gen)
+
+        gen = reader.messages(connections=magn_connections, stop=667)
+        with pytest.raises(StopIteration):
+            _ = next(gen)
+
+        gen = reader.messages(reader.connections, start=666, stop=666)
+        with pytest.raises(StopIteration):
+            _ = next(gen)
+
+
+def test_reader_raises_if_closed(nonempty_bag: Path) -> None:
+    """Test reader raises if methods called while closed."""
+    reader = Reader(nonempty_bag)
+
+    def check() -> None:
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.duration
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.start_time
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.end_time
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.message_count
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.compression_format
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.compression_mode
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.connections
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.topics
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = reader.ros_distro
+
+        with pytest.raises(ReaderError, match='Reader is not open'):
+            _ = next(reader.messages())
+
+    check()
+
+    with reader:
+        _ = reader.duration
+        _ = reader.start_time
+        _ = reader.end_time
+        _ = reader.message_count
+        _ = reader.compression_format
+        _ = reader.compression_mode
+        _ = reader.connections
+        _ = reader.topics
+        _ = reader.ros_distro
+        with pytest.raises(StopIteration):
+            _ = next(reader.messages())
+
+    check()
+
+
+@pytest.mark.parametrize('plugin', list(StoragePlugin))
+@pytest.mark.parametrize('raw', [False, True])
+def test_duplicate_topic_connections(tmp_path: Path, plugin: StoragePlugin, *, raw: bool) -> None:
+    """Preserve same-topic connections and filter each connection independently."""
+    store = get_typestore(Stores.LATEST)
+    name = 'std_msgs/msg/Int8'
+    qos = Qos(
+        QosHistory.KEEP_LAST,
+        1,
+        QosReliability.RELIABLE,
+        QosDurability.TRANSIENT_LOCAL,
+        QosTime(0, 0),
+        QosTime(0, 0),
+        QosLiveliness.AUTOMATIC,
+        QosTime(0, 0),
+        avoid_ros_namespace_conventions=False,
+    )
+    path = tmp_path / 'bag'
+    with Writer(path, version=9, storage_plugin=plugin) as writer:
+        first = writer.add_connection('/same', name, typestore=store)
+        second = writer.add_connection('/same', name, typestore=store, offered_qos_profiles=[qos])
+        writer.write(first, 0, store.serialize_cdr(store.types[name](10), name))
+        writer.write(second, 1, store.serialize_cdr(store.types[name](20), name))
+    readpath = (
+        next(path.glob(f'*.{plugin.name.lower() if plugin == StoragePlugin.MCAP else "db3"}'))
+        if raw
+        else path
+    )
+    with Reader(readpath) as reader:
+        assert len(reader.connections) == 2
+        topic = reader.topics['/same']
+        assert topic.msgcount == 2
+        assert len(topic.connections) == 2
+        messages = list(reader.messages())
+        assert [conn.ext for conn, _, _ in messages] == [first.ext, second.ext]
+        assert [
+            cast('Int8', store.deserialize_cdr(data, name)).data for _, _, data in messages
+        ] == [
+            10,
+            20,
+        ]
+        for index, connection in enumerate(reader.connections):
+            selected = list(reader.messages([connection]))
+            assert len(selected) == 1
+            assert selected[0][0] == connection
+            assert selected[0][1] == index
+
+
+@pytest.mark.parametrize('plugin', list(StoragePlugin))
+@pytest.mark.parametrize('mode', list(CompressionMode))
+def test_time_boundaries(
+    tmp_path: Path,
+    plugin: StoragePlugin,
+    mode: CompressionMode,
+) -> None:
+    """Honor inclusive starts and exclusive stops through reopen."""
+    if plugin == StoragePlugin.SQLITE3 and mode == CompressionMode.STORAGE:
+        return
+    store = get_typestore(Stores.LATEST)
+    path = tmp_path / 'bag'
+    writer = Writer(path, version=9, storage_plugin=plugin)
+    writer.set_compression(mode, CompressionFormat.ZSTD)
+    with writer:
+        connection = writer.add_connection('/x', 'std_msgs/msg/Int8', typestore=store)
+        writer.write(connection, 0, b'\x00\x01\x00\x00\x01')
+        writer.write(connection, 1, b'\x00\x01\x00\x00\x02')
+    reader = Reader(path)
+    for _ in range(2):
+        with reader:
+            assert [t for _, t, _ in reader.messages()] == [0, 1]
+            assert [t for _, t, _ in reader.messages(start=0)] == [0, 1]
+            assert [t for _, t, _ in reader.messages(start=1)] == [1]
+            assert [t for _, t, _ in reader.messages(start=2)] == []
+            assert [t for _, t, _ in reader.messages(stop=0)] == []
+            assert [t for _, t, _ in reader.messages(stop=1)] == [0]
+            assert [t for _, t, _ in reader.messages(stop=2)] == [0, 1]
+            assert [t for _, t, _ in reader.messages(start=0, stop=1)] == [0]
+            assert list(reader.messages(start=1, stop=1)) == []
+
+
+def test_reader_rejects_repeated_open(empty_bag: Path) -> None:
+    """Test reader rejects repeated open."""
+    reader = Reader(empty_bag)
+    reader.open()
+    try:
+        with pytest.raises(ReaderError, match='already open'):
+            reader.open()
+        assert not reader.connections
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    ('key', 'value', 'cause'),
+    [
+        ('compression_mode', None, AttributeError),
+        ('compression_mode', 1, AttributeError),
+        ('version', 'invalid', TypeError),
+    ],
+)
+def test_reader_rejects_invalid_metadata(
+    empty_bag: Path,
+    key: str,
+    value: str | int | None,
+    cause: type[Exception],
+) -> None:
+    """Test reader rejects invalid metadata."""
+    yaml = YAML(typ='safe')
+    metadata = yaml.load(METADATA_EMPTY)
+    metadata['rosbag2_bagfile_information'][key] = value
+    with (empty_bag / 'metadata.yaml').open('w') as bio:
+        yaml.dump(metadata, bio)
+    reader = DirectoryReader(empty_bag)
+    with pytest.raises(ReaderError, match='Invalid bag metadata') as exc:
+        reader.open()
+    assert isinstance(exc.value.__cause__, cause)
+    assert reader.stack is None

@@ -1,0 +1,224 @@
+# Copyright 2020-2026 Ternaris
+# SPDX-License-Identifier: Apache-2.0
+"""Message Registration Tests."""
+
+import numpy as np
+import pytest
+
+from rosbags.interfaces import Nodetype
+from rosbags.typesys import Stores, TypesysError, get_typestore
+from rosbags.typesys.msg import get_types_from_msg
+from rosbags.typesys.store import Typestore
+
+
+def test_raw_typestore_is_empty() -> None:
+    """Test typestore is empty."""
+    store = Typestore()
+    assert not store.fielddefs
+
+
+@pytest.mark.parametrize('limit', [0, -1])
+def test_typestore_rejects_nonpositive_sequence_limit(limit: int) -> None:
+    """Test sequence limits must be positive."""
+    with pytest.raises(ValueError, match='max_sequence_length must be positive'):
+        _ = Typestore(max_sequence_length=limit)
+
+
+def test_register_with_new_type() -> None:
+    """Test typestore registers new types."""
+    store = get_typestore(Stores.LATEST)
+
+    assert 'foo' not in store.fielddefs
+    store.register({'foo': ([], [('b', (Nodetype.BASE, ('bool', 0)))])})
+    assert 'foo' in store.fielddefs
+
+
+def test_register_with_same_as_existing_type() -> None:
+    """Test typestore accepts identical type."""
+    store = get_typestore(Stores.LATEST)
+
+    typename = 'builtin_interfaces/msg/Time'
+
+    assert typename in store.fielddefs
+    store.register(
+        {
+            typename: (
+                [],
+                [
+                    ('sec', (Nodetype.BASE, ('int32', 0))),
+                    ('nanosec', (Nodetype.BASE, ('uint32', 0))),
+                ],
+            )
+        }
+    )
+
+
+def test_register_with_different_from_existing_type() -> None:
+    """Test typestore rejects different type."""
+    store = get_typestore(Stores.LATEST)
+
+    typename = 'builtin_interfaces/msg/Time'
+
+    assert typename in store.fielddefs
+    with pytest.raises(TypesysError, match='different definition'):
+        store.register(
+            {
+                typename: (
+                    [],
+                    [
+                        ('sec', (Nodetype.BASE, ('int32', 0))),
+                        ('nsec', (Nodetype.BASE, ('uint32', 0))),
+                    ],
+                )
+            }
+        )
+
+
+@pytest.mark.usefixtures('_comparable')
+def test_registered_types_support_serde() -> None:
+    """Test registered types allow serde operstions."""
+    store = get_typestore(Stores.LATEST)
+
+    def lstrip(text: str) -> str:
+        return '\n'.join(x.lstrip() for x in text.split('\n'))
+
+    typename_s_64_64 = 'test_msgs/msg/Static6464'
+    msgdef_s_64_64 = 'uint64[2] u64'
+
+    typename_s_64_16 = 'test_msgs/msg/Static6416'
+    msgdef_s_64_16 = 'uint64 u64\nuint16 u16'
+
+    typename_s_16_64 = 'test_msgs/msg/Static1664'
+    msgdef_s_16_64 = 'uint16 u16\nuint64 u64'
+
+    typename_d_64_64 = 'test_msgs/msg/Dynamic6464'
+    msgdef_d_64_64 = 'uint64[] u64'
+
+    typename_d_64_b_64 = 'test_msgs/msg/Dynamic64b64'
+    msgdef_d_64_b_64 = 'uint64 u64\nbool b\nfloat64 f64'
+
+    typename_d_64_s = 'test_msgs/msg/Dynamic64s'
+    msgdef_d_64_s = 'uint64 u64\nstring s'
+
+    typename_d_s_64 = 'test_msgs/msg/Dynamics64'
+    msgdef_d_s_64 = 'string s\nuint64 u64'
+
+    typename_custom = 'test_msgs/msg/custom'
+    msgdef_custom = (
+        'string base_str\n'
+        'float32 base_f32\n'
+        'test_msgs/msg/Static6464 msg_s66\n'
+        'test_msgs/msg/Static6416 msg_s61\n'
+        'test_msgs/msg/Static1664 msg_s16\n'
+        'test_msgs/msg/Dynamic6464 msg_d66\n'
+        'test_msgs/msg/Dynamic64b64 msg_d6b6\n'
+        'test_msgs/msg/Dynamic64s msg_d6s\n'
+        'test_msgs/msg/Dynamics64 msg_ds6\n'
+        'string[2] arr_base_str\n'
+        'float32[2] arr_base_32\n'
+        'test_msgs/msg/Static6464[2] arr_msg_s66\n'
+        'test_msgs/msg/Static6416[2] arr_msg_s61\n'
+        'test_msgs/msg/Static1664[2] arr_msg_s16\n'
+        'test_msgs/msg/Dynamic6464[2] arr_msg_d66\n'
+        'test_msgs/msg/Dynamic64b64[2] arr_msg_d6b6\n'
+        'test_msgs/msg/Dynamic64s[2] arr_msg_d6s\n'
+        'test_msgs/msg/Dynamics64[2] arr_msg_ds6\n'
+        'string[] seq_base_str\n'
+        'float32[] seq_base_f32\n'
+        'test_msgs/msg/Static6464[] seq_msg_s66\n'
+        'test_msgs/msg/Static6416[] seq_msg_s61\n'
+        'test_msgs/msg/Static1664[] seq_msg_s16\n'
+        'test_msgs/msg/Dynamic6464[] seq_msg_d66\n'
+        'test_msgs/msg/Dynamic64b64[] seq_msg_d6b6\n'
+        'test_msgs/msg/Dynamic64s[] seq_msg_d6s\n'
+        'test_msgs/msg/Dynamics64[] seq_msg_ds6\n'
+    )
+
+    store.register(get_types_from_msg(msgdef_s_64_64, typename_s_64_64))
+    store.register(get_types_from_msg(msgdef_s_64_16, typename_s_64_16))
+    store.register(get_types_from_msg(msgdef_s_16_64, typename_s_16_64))
+    store.register(get_types_from_msg(msgdef_d_64_64, typename_d_64_64))
+    store.register(get_types_from_msg(msgdef_d_64_b_64, typename_d_64_b_64))
+    store.register(get_types_from_msg(msgdef_d_64_s, typename_d_64_s))
+    store.register(get_types_from_msg(msgdef_d_s_64, typename_d_s_64))
+    store.register(get_types_from_msg(msgdef_custom, typename_custom))
+
+    static_64_64 = store.types[typename_s_64_64]
+    static_64_16 = store.types[typename_s_64_16]
+    static_16_64 = store.types[typename_s_16_64]
+    dynamic_64_64 = store.types[typename_d_64_64]
+    dynamic_64_b_64 = store.types[typename_d_64_b_64]
+    dynamic_64_s = store.types[typename_d_64_s]
+    dynamic_s_64 = store.types[typename_d_s_64]
+    custom = store.types[typename_custom]
+
+    msg = custom(
+        'str',
+        1.5,
+        static_64_64(np.array([64, 64], dtype=np.uint64)),
+        static_64_16(64, 16),
+        static_16_64(16, 64),
+        dynamic_64_64(np.array([33, 33], dtype=np.uint64)),
+        dynamic_64_b_64(64, b=True, f64=1.25),
+        dynamic_64_s(64, 's'),
+        dynamic_s_64('s', 64),
+        # arrays
+        ['str_1', ''],
+        np.array([1.5, 0.75], dtype=np.float32),
+        [
+            static_64_64(np.array([64, 64], dtype=np.uint64)),
+            static_64_64(np.array([64, 64], dtype=np.uint64)),
+        ],
+        [static_64_16(64, 16), static_64_16(64, 16)],
+        [static_16_64(16, 64), static_16_64(16, 64)],
+        [
+            dynamic_64_64(np.array([33, 33], dtype=np.uint64)),
+            dynamic_64_64(np.array([33, 33], dtype=np.uint64)),
+        ],
+        [dynamic_64_b_64(64, b=True, f64=1.25), dynamic_64_b_64(64, b=True, f64=1.25)],
+        [dynamic_64_s(64, 's'), dynamic_64_s(64, 's')],
+        [dynamic_s_64('s', 64), dynamic_s_64('s', 64)],
+        # sequences
+        ['str_1', ''],
+        np.array([1.5, 0.75], dtype=np.float32),
+        [
+            static_64_64(np.array([64, 64], dtype=np.uint64)),
+            static_64_64(np.array([64, 64], dtype=np.uint64)),
+        ],
+        [static_64_16(64, 16), static_64_16(64, 16)],
+        [static_16_64(16, 64), static_16_64(16, 64)],
+        [
+            dynamic_64_64(np.array([33, 33], dtype=np.uint64)),
+            dynamic_64_64(np.array([33, 33], dtype=np.uint64)),
+        ],
+        [dynamic_64_b_64(64, b=True, f64=1.25), dynamic_64_b_64(64, b=True, f64=1.25)],
+        [dynamic_64_s(64, 's'), dynamic_64_s(64, 's')],
+        [dynamic_s_64('s', 64), dynamic_s_64('s', 64)],
+    )
+
+    res = store.deserialize_cdr(store.serialize_cdr(msg, typename_custom), typename_custom)
+    assert res == msg
+
+    res = store.deserialize_ros1(store.serialize_ros1(msg, typename_custom), typename_custom)
+    assert res == msg
+
+
+@pytest.mark.parametrize('field', ['class', 'yield', 'return'])
+def test_python_keyword_renaming(field: str) -> None:
+    """Test python keywords are renamed on the dataclass only."""
+    store = Typestore()
+
+    msgtype = 'test_msgs/msg/Test'
+    msgdef = f'uint8 YIELD=2\nuint8 {field}'
+    store.register(
+        get_types_from_msg(msgdef, msgtype),
+    )
+
+    assert store.fielddefs[msgtype] == (
+        [('YIELD', 'uint8', 2)],
+        [(field, (1, ('uint8', 0)))],
+    )
+
+    msg = store.types[msgtype](42)
+    assert getattr(msg, f'{field}_') == 42
+    assert not hasattr(msg, field)
