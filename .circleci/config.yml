@@ -1,0 +1,88 @@
+version: 2.1
+
+
+orbs:
+  orb: invocations/orb@1.7.0
+
+
+jobs:
+  # Unit+integration tests, with coverage
+  coverage:
+    executor:
+      name: orb/default
+      version: "3.9"
+    steps:
+      - orb/setup
+      - run: inv ci.make-sudouser
+      - orb/sudo-coverage
+      - orb/debug
+
+  regression:
+    executor:
+      name: orb/default
+      version: "3.9"
+    steps:
+      - orb/setup
+      - run: inv regression
+      - orb/debug
+
+  doctests:
+    executor:
+      name: orb/default
+      version: "3.9"
+    steps:
+      - orb/setup
+      - run: inv www.doctest
+      - orb/debug
+
+  typecheck:
+    executor:
+      name: orb/default
+      version: "3.9"
+    steps:
+      - orb/setup
+      - run: inv typecheck
+      - orb/debug
+
+  downstream:
+    executor:
+      name: orb/default
+      version: "3.9"
+    steps:
+      - orb/downstream:
+          git_url: https://github.com/fabric/fabric
+          safety_check: fab --version
+          test_command: inv test
+
+
+workflows:
+  main:
+    jobs:
+      - orb/lint:
+          name: Lint
+      - orb/format:
+          name: Style check
+      - typecheck:
+          name: Types check
+      - coverage:
+          name: Test
+      - regression:
+          name: Regression tests
+      - orb/test-release:
+          name: Release test
+      - orb/test:
+          name: Test << matrix.version >>
+          requires: ["Test"]
+          matrix:
+            parameters:
+              version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+      - orb/docs:
+          name: "Docs"
+          requires: ["Test"]
+      - doctests:
+          name: "Doctests"
+          requires: ["Docs"]
+      - downstream:
+          name: "Downstream test suites"
+          # No point testing downstream if we don't think we're whole.
+          requires: ["Test"]
