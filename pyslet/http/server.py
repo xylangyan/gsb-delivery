@@ -839,39 +839,44 @@ class ServerResponse(messages.Response):
         except TypeError:
             # length is unknown, probably a generator function
             datalen = None
-        for item in data:
-            if not isinstance(item, bytes):
-                logging.error("WSGI application yielded non bytes: %s",
-                              repr(item))
-            if datalen == 1:
-                # this is all the data, set the body_len
-                self.body_len = len(item)
-            if not self.ready_to_send.is_set():
-                # don't send the headers until the first bit of data
-                # has been yielded
-                self.start_sending()
-            wbytes = item
-            while wbytes:
-                nbytes = self.send_pipe.write(wbytes)
-                if nbytes < len(wbytes):
-                    wbytes = wbytes[nbytes:]
-                else:
-                    wbytes = None
-            # self.send_pipe.flush()
-            # I considered using flush here, given the following
-            # requirement: "WSGI servers, gateways, and middleware must
-            # not delay the transmission of any block". But we have a
-            # separate thread for Connection.handle_responses and this
-            # is an acceptable solution: "Use a different thread to
-            # ensure that the block continues to be transmitted while
-            # the application produces the next block"
-            #
-            # There's one caveat here though, if a transfer encoding is
-            # in effect it is possible that a small number of the bytes
-            # written to the send_pipe will be stuck in the codec
-            # waiting for the next block (or a final flush).  Rather
-            # than conclude that WSGI is incompatible with transparent
-            # transport encodings we're going to ignore this issue.
+        try:
+            for item in data:
+                if not isinstance(item, bytes):
+                    logging.error("WSGI application yielded non bytes: %s",
+                                  repr(item))
+                if datalen == 1:
+                    # this is all the data, set the body_len
+                    self.body_len = len(item)
+                if not self.ready_to_send.is_set():
+                    # don't send the headers until the first bit of data
+                    # has been yielded
+                    self.start_sending()
+                wbytes = item
+                while wbytes:
+                    nbytes = self.send_pipe.write(wbytes)
+                    if nbytes < len(wbytes):
+                        wbytes = wbytes[nbytes:]
+                    else:
+                        wbytes = None
+                # self.send_pipe.flush()
+                # I considered using flush here, given the following
+                # requirement: "WSGI servers, gateways, and middleware must
+                # not delay the transmission of any block". But we have a
+                # separate thread for Connection.handle_responses and this
+                # is an acceptable solution: "Use a different thread to
+                # ensure that the block continues to be transmitted while
+                # the application produces the next block"
+                #
+                # There's one caveat here though, if a transfer encoding is
+                # in effect it is possible that a small number of the bytes
+                # written to the send_pipe will be stuck in the codec
+                # waiting for the next block (or a final flush).  Rather
+                # than conclude that WSGI is incompatible with transparent
+                # transport encodings we're going to ignore this issue.
+        finally:
+            close = getattr(data, "close", None)
+            if close is not None:
+                close()
         if not self.ready_to_send.is_set():
             # empty response, send it now
             self.body_len = 0

@@ -476,6 +476,9 @@ class StreamStore(object):
         self.ls = ls
         self.stream_set = entity_set
         self.block_set = entity_set.get_target('Blocks')
+        self._reader_lock = threading.RLock()
+        self._reader_counts = {}
+        self._pending_deletes = set()
 
     def new_stream(self,
                    mimetype=params.MediaType('application', 'octet-stream'),
@@ -518,7 +521,27 @@ class StreamStore(object):
             stream = streams[stream_id]
         return stream
 
-    def open_stream(self, stream, mode="r"):
+    def retain_stream(self, stream_id):
+        """Returns the stream with identifier *stream_id* and holds it.
+
+        The caller must call :py:meth:`release_stream` when it has
+        finished with the stream.  Holding a stream prevents
+        :py:meth:`delete_stream` from removing its blocks until all
+        readers have finished, even if a replacement stream has been
+        published in the meantime.  KeyError is raised if no such
+        stream exists."""
+        with self._reader_lock:
+            stream = self.get_stream(stream_id)
+            self._reader_counts[stream_id] = \
+                self._reader_counts.get(stream_id, 0) + 1
+            return stream
+
+    def release_stream(self, stream_id):
+        """Releases a hold previously acquired with
+        :py:meth:`retain_stream`."""
+        self._release_stream(stream_id)
+
+    def open_stream(self, stream, mode="r", keep=False):
         """Returns a file-like object for a stream.
 
         Returns an object derived from io.RawIOBase.
@@ -530,22 +553,98 @@ class StreamStore(object):
             Files are always opened in binary mode.  The characters "r",
             "w" and "+" and "a" are honoured.
 
+        keep
+            When True and *mode* includes "r" the stream is retained
+            until the returned object is closed.  This allows callers
+            that have already acquired a hold with
+            :py:meth:`retain_stream` to hand that hold over to the
+            returned object so that it is released exactly once.
+
         Warning: read and write methods of the resulting objects do not
         always return all requested bytes.  In particular, read or write
         operations never cross block boundaries in a single call."""
         if stream is None:
             raise ValueError
-        return BlockStream(self, stream, mode)
+        retained = "r" in mode or "+" in mode
+        owns_hold = retained and not keep
+        if owns_hold:
+            self._retain_stream(stream.key())
+        try:
+            return BlockStream(self, stream, mode, retained=retained)
+        except Exception:
+            if owns_hold:
+                self._release_stream(stream.key())
+            raise
 
     def delete_stream(self, stream):
         """Deletes a stream from the store.
 
         Any data blocks that are orphaned by this deletion are
+        removed.  If a reader is still using the stream the blocks are
+        retained until that reader finishes."""
+        stream_id = stream.key()
+        stream.exists = False
+        with self._reader_lock:
+            if stream_id in self._reader_counts:
+                self._pending_deletes.add(stream_id)
+                return
+        self._collect_stream(stream_id)
+
+    def _retain_stream(self, stream_id):
+        """Registers a reader against *stream_id*.
+
+        The stream's block list must not be removed while a reader is
+        still using it.  Call :py:meth:`_release_stream` when the reader
+        finishes or fails."""
+        with self._reader_lock:
+            self._reader_counts[stream_id] = \
+                self._reader_counts.get(stream_id, 0) + 1
+
+    def _release_stream(self, stream_id):
+        """Deregisters a reader previously retained against *stream_id*.
+
+        If the stream was deleted while this reader held it, the last
+        reader to finish collects the block list.  Collection is
+        idempotent, so a failure can be retried by a later reader."""
+        collect = False
+        with self._reader_lock:
+            count = self._reader_counts.get(stream_id, 0)
+            if count > 1:
+                self._reader_counts[stream_id] = count - 1
+            elif count == 1:
+                del self._reader_counts[stream_id]
+                if stream_id in self._pending_deletes:
+                    self._pending_deletes.discard(stream_id)
+                    collect = True
+        if collect:
+            try:
+                self._collect_stream(stream_id)
+            except Exception:
+                logging.warning(
+                    "Failed to collect replaced stream %s", stream_id,
+                    exc_info=True)
+
+    def _collect_stream(self, stream_id):
+        """Removes the block list and orphaned blocks for *stream_id*.
+
+        The reader table is locked for the whole operation so that no
+        new reader can attach to a stream whose blocks are being
         removed."""
-        with self.stream_set.open() as streams:
+        with self._reader_lock:
+            if stream_id in self._reader_counts:
+                self._pending_deletes.add(stream_id)
+                return
+            try:
+                stream = self.get_stream(stream_id)
+            except KeyError:
+                # already collected, or replaced and never referenced
+                return
             self.delete_blocks(stream)
-            del streams[stream.key()]
-            stream.exists = False
+            try:
+                with self.stream_set.open() as streams:
+                    del streams[stream_id]
+            except KeyError:
+                pass
 
     def store_block(self, stream, block_num, data):
         hash_key = self.bs.key(data)
@@ -624,7 +723,7 @@ class BlockStream(io.RawIOBase):
     ensure that no more than one block is kept in memory at any one
     time."""
 
-    def __init__(self, ss, stream, mode="r"):
+    def __init__(self, ss, stream, mode="r", retained=False):
         self.ss = ss
         self.stream = stream
         self.r = "r" in mode or "+" in mode
@@ -637,6 +736,8 @@ class BlockStream(io.RawIOBase):
         self._btop = 0
         self._bdirty = False
         self._md5 = None
+        self._retained = retained
+        self._stream_id = stream.key()
         if "a" in mode:
             self.seek(self.size)
             self.blocks = list(self.ss.retrieve_blocklist(self.stream))
@@ -650,10 +751,30 @@ class BlockStream(io.RawIOBase):
             else:
                 self.blocks = list(self.ss.retrieve_blocklist(self.stream))
 
+    def _release_reader(self):
+        if self._retained:
+            self._retained = False
+            self.ss._release_stream(self._stream_id)
+
     def close(self):
-        super(BlockStream, self).close()
-        self.blocks = None
-        self.r = self.w = False
+        try:
+            super(BlockStream, self).close()
+        finally:
+            self.blocks = None
+            self.r = self.w = False
+            self._release_reader()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
 
     def readable(self):
         return self.r

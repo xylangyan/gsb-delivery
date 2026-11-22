@@ -47,6 +47,80 @@ class SQLError(Exception):
     pass
 
 
+class _StreamReader(object):
+    """Iterator over a retained media stream.
+
+    The reader holds a reference to the underlying stream so that its
+    blocks are not collected while it is being read.  The hold is
+    released exactly once, whether the reader runs to completion, is
+    closed early, or raises an error part way through."""
+
+    def __init__(self, collection, estream, src, sinfo):
+        self.collection = collection
+        self.estream = estream
+        self.src = src
+        self.sinfo = sinfo
+        self.stream_id = estream.key()
+        self.count = 0
+        self.md5 = hashlib.md5()
+        self.done = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.done:
+            raise StopIteration
+        try:
+            while True:
+                data = self.src.read(io.DEFAULT_BUFFER_SIZE)
+                if data:
+                    self.count += len(data)
+                    self.md5.update(data)
+                    return data
+                return self._finish()
+        except Exception:
+            self._close(failed=True)
+            raise
+
+    next = __next__
+
+    def _finish(self):
+        self._close()
+        if self.sinfo.size is not None and self.sinfo.size != self.count:
+            raise SQLError("stream size mismatch on read [%s]" %
+                           self.stream_id)
+        if self.sinfo.md5 is not None and self.sinfo.md5 != self.md5.digest():
+            raise SQLError("stream checksum mismatch on read [%s]" %
+                           self.stream_id)
+        raise StopIteration
+
+    def _close(self, failed=False):
+        if self.done:
+            return
+        self.done = True
+        src, collection = self.src, self.collection
+        self.src = self.collection = None
+        try:
+            if src is not None:
+                src.close()
+        except Exception:
+            if not failed:
+                raise
+        finally:
+            if collection is not None:
+                collection.close()
+
+    def __del__(self):
+        try:
+            self._close(failed=True)
+        except Exception:
+            pass
+
+    def close(self):
+        self._close()
+
+
 class DatabaseBusy(SQLError):
 
     """Raised when a database connection times out."""
@@ -739,78 +813,90 @@ class SQLCollectionBase(core.EntityCollection):
         finally:
             transaction.close()
 
+    def _retain_stream(self, key):
+        """Resolves *key* to a retained stream.
+
+        The stream identifier is read from the entity and then held.
+        A concurrent replacement may collect the old stream between
+        those two steps, so the lookup is retried, picking up the new
+        identifier.  Returns (stream_id, stream entity) or (None, None)
+        for an entity with no media stream."""
+        for attempt in range3(3):
+            svalue = self._get_streamid(key)
+            if not svalue:
+                return None, None
+            try:
+                return (svalue.value,
+                        self.container.streamstore.retain_stream(
+                            svalue.value))
+            except KeyError:
+                # the stream was replaced between the two lookups
+                continue
+        raise KeyError("media stream for %s was replaced repeatedly" %
+                       repr(key))
+
     def read_stream(self, key, out=None):
         entity = self.new_entity()
         entity.set_key(key)
-        svalue = self._get_streamid(key)
         sinfo = core.StreamInfo()
-        if svalue:
-            estream = self.container.streamstore.get_stream(svalue.value)
-            sinfo.type = params.MediaType.from_str(estream['mimetype'].value)
-            sinfo.created = estream['created'].value.with_zone(0)
-            sinfo.modified = estream['modified'].value.with_zone(0)
-            sinfo.size = estream['size'].value
-            sinfo.md5 = estream['md5'].value
+        stream_id, estream = self._retain_stream(key)
+        if estream is not None:
+            # Work from a stable snapshot so that the information we
+            # return always describes the same bytes we copy to *out*.
+            try:
+                sinfo.type = params.MediaType.from_str(
+                    estream['mimetype'].value)
+                sinfo.created = estream['created'].value.with_zone(0)
+                sinfo.modified = estream['modified'].value.with_zone(0)
+                sinfo.size = estream['size'].value
+                sinfo.md5 = estream['md5'].value
+                sinfo.etag = core.format_content_etag(sinfo.md5)
+                if out is not None:
+                    with self.container.streamstore.open_stream(
+                            estream, 'r') as src:
+                        actual_size, actual_md5 = self._copy_src(src, out)
+                    if sinfo.size is not None and sinfo.size != actual_size:
+                        # unexpected size mismatch
+                        raise SQLError("stream size mismatch on read %s" %
+                                       entity.get_location())
+                    if sinfo.md5 is not None and sinfo.md5 != actual_md5:
+                        # md5 mismatch
+                        raise SQLError("stream checksum mismatch on read %s" %
+                                       entity.get_location())
+            finally:
+                self.container.streamstore.release_stream(stream_id)
         else:
-            estream = None
             sinfo.size = 0
             sinfo.md5 = hashlib.md5(b'').digest()
-        if out is not None and svalue:
-            with self.container.streamstore.open_stream(estream, 'r') as src:
-                actual_size, actual_md5 = self._copy_src(src, out)
-            if sinfo.size is not None and sinfo.size != actual_size:
-                # unexpected size mismatch
-                raise SQLError("stream size mismatch on read %s" %
-                               entity.get_location())
-            if sinfo.md5 is not None and sinfo.md5 != actual_md5:
-                # md5 mismatch
-                raise SQLError("stream checksum mismatch on read %s" %
-                               entity.get_location())
+            sinfo.etag = core.format_content_etag(sinfo.md5)
         return sinfo
 
     def read_stream_close(self, key):
         entity = self.new_entity()
         entity.set_key(key)
-        svalue = self._get_streamid(key)
         sinfo = core.StreamInfo()
-        if svalue:
-            estream = self.container.streamstore.get_stream(svalue.value)
+        stream_id, estream = self._retain_stream(key)
+        if estream is not None:
             sinfo.type = params.MediaType.from_str(estream['mimetype'].value)
             sinfo.created = estream['created'].value.with_zone(0)
             sinfo.modified = estream['modified'].value.with_zone(0)
             sinfo.size = estream['size'].value
             sinfo.md5 = estream['md5'].value
-            return sinfo, self._read_stream_gen(estream, sinfo)
+            sinfo.etag = core.format_content_etag(sinfo.md5)
+            try:
+                src = self.container.streamstore.open_stream(
+                    estream, 'r', keep=True)
+            except Exception:
+                self.container.streamstore.release_stream(stream_id)
+                self.close()
+                raise
+            return sinfo, _StreamReader(self, estream, src, sinfo)
         else:
-            estream = None
             sinfo.size = 0
-            sinfo.md5 = hashlib.md5('').digest()
+            sinfo.md5 = hashlib.md5(b'').digest()
+            sinfo.etag = core.format_content_etag(sinfo.md5)
             self.close()
-            return sinfo, []
-
-    def _read_stream_gen(self, estream, sinfo):
-        try:
-            with self.container.streamstore.open_stream(estream, 'r') as src:
-                h = hashlib.md5()
-                count = 0
-                while True:
-                    data = src.read(io.DEFAULT_BUFFER_SIZE)
-                    if len(data):
-                        count += len(data)
-                        h.update(data)
-                        yield data
-                    else:
-                        break
-            if sinfo.size is not None and sinfo.size != count:
-                # unexpected size mismatch
-                raise SQLError("stream size mismatch on read [%i]" %
-                               estream.key())
-            if sinfo.md5 is not None and sinfo.md5 != h.digest():
-                # md5 mismatch
-                raise SQLError("stream checksum mismatch on read [%i]" %
-                               estream.key())
-        finally:
-            self.close()
+            return sinfo, iter(())
 
     def update_stream(self, src, key, sinfo=None):
         e = self.new_entity()
@@ -830,6 +916,7 @@ class SQLCollectionBase(core.EntityCollection):
                                                             sinfo.created)
             with self.container.streamstore.open_stream(estream, 'w') as dst:
                 sinfo.size, sinfo.md5 = self._copy_src(src, dst, sinfo.size, h)
+            sinfo.etag = core.format_content_etag(sinfo.md5)
             if sinfo.modified is not None:
                 # force modified date based on input
                 estream['modified'].set_from_value(
@@ -2035,6 +2122,7 @@ class SQLEntityCollection(SQLCollectionBase):
                                                             sinfo.created)
             with self.container.streamstore.open_stream(estream, 'w') as dst:
                 sinfo.size, sinfo.md5 = self._copy_src(src, dst, sinfo.size, h)
+            sinfo.etag = core.format_content_etag(sinfo.md5)
             if sinfo.modified is not None:
                 # force modified date based on input
                 estream['modified'].set_from_value(
@@ -5738,10 +5826,14 @@ class SQLiteStreamStore(blockstore.StreamStore):
         if create:
             self.container.create_all_tables()
         if dpath is None:
-            bs = blockstore.FileBlockStore(dpath)
-        else:
             bs = blockstore.EDMBlockStore(
                 entity_set=self.container_def['Blocks'])
+        else:
+            if not isinstance(dpath, OSFilePath):
+                dpath = OSFilePath(dpath)
+            if not dpath.exists():
+                dpath.makedirs()
+            bs = blockstore.FileBlockStore(dpath)
         ls = blockstore.LockStore(entity_set=self.container_def['Locks'])
         blockstore.StreamStore.__init__(
             self, bs, ls, self.container_def['Streams'])

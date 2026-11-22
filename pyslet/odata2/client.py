@@ -422,8 +422,13 @@ class ClientCollection(core.EntityCollection):
         else:
             self.raise_error(request)
 
-    def read_stream(self, key, out=None):
-        """Reads a media resource"""
+    def read_stream(self, key, out=None, etag=None):
+        """Reads a media resource
+
+        *etag* is an optional content entity tag previously returned in
+        :py:attr:`core.StreamInfo.etag`.  When it matches the current
+        content the server responds without a body and the returned
+        StreamInfo has :py:attr:`core.StreamInfo.not_modified` set."""
         if not self.is_medialink_collection():
             raise core.ExpectedMediaLinkCollection
         stream_url = str(self.base_uri) + core.ODataURI.format_key_dict(
@@ -433,6 +438,8 @@ class ClientCollection(core.EntityCollection):
         else:
             request = http.ClientRequest(stream_url, 'GET', res_body=out)
         request.set_accept("*/*")
+        if etag is not None:
+            request.set_header("If-None-Match", str(etag))
         self.client.process_request(request)
         if request.status == 200:
             # success, read the entity information back from the response
@@ -442,6 +449,17 @@ class ClientCollection(core.EntityCollection):
             sinfo.modified = request.response.get_last_modified()
             sinfo.created = sinfo.modified
             sinfo.md5 = request.response.get_content_md5()
+            response_etag = request.response.get_etag()
+            if response_etag is not None:
+                sinfo.etag = str(response_etag)
+            return sinfo
+        elif request.status == 304:
+            sinfo = core.StreamInfo()
+            sinfo.not_modified = True
+            sinfo.size = 0
+            response_etag = request.response.get_etag()
+            if response_etag is not None:
+                sinfo.etag = str(response_etag)
             return sinfo
         elif request.status == 404:
             # sort of success, we return an empty stream
@@ -451,8 +469,13 @@ class ClientCollection(core.EntityCollection):
         else:
             self.raise_error(request)
 
-    def read_stream_close(self, key):
-        """Creates a generator for a media resource."""
+    def read_stream_close(self, key, etag=None):
+        """Creates a generator for a media resource.
+
+        *etag* is an optional content entity tag previously returned in
+        :py:attr:`core.StreamInfo.etag`.  If the content is unchanged
+        the generator yields no data and
+        :py:attr:`core.StreamInfo.not_modified` is set."""
         if not self.is_medialink_collection():
             raise core.ExpectedMediaLinkCollection
         stream_url = str(self.base_uri) + core.ODataURI.format_key_dict(
@@ -460,6 +483,8 @@ class ClientCollection(core.EntityCollection):
         swrapper = EntityStream(self)
         request = http.ClientRequest(stream_url, 'GET', res_body=swrapper)
         request.set_accept("*/*")
+        if etag is not None:
+            request.set_header("If-None-Match", str(etag))
         swrapper.start_request(request)
         return swrapper.sinfo, swrapper.data_gen()
 
@@ -493,6 +518,17 @@ class EntityStream(io.RawIOBase):
             self.sinfo.modified = request.response.get_last_modified()
             self.sinfo.created = self.sinfo.modified
             self.sinfo.md5 = request.response.get_content_md5()
+            response_etag = request.response.get_etag()
+            if response_etag is not None:
+                self.sinfo.etag = str(response_etag)
+        elif self.request.response.status == 304:
+            # the caller's copy is still valid, there is no body
+            self.sinfo = core.StreamInfo()
+            self.sinfo.not_modified = True
+            self.sinfo.size = 0
+            response_etag = request.response.get_etag()
+            if response_etag is not None:
+                self.sinfo.etag = str(response_etag)
         elif self.request.status == 404:
             # sort of success, we return an empty stream
             self.sinfo = core.StreamInfo()

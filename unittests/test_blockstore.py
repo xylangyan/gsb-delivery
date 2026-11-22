@@ -458,6 +458,99 @@ class StreamStoreTests(unittest.TestCase):
             self.assertTrue(rdata == data, "Read back %s" % repr(rdata))
             self.assertTrue(s.tell() == nbytes)
 
+    def test_replace_reader_snapshot(self):
+        """Readers keep the old block list until they finish.
+
+        The reader's snapshot is bound when it is opened, not when the
+        first block is read, so a replacement published while the reader
+        is paused does not disturb it.  Replaced blocks are only
+        collected once the last old reader has finished, whether it
+        completed, was closed early or failed."""
+        ss = blockstore.StreamStore(bs=self.bs, ls=self.ls,
+                                    entity_set=self.cdef['Streams'])
+        fox = b"The quick brown fox jumped over the lazy dog"
+        cafe = ul("Caf\xe9").encode('utf-8')
+        old = fox + cafe + fox + cafe + fox
+        new = cafe + fox + cafe
+
+        def store(data):
+            stream = ss.new_stream("text/plain")
+            with ss.open_stream(stream, 'w') as s:
+                nbytes = 0
+                while nbytes < len(data):
+                    nbytes += s.write(data[nbytes:])
+            return stream
+
+        def stream_count(stream_id):
+            with self.cdef['Streams'].open() as streams:
+                return 1 if stream_id in streams else 0
+
+        def replace(stream, data):
+            # mirror the application-level replacement: publish a new
+            # stream then delete the old reference
+            replacement = store(data)
+            ss.delete_stream(stream)
+            return replacement
+
+        # normal completion: replacement published before the first
+        # block is read, the old reader still gets all the old content
+        stream = store(old)
+        old_id = stream.key()
+        size = stream['size'].value
+        reader = ss.open_stream(stream, 'r')
+        replacement = replace(stream, new)
+        new_id = replacement.key()
+        self.assertFalse(old_id == new_id, "replacement is a new stream")
+        self.assertTrue(stream_count(old_id), "old stream retained")
+        data = reader.read()
+        reader.close()
+        self.assertTrue(data == old, "old reader got old content")
+        self.assertTrue(len(data) == size)
+        self.assertFalse(stream_count(old_id),
+                         "old stream collected after last reader")
+        self.assertTrue(stream_count(new_id), "new stream still present")
+        with ss.open_stream(replacement, 'r') as s:
+            self.assertTrue(s.read() == new, "new content available")
+
+        # early close: replacement published after the reader has read
+        # one block, the old blocks are collected when the reader closes
+        stream = store(old)
+        old_id = stream.key()
+        reader = ss.open_stream(stream, 'r')
+        first = reader.read(64)
+        self.assertTrue(first, "reader made progress")
+        replacement = replace(stream, new)
+        new_id = replacement.key()
+        self.assertTrue(stream_count(old_id), "old stream still retained")
+        reader.close()
+        self.assertFalse(stream_count(old_id),
+                         "closed reader releases the old stream")
+        with ss.open_stream(replacement, 'r') as s:
+            self.assertTrue(s.read() == new)
+
+        # failure: a read error releases the hold too, so the last old
+        # reader is the one that allows collection to happen
+        stream = store(old)
+        old_id = stream.key()
+        reader = ss.open_stream(stream, 'r')
+        reader.read(64)
+        replacement = replace(stream, new)
+        new_id = replacement.key()
+        # corrupt the reader's own block list to force a BlockMissing
+        reader.blocks[0]['hash'].set_from_value('0' * 64)
+        reader.seek(0)
+        reader._bdata = None
+        try:
+            reader.read(64)
+            self.fail("Expected missing block")
+        except blockstore.BlockMissing:
+            pass
+        reader.close()
+        self.assertFalse(stream_count(old_id),
+                         "failed reader releases the old stream")
+        with ss.open_stream(replacement, 'r') as s:
+            self.assertTrue(s.read() == new, "new content unaffected")
+
 
 class BlockStoreContainer(SQLiteEntityContainer):
 

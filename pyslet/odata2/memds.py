@@ -576,6 +576,7 @@ class EntityCollection(odata.EntityCollection):
             sinfo.modified = sinfo.created
         sinfo.size = len(data)
         sinfo.md5 = hashlib.md5(data).digest()
+        sinfo.etag = odata.format_content_etag(sinfo.md5)
         # we need the lock to ensure the entity and stream and updated
         # together
         with self.entity_store.container.lock:
@@ -617,6 +618,7 @@ class EntityCollection(odata.EntityCollection):
             sinfo.modified = iso.TimePoint.from_now_utc()
         sinfo.size = len(data)
         sinfo.md5 = hashlib.md5(data).digest()
+        sinfo.etag = odata.format_content_etag(sinfo.md5)
         # we need the lock to ensure the entity and stream and updated
         # together
         with self.entity_store.container.lock:
@@ -626,6 +628,8 @@ class EntityCollection(odata.EntityCollection):
 
     def read_stream(self, key, out=None):
         data, sinfo = self.entity_store.read_stream(key)
+        if sinfo.etag is None and sinfo.md5 is not None:
+            sinfo.etag = odata.format_content_etag(sinfo.md5)
         if out is not None:
             nbytes = 0
             while nbytes < len(data):
@@ -638,6 +642,8 @@ class EntityCollection(odata.EntityCollection):
 
     def read_stream_close(self, key):
         data, sinfo = self.entity_store.read_stream(key)
+        if sinfo.etag is None and sinfo.md5 is not None:
+            sinfo.etag = odata.format_content_etag(sinfo.md5)
         return sinfo, self._stream_gen(data)
 
     def _stream_gen(self, data):

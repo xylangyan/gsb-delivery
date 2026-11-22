@@ -902,6 +902,8 @@ class MockDocumentCollection(core.EntityCollection):
         if key == 1801:
             sinfo = core.StreamInfo(type="text/x-tolstoy")
             sinfo.size = len(DOCUMENT_TEXT)
+            sinfo.md5 = hashlib.md5(DOCUMENT_TEXT).digest()
+            sinfo.etag = core.format_content_etag(sinfo.md5)
             if out is not None:
                 out.write(DOCUMENT_TEXT)
             return sinfo
@@ -912,6 +914,8 @@ class MockDocumentCollection(core.EntityCollection):
         if key == 1801:
             sinfo = core.StreamInfo(type="text/x-tolstoy")
             sinfo.size = len(DOCUMENT_TEXT)
+            sinfo.md5 = hashlib.md5(DOCUMENT_TEXT).digest()
+            sinfo.etag = core.format_content_etag(sinfo.md5)
             return sinfo, [DOCUMENT_TEXT]
         else:
             raise KeyError
@@ -1288,6 +1292,8 @@ class ServerTests(unittest.TestCase):
         h.update(DOCUMENT_TEXT)
         document['Version'].set_from_value(h.digest())
         document.exists = True
+        content_etag = core.format_content_etag(
+            hashlib.md5(DOCUMENT_TEXT).digest())
         entry = core.Entry(None, document)
         # If the entity represents an AtomPub Media Link Entry...
         # the <m:properties> element... the <m:properties>
@@ -1312,7 +1318,7 @@ class ServerTests(unittest.TestCase):
                 self.assertTrue(
                     child.get_attribute((core.ODATA_METADATA_NAMESPACE,
                                          "etag")) ==
-                    "W/\"X'%s'\"" % h.hexdigest().upper())
+                    content_etag)
             if child.rel == "edit":
                 # [the edit link] MUST have an atom:href attribute
                 # whose value is a URI that identifies the entity
@@ -1460,7 +1466,11 @@ class ServerTests(unittest.TestCase):
                         "document content type")
         self.assertTrue(meta["edit_media"] == "Documents(1801)/$value",
                         "edit-media link")
-        self.assertTrue(meta["media_etag"] == etag, "document etag")
+        # the media_etag is the validator for the content, not the
+        # media-link entry, so it is derived from the content digest
+        self.assertTrue(
+            meta["media_etag"] == core.format_content_etag(
+                hashlib.md5(doc_text).digest()), "media content etag")
 
     def test_entity_type_from_json(self):
         doc = self.load_metadata()
@@ -4369,6 +4379,95 @@ class SampleServerTests(unittest.TestCase):
             request.wfile.getvalue().decode("iso-8859-1") ==
             u8(b'An opening line written in a Caf\xc3\xa9'),
             "media resource characters")
+
+    def test_conditional_media_resource(self):
+        """A conditional request for unchanged content has no body.
+
+        The validator is derived from the content itself so it is
+        unaffected by metadata-only updates and changes when the content
+        changes, including changes to or from an empty file."""
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 200)
+        data = request.wfile.getvalue()
+        content_etag = request.responseHeaders['ETAG']
+        self.assertTrue(content_etag.startswith('"X\''), content_etag)
+        self.assertTrue(
+            request.responseHeaders['CONTENT-MD5'] is not None,
+            "Content-MD5 present")
+        # repeating the request with the same validator is a 304
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.set_header("If-None-Match", content_etag)
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 304)
+        self.assertTrue(request.wfile.getvalue() == b"", "No body on 304")
+        self.assertTrue(request.responseHeaders['ETAG'] == content_etag)
+        # a different validator is ignored and the content is sent
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.set_header("If-None-Match", '"X\'0000\'"')
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 200)
+        self.assertTrue(request.wfile.getvalue() == data)
+        # a weak version of the same validator also matches
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.set_header("If-None-Match", "W/" + content_etag)
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 304)
+        # update the title only, the content validator is unchanged
+        documents = self.ds['SampleModel.SampleEntities.Documents']
+        with documents.open() as collection:
+            document = collection[301]
+            document['Title'].set_from_value("A New Title")
+            collection.update_entity(document)
+        request = MockRequest("/service.svc/Documents(301)")
+        request.send(self.svc)
+        entry = request.wfile.getvalue()
+        self.assertTrue(b"A New Title" in entry, "title changed")
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.send(self.svc)
+        self.assertTrue(
+            request.responseHeaders['ETAG'] == content_etag,
+            "metadata-only update must not change the content validator")
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.set_header("If-None-Match", content_etag)
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 304,
+                        "client may skip the download after a title change")
+        # changing the content invalidates the validator
+        with documents.open() as collection:
+            collection.update_stream(
+                io.BytesIO(b"new content"), 301,
+                core.StreamInfo(type=params.PLAIN_TEXT))
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.set_header("If-None-Match", content_etag)
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 200)
+        self.assertTrue(request.wfile.getvalue() == b"new content")
+        new_etag = request.responseHeaders['ETAG']
+        self.assertFalse(new_etag == content_etag)
+        # an empty file has its own stable content identity
+        with documents.open() as collection:
+            collection.update_stream(
+                io.BytesIO(b""), 301, core.StreamInfo(type=params.PLAIN_TEXT))
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 200)
+        self.assertTrue(request.responseHeaders['CONTENT-LENGTH'] == "0")
+        empty_etag = request.responseHeaders['ETAG']
+        self.assertTrue(
+            empty_etag == core.format_content_etag(
+                hashlib.md5(b'').digest()),
+            "empty content validator")
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.set_header("If-None-Match", empty_etag)
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 304)
+        self.assertTrue(request.wfile.getvalue() == b"")
+        # an unconditional request never gets a 304
+        request = MockRequest("/service.svc/Documents(301)/$value")
+        request.send(self.svc)
+        self.assertTrue(request.responseCode == 200)
+        self.assertTrue(request.responseHeaders['CONTENT-LENGTH'] == "0")
 
     def test_update_entity(self):
         customers = self.ds['SampleModel.SampleEntities.Customers']

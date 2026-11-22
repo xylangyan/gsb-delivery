@@ -539,6 +539,47 @@ class Server(app.Server):
             etag = entity.format_etag(etag, entity.etag_is_strong())
             response_headers.append(("ETag", etag))
 
+    def set_content_etag(self, sinfo, response_headers, weak=False):
+        """Adds the entity tag for a media resource's content.
+
+        This is the validator for the bytes of the stream, it is kept
+        separate from the entity's own ETag so that metadata-only updates
+        do not cause clients to re-download content that has not
+        changed."""
+        etag = sinfo.etag
+        if etag is None and sinfo.md5 is not None:
+            etag = core.format_content_etag(sinfo.md5)
+        if etag is not None:
+            if weak and not etag.startswith("W/"):
+                etag = "W/" + etag
+            response_headers.append(("ETag", etag))
+        return etag
+
+    @staticmethod
+    def match_etag(header_value, etag):
+        """Tests an If-None-Match header value against an entity tag.
+
+        The comparison uses the weak comparison function because it is
+        only being used to decide whether a GET should return the
+        content or 304 Not Modified."""
+        if header_value is None or etag is None:
+            return False
+        header_value = header_value.strip()
+        if header_value == "*":
+            return True
+        wanted = etag
+        if wanted.startswith("W/"):
+            wanted = wanted[2:]
+        for raw in header_value.split(","):
+            candidate = raw.strip()
+            if not candidate:
+                continue
+            if candidate.startswith("W/"):
+                candidate = candidate[2:]
+            if candidate == wanted:
+                return True
+        return False
+
     @old_method('HandleRequest')
     def handle_request(self, request, environ, start_response,
                        response_headers):
@@ -1143,9 +1184,24 @@ class Server(app.Server):
         types = [sinfo.type] + self.StreamTypes
         response_type = self.content_negotiation(request, environ, types)
         if response_type is None:
+            self.close_stream(sgen)
             return self.odata_error(
                 request, environ, start_response, "Not Acceptable",
                 'media stream type refused, try application/octet-stream', 406)
+        content_etag = self.set_content_etag(sinfo, response_headers)
+        if self.match_etag(
+                environ.get("HTTP_IF_NONE_MATCH"), content_etag):
+            # The content has not changed: the client keeps its copy.
+            # This is an unconditional response, so no matching header
+            # means we always continue to send the content below.
+            self.close_stream(sgen)
+            if sinfo.md5 is not None:
+                response_headers.append(
+                    ("Content-MD5", force_ascii(base64.b64encode(sinfo.md5))))
+            # A 304 response has no body; omit Content-Length rather
+            # than implying a zero-length representation.
+            start_response("304 Not Modified", response_headers)
+            return []
         response_headers.append(("Content-Type", str(response_type)))
         if sinfo.size is not None:
             response_headers.append(("Content-Length", str(sinfo.size)))
@@ -1155,9 +1211,15 @@ class Server(app.Server):
         if sinfo.md5 is not None:
             response_headers.append(
                 ("Content-MD5", force_ascii(base64.b64encode(sinfo.md5))))
-        self.set_etag(entity, response_headers)
         start_response("%i %s" % (200, "Success"), response_headers)
         return sgen
+
+    @staticmethod
+    def close_stream(sgen):
+        """Closes a media stream generator, releasing any reader hold."""
+        close = getattr(sgen, "close", None)
+        if close is not None:
+            close()
 
     def read_value(self, value, environ):
         input = self.read_xml_or_json(environ)

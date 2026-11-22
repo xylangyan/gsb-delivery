@@ -2,6 +2,7 @@
 """OData core elements"""
 
 import base64
+import binascii
 import decimal
 import itertools
 import json
@@ -2438,6 +2439,25 @@ class StreamInfo(object):
         #: the 16 byte binary MD5 checksum of the stream, None if not
         #: known
         self.md5 = None
+        #: an optional entity tag that identifies the stream's content.
+        #: This is deliberately separate from the ETag of the media-link
+        #: entry: changing only the entry's metadata must not invalidate
+        #: a cached copy of the content.
+        self.etag = None
+        #: True when the result came from a conditional request that was
+        #: satisfied without transferring the content.
+        self.not_modified = False
+
+
+def format_content_etag(digest):
+    """Returns a strong entity tag for a binary content digest.
+
+    *digest* is a 16-byte MD5 digest as returned by :py:func:`hashlib.md5`.
+    The result is a quoted ETag suitable for use in HTTP headers and
+    entity-tag comparisons.  None is returned if *digest* is None."""
+    if digest is None:
+        return None
+    return '"X\'%s\'"' % to_text(binascii.hexlify(digest)).upper()
 
 
 class Entity(edm.Entity):
@@ -2451,6 +2471,25 @@ class Entity(edm.Entity):
     def get_content_type(self):
         with self.entity_set.open() as collection:
             return collection.read_stream(self.key()).type
+
+    def get_content_etag(self):
+        """Returns the entity tag for this entity's media content.
+
+        This validator changes only when the bytes of the media stream
+        change; it is independent of the entity's own ETag, which covers
+        the media-link entry's metadata."""
+        if not self.exists:
+            return None
+        try:
+            with self.entity_set.open() as collection:
+                sinfo = collection.read_stream(self.key())
+        except (KeyError, NotImplementedError):
+            # custom data sources may only implement read_stream_close
+            # or may not have a stream until the entry is saved
+            return None
+        if sinfo.etag is None and sinfo.md5 is not None:
+            return format_content_etag(sinfo.md5)
+        return sinfo.etag
 
     def GetStreamType(self):    # noqa
         warnings.warn("Entity.GetStreamType is deprecated, "
@@ -2602,9 +2641,14 @@ class Entity(edm.Entity):
             yield ',"content_type":%s' % json.dumps(
                 str(self.get_content_type()))
             yield ',"edit_media":%s' % json.dumps(location + "/$value")
-            if etag:
-                yield ',"media_etag":%s' % \
-                    json.dumps(Entity.format_etag(etag, self.etag_is_strong()))
+            content_etag = self.get_content_etag()
+            if content_etag is None and etag:
+                # no content validator available, fall back to the
+                # entry's own ETag for backwards compatibility
+                content_etag = Entity.format_etag(
+                    etag, self.etag_is_strong())
+            if content_etag:
+                yield ',"media_etag":%s' % json.dumps(content_etag)
         yield '}'
         for k, v in self.data_items():
             # watch out for unselected properties
@@ -3022,7 +3066,10 @@ class EntityCollection(edm.EntityCollection):
         data.
 
         The collection is closed by the generator when the iteration is
-        complete (or when the generator is destroyed)."""
+        complete (or when the generator is destroyed).  Calling the
+        generator's close method early must also release the resource;
+        implementations that hold storage references should do so in
+        their generator's finally block."""
         if not self.is_medialink_collection():
             raise ExpectedMediaLinkCollection
         raise NotImplementedError
@@ -3843,11 +3890,15 @@ class Entry(atom.Entry):
                 link = self.add_child(self.LinkClass)
                 link.href = location + "/$value"
                 link.rel = "edit-media"
-                if self.etag:
+                content_etag = entity.get_content_etag()
+                if content_etag is None and self.etag:
+                    # no content validator available, fall back to the
+                    # entry's own ETag for backwards compatibility
+                    content_etag = Entity.format_etag(
+                        self.etag, entity.etag_is_strong())
+                if content_etag:
                     link.set_attribute(
-                        (ODATA_METADATA_NAMESPACE, 'etag'),
-                        Entity.format_etag(self.etag,
-                                           entity.etag_is_strong()))
+                        (ODATA_METADATA_NAMESPACE, 'etag'), content_etag)
             for nav_property, navValue in entity.navigation_items():
                 link = self.add_child(self.LinkClass)
                 link.href = location + '/' + nav_property

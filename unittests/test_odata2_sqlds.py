@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import decimal
+import hashlib
 import logging
 import random
 import sqlite3
@@ -8,6 +9,7 @@ import threading
 import uuid
 import unittest
 
+from pyslet import blockstore
 from pyslet import iso8601 as iso
 from pyslet.http import params
 from pyslet.odata2 import core
@@ -37,6 +39,7 @@ def suite():
         loader.loadTestsFromTestCase(SQLDSTests),
         loader.loadTestsFromTestCase(AutoFieldTests),
         loader.loadTestsFromTestCase(RegressionTests),
+        loader.loadTestsFromTestCase(StreamReplaceTests),
     ))
 
 
@@ -971,6 +974,114 @@ class RegressionTests(DataServiceRegressionTests):
 
     def test_all_tests(self):
         self.run_combined()
+
+
+class StreamReplaceTests(unittest.TestCase):
+    """Tests the SQLite stream store's handling of replaced streams.
+
+    Uses the schema from ``streamstore.xml`` directly so that the
+    block list can be inspected between operations."""
+
+    def setUp(self):  # noqa
+        self.d = FilePath.mkdtemp('.d', 'pyslet-test_odata2_sqlds-')
+        self.streamstore = sqlds.SQLiteStreamStore(
+            file_path=self.d.join('streamstore.db'))
+        self.block_size = self.streamstore.bs.max_block_size
+
+    def tearDown(self):  # noqa
+        self.d.rmtree(True)
+
+    def stream_ids(self):
+        with self.streamstore.stream_set.open() as texts:
+            return set(texts[key].key() for key in texts.keys())
+
+    def block_lists(self):
+        with self.streamstore.block_set.open() as blocks:
+            return len(blocks)
+
+    def store(self, data):
+        stream = self.streamstore.new_stream("text/plain")
+        with self.streamstore.open_stream(stream, 'w') as s:
+            nbytes = 0
+            while nbytes < len(data):
+                nbytes += s.write(data[nbytes:])
+        return stream
+
+    def replace(self, stream, data):
+        replacement = self.store(data)
+        self.streamstore.delete_stream(stream)
+        return replacement
+
+    def test_multi_block_replace(self):
+        """An old multi-block stream survives a replacement.
+
+        The old reader has the old metadata in hand before the first
+        block is read.  The replacement must not alter the old stream's
+        block list and the old blocks are collected only after the last
+        old reader has stopped."""
+        old = (b"The quick brown fox jumped over the lazy dog." * 8192)[
+            :self.block_size * 3 + 123]
+        new = (b"Caf\xc3\xa9 " * 8192)[:self.block_size * 2 + 77]
+        stream = self.store(old)
+        old_id = stream.key()
+        self.assertTrue(self.block_lists() > 1, "old stream is multi-block")
+        # bind the snapshot while producing the response headers
+        info = self.streamstore.get_stream(old_id)
+        src = self.streamstore.open_stream(info, 'r')
+        replacement = self.replace(stream, new)
+        new_id = replacement.key()
+        self.assertTrue(old_id in self.stream_ids(),
+                        "old stream still referenced")
+        chunks = []
+        while True:
+            data = src.read(self.block_size)
+            if not data:
+                break
+            chunks.append(data)
+        src.close()
+        got = b''.join(chunks)
+        self.assertTrue(got == old, "old reader gets old content")
+        self.assertTrue(hashlib.md5(got).digest() == info['md5'].value,
+                        "old content matches its declared identity")
+        self.assertFalse(old_id in self.stream_ids(),
+                         "last old reader triggers collection")
+        self.assertTrue(new_id in self.stream_ids())
+        # the new stream is readable and distinct
+        with self.streamstore.open_stream(
+                self.streamstore.get_stream(new_id), 'r') as s:
+            self.assertTrue(s.read() == new, "new content available")
+
+    def test_partial_close_and_failure(self):
+        old = (b"The quick brown fox jumped over the lazy dog." * 8192)[
+            :self.block_size * 3 + 123]
+        new = (b"Caf\xc3\xa9 " * 8192)[:self.block_size + 33]
+        # early close after reading part of the old content
+        stream = self.store(old)
+        old_id = stream.key()
+        src = self.streamstore.open_stream(stream, 'r')
+        self.assertTrue(src.read(self.block_size))
+        self.replace(stream, new)
+        self.assertTrue(old_id in self.stream_ids(), "held by the reader")
+        src.close()
+        self.assertFalse(old_id in self.stream_ids(),
+                         "close releases the old blocks")
+        # a failed read also releases the old blocks
+        stream = self.store(old)
+        old_id = stream.key()
+        src = self.streamstore.open_stream(stream, 'r')
+        src.read(self.block_size)
+        self.replace(stream, new)
+        src.blocks[0]['hash'].set_from_value('0' * 64)
+        src.seek(0)
+        src._bdata = None
+        try:
+            src.read(self.block_size)
+            self.fail("Expected BlockMissing")
+        except blockstore.BlockMissing:
+            pass
+        src.close()
+        self.assertFalse(old_id in self.stream_ids(),
+                         "failed reader releases the old blocks")
 
 
 if __name__ == "__main__":
