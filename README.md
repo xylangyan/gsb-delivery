@@ -1,0 +1,740 @@
+BibTeX-Ruby
+===========
+
+BibTeX-Ruby is the Rubyist's swiss-army-knife for all things BibTeX. It
+includes a parser for all common BibTeX objects (@string, @preamble, @comment
+and regular entries) and a sophisticated name parser that tokenizes correctly
+formatted names; BibTeX-Ruby recognizes BibTeX string replacements, joins
+values containing multiple strings or variables, supports cross-references,
+and decodes common LaTeX formatting instructions to Unicode; if you are in a
+hurry, it also allows for easy export/conversion to formats such as YAML,
+JSON, CiteProc/CSL, XML (BibTeXML, requires `rexml`), and RDF (experimental,
+requires `rdf` and `rdf-vocab`).
+
+For a list of projects using BibTeX-Ruby, take a look at the
+[project wiki](https://github.com/inukshuk/bibtex-ruby/wiki/Projects-Using-BibTeX-Ruby).
+
+
+Quickstart
+----------
+Install and load BibTeX-Ruby in an IRB session:
+
+    $ gem install bibtex-ruby
+    $ irb
+    >> require 'bibtex'
+
+Open a BibTeX bibliography:
+
+```ruby
+b = BibTeX.open('./ruby.bib')
+```
+
+Select a BibTeX entry and access individual fields:
+
+```ruby
+b['pickaxe'].title
+#=> "Programming Ruby 1.9: The Pragmatic Programmer's Guide"
+b[:pickaxe].author.length
+#=> 3
+b[:pickaxe].author.to_s
+#=> "Thomas, D. and Fowler, Chad and Hunt, Andy"
+b[:pickaxe].author[2].first
+#=> "Andy"
+```
+
+Query a bibliography:
+
+```ruby
+b['@book'].length
+#=> 3 - the number of books in the bibliography
+b['@article'].length
+#=> 0 - the number of articles in the bibliography
+b['@book[year=2009]'].length
+#=> 1 - the number of books published in 2009
+```
+
+Extend first name initials throughout your bibliography:
+
+```ruby
+b.extend_initials ['Dave', 'Thomas']
+b[:pickaxe].author.to_s
+#=> "Thomas, Dave and Fowler, Chad and Hunt, Andy"
+```
+
+You can also extend all names in the bibliography to their prototypical
+(i.e., the longest available) form:
+
+```ruby
+b.extend_initials! #=> extends all names in the bibliography
+```
+
+Use with caution as this method will treat two names as identical if they
+look the same in their `#sort_order(initials: true)` form.
+
+Unify certain fields across the bibliography:
+
+```ruby
+b.unify :publisher, /o'?reilly/i, "O'Reilly"
+
+b.unify :publisher, /^penguin/i do |entry|
+  entry.publisher = 'Penguin Books'
+  entry.address = 'London'
+end
+```
+
+This will unify various spellings of entries published by O'Reilly and Penguin.
+
+Render your bibliography in one of
+[many different citation styles](https://github.com/citation-style-language/styles)
+(requires the **citeproc-ruby** and **csl-styles** gems):
+
+```ruby
+require 'citeproc'
+require 'csl/styles'
+
+cp = CiteProc::Processor.new(style: 'apa', format: 'text')
+cp.import(b.to_citeproc)
+cp.render(:bibliography, id: 'pickaxe').first
+#=> "Thomas, D., Fowler, C., & Hunt, A. (2009). Programming Ruby 1.9: The Pragmatic Programmer's Guide. The Pragmatic Bookshelf."
+```
+
+With `style: 'chicago-author-date'` the same entry renders as:
+
+    Thomas, Dave, Chad Fowler, and Andy Hunt. 2009. Programming Ruby 1.9: The Pragmatic Programmer's Guide. The Facets of Ruby. The Pragmatic Bookshelf.
+
+Save a bibliography to a file:
+
+```ruby
+b.save
+#=> saves the bibliography back to the file it was opened from
+b.save_to('new.bib')
+#=> saves the bibliography in a new file
+```
+
+Compatibility
+-------------
+BibTeX-Ruby requires Ruby 3.3 or later. It is tested on CRuby 3.3, 3.4 and
+4.0 on Linux, macOS and Windows, and on JRuby.
+
+Starting with BibTeX-Ruby version 7.0, only Ruby versions that are still in
+their "security maintenance" phase or later will be supported; as of writing,
+this means Ruby 3.3 and up.
+
+Documentation
+-------------
+It is very easy to use BibTeX-Ruby. You can use the top level utility methods
+**BibTeX.open** and **BibTeX.parse** to open a '.bib' file or to parse a
+string containing BibTeX contents. By default, BibTeX-Ruby will discard all
+text outside of regular BibTeX elements; however, if you wish to include
+everything, simply add `include: [:meta_content]` to your invocation of
+**BibTeX.open** or **BibTeX.parse**.
+
+Biber and btparse accept TeX comments ('%' to the end of the line) between
+the fields of an entry; classic BibTeX does not. To accept such comments,
+pass `strip_comments: true` to **BibTeX.open** or **BibTeX.parse**:
+
+```ruby
+BibTeX.parse <<~END, strip_comments: true
+  @book{key,
+    % a comment on its own line
+    author = {John Doe}, % a comment after a field
+    url = {http://example.com/a%20b}
+  }
+END
+```
+
+A '%' inside a braced or quoted value (e.g., `50\%` or a URL) is never
+treated as a comment. This option is disabled by default.
+
+Once BibTeX-Ruby has parsed your '.bib' file, you can easily access individual
+entries. For example, if you set up your bibliography as follows:
+
+```ruby
+b = BibTeX.parse <<~END
+  @book{pickaxe,
+    address = {Raleigh, North Carolina},
+    author = {Thomas, Dave and Fowler, Chad and Hunt, Andy},
+    publisher = {The Pragmatic Bookshelf},
+    series = {The Facets of Ruby},
+    title = {Programming Ruby 1.9: The Pragmatic Programmer's Guide},
+    year = {2009}
+  }
+END
+```
+
+You could easily access it, using the entry's key, 'pickaxe', like so:
+`b[:pickaxe]`; you also have easy access to individual fields, for example:
+`b[:pickaxe][:author]`. Alternatively, BibTeX-Ruby accepts ghost methods to
+conveniently access an entry's fields, similar to **ActiveRecord::Base**.
+Therefore, it is equally possible to access the 'author' field above as
+`b[:pickaxe].author`. Note that a ghost method raises `NoMethodError` if the
+entry does not have that field; use `b[:pickaxe][:field]` (which returns
+`nil`) when a field may be missing.
+
+BibTeX-Ruby wraps all values of fields in an entry in Value
+objects. This is necessary to transparently handle different types of values
+(e.g., strings, dates, names etc.). These Value objects are designed to be
+hardly discernible from regular Ruby strings, however, if you ever run into a
+problem with a field's value, simply convert it to a string by calling the
+`#to_s` method.
+
+Instead of parsing strings you can also create BibTeX elements directly in
+Ruby:
+
+```ruby
+bib = BibTeX::Bibliography.new
+```
+
+Using a Hash (note that the citation key goes into `:bibtex_key`; a `:key`
+entry would become an ordinary field named 'key'):
+
+```ruby
+bib << BibTeX::Entry.new({
+  bibtex_type: :book,
+  bibtex_key: :rails,
+  address: 'Raleigh, North Carolina',
+  author: 'Ruby, Sam and Thomas, Dave and Hansson, David Heinemeier',
+  booktitle: 'Agile Web Development with Rails',
+  edition: 'third',
+  keywords: 'ruby, rails',
+  publisher: 'The Pragmatic Bookshelf',
+  series: 'The Facets of Ruby',
+  title: 'Agile Web Development with Rails',
+  year: '2009'
+})
+```
+
+Or programmatically:
+
+```ruby
+book = BibTeX::Entry.new
+book.type = :book
+book.key = :mybook
+bib << book
+```
+
+### Cross References
+
+From version 2.0, BibTeX-Ruby correctly resolves entry cross-references,
+which are commonly used for entries with type `inbook`, `incollection`,
+and `inproceedings`. When an entry has a valid citation key in the field
+`crossref`, BibTeX-Ruby will return any fields inherited from the parent
+entry:
+
+```ruby
+b = BibTeX.parse <<~END
+  @inbook{fraassen_1989b,
+    Crossref = {fraassen_1989},
+    Pages = {40-64},
+    Title = {Ideal Science: David Lewis's Account of Laws},
+  }
+
+  @book{fraassen_1989,
+    Address = {Oxford},
+    Author = {Bas C. van Fraassen},
+    Publisher = {Oxford University Press},
+    Title = {Laws and Symmetry},
+    Year = 1989
+  }
+END
+
+b['fraassen_1989b'].booktitle
+#=> "Laws and Symmetry"
+```
+
+### Queries
+
+Since version 1.3 BibTeX-Ruby implements a simple query language to search
+Bibliographies via the `Bibliography#query` (or `Bibliography#q`) methods.
+Additionally, you can access individual elements or groups of elements via
+their index using `Bibliography#[]`; this accessor also exposes some of the
+query functionality with the exception of yielding to a block. For instance:
+
+```ruby
+bib[-1]
+#=> Returns the last element of the Bibliography or nil
+bib[1,2]
+#=> Returns the second and third elements or nil
+bib[1..2]
+#=> Same as above
+
+bib[:key]
+#=> Returns the entry with key 'key' or nil
+bib['key']
+#=> Same as above
+
+bib['@article']
+#=> Returns all entries of type 'article' or []
+bib['!@book']
+#=> Returns all elements that are not books (including @string,
+#   @preamble and @comment objects) or []
+bib['@preamble']
+#=> Returns all preamble objects (this is the same as Bibliography#preambles) or []
+bib[/ruby/]
+#=> Returns all objects that match 'ruby' anywhere or []
+
+bib['@incollection[booktitle]']
+#=> Returns all in-collection entries with a booktitle or []
+
+# note that the above includes entries inheriting the book title
+# from a cross-referenced entry!
+
+bib['@book[keywords=ruby]']
+#=> Returns all books whose keywords attribute equals 'ruby' or []
+bib['@book[keywords!=ruby]']
+#=> Returns all books whose keywords attribute does not equal 'ruby'
+bib['@book[keywords/=ruby]']
+#=> Same as above
+
+bib.q('@book[keywords ^= ruby]')
+#=> Returns all books whose keywords attribute matches /^ruby/
+bib.q('@book[keywords ~= ruby]')
+#=> Returns all books whose keywords attribute matches /ruby/
+bib['@book[keywords!~ruby]']
+#=> Returns all books whose keywords attribute does not match /ruby/ or don't have keywords attribute
+
+bib.q('@article[year<=2007]')
+#=> Returns all articles published in 2007 or earlier
+bib.query('@book[keywords]') { |e| e.keywords.split(/,/).length > 1 }
+#=> Returns all book entries with two or more keywords or []
+```
+
+Note that the `^=`, `~=` and `!~` operators treat their value as a **regular
+expression** (it is passed to Ruby's `String#match`). Regexp metacharacters
+such as `\ . + ( ) { } [ ]` are therefore special, and a literal backslash
+has to be escaped twice: once for the Ruby string and once for the regexp.
+Also, the query string itself is split on `,` (to separate alternatives such
+as `'@book, @article'`), so a value can never contain a comma. For values
+like LaTeX-escaped names, use `Regexp.escape` or a block:
+
+```ruby
+# author = {Maksimovi\'{c}, Petar}
+bib["@*[author ~= #{Regexp.escape(%q(Maksimovi\'{c}))}]"]
+bib["@*[author ~= Maksimovi\\\\'{c}]"]   # same as above, escaped by hand
+bib.query { |e| e.author.to_s.include?(%q(Maksimovi\'{c})) }
+#=> all three return the entry
+```
+
+Queries offer syntactic sugar for common enumerator invocations:
+
+```ruby
+bib.query(:all, '@book')
+#=> same as bib.select { |b| b.has_type?(:book) }
+bib.query('@book')
+#=> same as above
+bib.query(:first, '@book')
+#=> same as bib.detect { |b| b.has_type?(:book) }
+bib.query(:none, '@book')
+#=> same as bib.reject { |b| b.has_type?(:book) }
+```
+
+You can also use queries to delete entries in your bibliography:
+
+```ruby
+bib.delete(/ruby/)
+#=> deletes all objects that match 'ruby' in their string representation
+bib.delete('@comment')
+#=> strips all BibTeX comments from the bibliography
+```
+
+### String Replacement
+
+If your bibliography contains BibTeX @string objects, you can let BibTeX-Ruby
+replace the strings for you. You have access to a bibliography's strings via
+**BibTeX::Bibliography#strings** or by using a '@string' query.
+You can replace the string symbols of an object by calling the object's
+**replace** method. Thus, to replace all strings defined in bibliography
+b you could use the following code:
+
+```ruby
+b.each do |obj|
+  obj.replace(b.q('@string'))
+end
+```
+
+A shorthand version for replacing all strings in a given bibliography is the
+`Bibliography#replace` method. Similarly, you can use the
+`Bibliography#join` method to join individual strings together. For instance:
+
+```ruby
+bib = BibTeX::Bibliography.new
+bib.add BibTeX::Element.parse '@string{ foo = "foo" }'
+bib << BibTeX::Element.parse('@string{ bar = "bar" }')
+bib.add BibTeX::Element.parse <<~END
+  @book{abook,
+    publisher = foo # " Press",
+    title = foo # bar
+  }
+END
+puts bib[:abook]
+# @book{abook,
+#   publisher = foo # " Press",
+#   title = foo # bar
+# }
+bib.replace
+puts bib[:abook]
+# @book{abook,
+#   publisher = "foo" # " Press",
+#   title = "foo" # "bar"
+# }
+bib.join
+puts bib[:abook]
+# @book{abook,
+#   publisher = {foo Press},
+#   title = {foobar}
+# }
+```
+
+String replacement and concatenation do not apply to name fields such as
+`author` or `editor` once their names have been parsed; see below.
+
+### Names
+
+Since version 1.3, BibTeX-Ruby features a name parser. You can use the
+top-level `BibTeX.names` utility to quickly parse individual name values.
+Alternatively, you can call `Bibliography#parse_names` to convert all name
+fields contained in the bibliography. When parsing BibTeX files, BibTeX-Ruby
+will automatically convert names; if you do not want the names to be parsed
+you can set the `parse_names` parser option to false.
+
+Note that the string replacement and concatenation features described above
+are not supported for name objects; therefore, BibTeX-Ruby tries to replace
+and join all values before name conversion; name fields containing string
+symbols that cannot be replaced will not be parsed.
+
+In the following example, string replacement can take place, thus all names
+are parsed and can easily be mapped to their last names:
+
+```ruby
+BibTeX.parse(<<~END)[1].author.map(&:last)
+  @string{ ht = "Nathaniel Hawthorne" }
+  @book{key,
+    author = ht # " and Melville, Herman"
+  }
+END
+#=> ["Hawthorne", "Melville"]
+```
+
+Another useful method is `Bibliography#names` which returns all names in
+your bibliography (authors, editors, translators). For example, to quickly
+expand the initials of a name across your entire bibliography, you could
+use the following snippet:
+
+```ruby
+b.names.each do |name|
+  if name.sort_order =~ /^Poe, E/
+    name.first = 'Edgar Allan'
+  end
+end
+```
+
+There is also a short-hand for this use case:
+
+```ruby
+b.extend_initials ['Edgar Allan', 'Poe']
+```
+
+Alternatively, if your bibliography contains the same names in various
+forms (e.g., 'Poe, Edgar A.', 'Poe, E.A.', 'Poe, E. Allan') you can also
+set all names to their longest available form:
+
+```ruby
+b.extend_initials!
+```
+
+Use with caution, though, as this method will treat names as identical
+as long as their initials are the same. That is to say, 'Poe, Eric A.' would
+be extended to 'Poe, Edgar Allan'.
+
+Since version 4.1.0, BibTeX-Ruby supports parsing of names spelled in the
+East Asian order (last name, then first name). Names containing a Chinese,
+Japanese or Korean letter are currently assumed to be such names. If the name
+is written in comma-separated manner, it is parsed in the normal way.
+
+```ruby
+b = BibTeX.parse(<<~END)
+  @book{key,
+    title = "プログラミング言語 Ruby",
+    author = "David Flanagan and まつもと ゆきひろ",
+    translator = "卜部, 昌平 and 長尾, 高弘",
+    year = "2009",
+    publisher = "O'Reilly Japan"
+  }
+END
+[*b[0].author, *b[0].translator].map(&:last)
+#=> ["Flanagan", "まつもと", "卜部", "長尾"]
+```
+
+### Duplicates
+
+Large bibliographies often contain duplicate data, i.e., duplicate entries
+which are not completely identical (e.g., authors or editors with first
+names or initials, titles using different casing, different keywords etc.).
+BibTeX-Ruby allows you to group your bibliography by any number of fields
+in order to detect such duplicate entries.
+
+```ruby
+b.select_duplicates_by :year, :title
+#=> groups of entries with the same type, year and title
+
+b.duplicates?
+#=> whether or not the bibliography contains any duplicates
+#   (entries with the same type, year and title)
+```
+
+By default, the values of the given fields must match exactly. To detect
+duplicates that differ only in letter case or whitespace, pass a block that
+normalizes the digest (a string built from the entry's type and the given
+fields):
+
+```ruby
+b.select_duplicates_by(:year, :title) do |digest, entry|
+  digest.gsub(/\s+/, '').downcase
+end
+```
+
+For more complex requirements you can use the `#group_by` method directly.
+This method accepts a list of arguments whose value will be used for grouping
+and, additionally, a block. The current digest and each individual entry will
+be passed to the block and the block's return value is used as the final
+digest:
+
+```ruby
+b.group_by(:year, :title) do |digest, entry|
+  digest.gsub(/\s+/, '').downcase
+end
+#=> a Hash mapping each digest to the entries that share it
+```
+
+You can use this method, for example, to match entries only by their author's
+last name and so on and so forth. `Bibliography#uniq!` takes the same
+arguments and block and removes all but the first entry of each group of
+duplicates.
+
+### Filters
+
+Since version 1.3.8 BibTeX-Ruby comes with a plugin framework for input
+filters. You can use the methods `convert` and `convert!` of `Value`,
+`Entry` and `Bibliography` instances to easily convert string values according
+to a given filter. Starting with version 1.3.9 BibTeX-Ruby includes a
+LaTeX filter that depends on the
+[latex-decode gem](https://rubygems.org/gems/latex-decode). Example:
+
+```ruby
+faust = '@book{faust, title = {Faust: Der Trag\"odie Erster Teil}}'
+BibTeX.parse(faust).convert(:latex)[:faust].title
+#=> "Faust: Der Tragödie Erster Teil"
+```
+
+Conditional conversions are also supported:
+
+```ruby
+faust1 = '@book{faust1, title = {Faust: Der Trag\"odie Erster Teil}}'
+faust2 = '@book{faust2, title = {Faust: Der Trag\"odie Zweiter Teil}}'
+puts BibTeX.parse(faust1 + faust2).convert(:latex) { |e| e.key == 'faust2' }
+```
+
+Prints:
+
+```bibtex
+@book{faust1,
+  title = {Faust: Der Trag\"odie Erster Teil}
+}
+@book{faust2,
+  title = {Faust: Der Tragödie Zweiter Teil}
+}
+```
+
+Note that citation keys are Strings, so compare them with `'faust2'`, not
+`:faust2`.
+
+If you need to express a condition on the basis of individual fields, use the
+conversion methods of BibTeX::Entry with a block instead (the block will be
+passed the key and value of each field prior to conversion).
+
+When working with Bibliographies that contain LaTeX it is often best to
+apply the filter upon opening or parsing the Bibliography. You can do this,
+by passing the `filter` option:
+
+```ruby
+BibTeX.open 'references.bib', filter: :latex
+```
+
+### Exports
+
+Furthermore, BibTeX-Ruby allows you to export your bibliography for processing
+by other tools. Currently supported formats include YAML, JSON, XML,
+CiteProc/CSL and RDF.
+
+Of course, you can also export your bibliography back to BibTeX; if you
+include `:meta_content`, your export should be identical to the original
+'.bib' file, except for whitespace, blank lines and letter case (BibTeX-Ruby
+will downcase all field names).
+
+In order to export your bibliography use **#to\_s**, **#to\_yaml**,
+**#to\_json**, or **#to\_xml**, respectively. For example, the following line
+constitutes a simple BibTeX to YAML converter:
+
+```ruby
+BibTeX.open('example.bib').to_yaml
+```
+
+Starting with version 2.0, BibTeX-Ruby's `#to_xml` exports your bibliography
+to the [BibTeXML](https://bibtexml.sourceforge.net/) format via `rexml`. By
+passing the option `extended: true` you can make use of the BibTeXML's
+extended format which will return individual person elements and name tokens
+(provided you have successfully parsed the names of your bibliography).
+
+```ruby
+BibTeX.parse(<<~END).to_xml(extended: true).write($stdout, 2)
+  @book{pickaxe,
+    Address = {Raleigh, North Carolina},
+    Author = {Thomas, Dave and Fowler, Chad and Hunt, Andy},
+    Publisher = {The Pragmatic Bookshelf},
+    Title = {Programming Ruby 1.9: The Pragmatic Programmer's Guide},
+    Year = {2009}
+  }
+END
+```
+
+This example parses a BibTeX entry, formats it as extended BibTeXML,
+and writes the following XML to standard out (shortened):
+
+```xml
+<?xml version='1.0' encoding='UTF-8'?>
+<bibtex:file xmlns:bibtex='http://bibtexml.sf.net/'>
+  <bibtex:entry id='pickaxe'>
+    <bibtex:book>
+      <bibtex:address>
+        Raleigh, North Carolina
+      </bibtex:address>
+      <bibtex:author>
+        <bibtex:person>
+          <bibtex:first>
+            Dave
+          </bibtex:first>
+          <bibtex:last>
+            Thomas
+          </bibtex:last>
+        </bibtex:person>
+        ...
+      </bibtex:author>
+      <bibtex:publisher>
+        The Pragmatic Bookshelf
+      </bibtex:publisher>
+      <bibtex:title>
+        Programming Ruby 1.9: The Pragmatic Programmer&apos;s Guide
+      </bibtex:title>
+      <bibtex:year>
+        2009
+      </bibtex:year>
+    </bibtex:book>
+  </bibtex:entry>
+</bibtex:file>
+```
+
+BibTeX-Ruby offers an API which lets you manipulate BibTeX objects (string
+replacement, name parsing etc.); however, sometimes you just want quick access
+to your bibliography's contents. In these cases the **to_hash** method is
+useful (use **to_a** if you are only interested in the bibliography's
+contents): it converts all objects into simple Ruby hashes made up of symbols
+and strings. Furthermore, often you would like to control what sort of quotes
+are used in an export; therefore, all conversion methods accept an options
+hash which lets you define what quotes to use (note that BibTeX-Ruby will
+always use regular double quotes if a value consists of more than one token,
+because these tokens will be concatenated using BibTeX's '#' operator).
+
+```ruby
+BibTeX.parse(<<~END).to_a # implies: quotes: ['{', '}']
+  @book{pickaxe,
+    Address = {Raleigh, North Carolina},
+    Author = {Thomas, Dave and Fowler, Chad and Hunt, Andy},
+    Publisher = {The Pragmatic Bookshelf},
+    Title = {Programming Ruby 1.9: The Pragmatic Programmer's Guide},
+    Year = {2009}
+  }
+END
+#=> [{bibtex_key: "pickaxe",
+#     bibtex_type: :book,
+#     address: "{Raleigh, North Carolina}",
+#     author: "{Thomas, Dave and Fowler, Chad and Hunt, Andy}",
+#     publisher: "{The Pragmatic Bookshelf}",
+#     title: "{Programming Ruby 1.9: The Pragmatic Programmer's Guide}",
+#     year: "{2009}"}]
+```
+
+For post-processing in Ruby most of the time you do not need any explicit
+quotes; therefore you can simply add the `quotes` option with an empty string:
+
+```ruby
+BibTeX.parse(source).to_a(quotes: '') # source: the same BibTeX as above
+#=> [{bibtex_key: "pickaxe",
+#     bibtex_type: :book,
+#     address: "Raleigh, North Carolina",
+#     author: "Thomas, Dave and Fowler, Chad and Hunt, Andy",
+#     publisher: "The Pragmatic Bookshelf",
+#     title: "Programming Ruby 1.9: The Pragmatic Programmer's Guide",
+#     year: "2009"}]
+```
+
+The Parser
+----------
+The BibTeX-Ruby parser is generated using the awesome
+[racc](https://github.com/ruby/racc) parser generator. You can take
+a look at the LALR grammar in the file
+[lib/bibtex/bibtex.y](https://github.com/inukshuk/bibtex-ruby/blob/master/lib/bibtex/bibtex.y).
+
+For more information about the BibTeX format and the parser's idiosyncrasies
+[refer to the project wiki](https://github.com/inukshuk/bibtex-ruby/wiki/The-BibTeX-Format).
+
+
+Contributing
+------------
+The BibTeX-Ruby source code is
+[hosted on GitHub](https://github.com/inukshuk/bibtex-ruby/).
+You can check out a copy of the latest code using Git:
+
+    $ git clone https://github.com/inukshuk/bibtex-ruby.git
+
+If you've found a bug or have a question, please open an issue on the
+[BibTeX-Ruby issue tracker](https://github.com/inukshuk/bibtex-ruby/issues).
+For extra credit, clone the BibTeX-Ruby repository, write a failing
+example, or cucumber feature, fix the bug and submit a pull request (for
+useful examples, take a look at the cucumber features in the
+[features/issues/](https://github.com/inukshuk/bibtex-ruby/tree/master/features/issues)
+directory).
+
+The BibTeX parser and the name parser are generated from the grammars in
+`lib/bibtex/bibtex.y` and `lib/bibtex/names.y` with
+[racc](https://github.com/ruby/racc). If you change a grammar, regenerate
+the parsers with `bundle exec rake racc`. The generated parsers need the
+racc runtime, which the gem declares as a dependency.
+
+To run the tests and cucumber examples, and to check the code style, execute
+these commands (from within the bibtex-ruby directory):
+
+    $ bundle install
+    $ bundle exec rake
+    $ bundle exec rubocop
+
+If your change may affect performance, run the benchmark, which measures
+wall time and allocated objects for parsing, export and query workloads
+on a generated bibliography, and compare the result with `master`:
+
+    $ bundle exec rake bench
+    $ bundle exec rake 'bench:compare[origin/master]'
+
+See `benchmark/run.rb` for the options (bibliography size, workloads,
+JSON output, memory_profiler figures). The benchmark exits with a
+non-zero status if a workload fails.
+
+Credits
+-------
+
+Copyright 2011-2015 [Sylvester Keil](https://github.com/inukshuk).
+
+Kudos to all [contributors](https://github.com/inukshuk/bibtex-ruby/graphs/contributors)
+who have made BibTeX-Ruby possible.
+
+This software is distributed under the terms and conditions of the GNU GPL,
+version 3 or later. See LICENSE for details.

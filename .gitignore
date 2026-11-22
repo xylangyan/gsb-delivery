@@ -1,0 +1,14 @@
+**/*.swp
+*.tmproj
+**/*~
+*.rbc
+doc/**/*
+.bundle
+lib/bibtex/parser.output
+lib/bibtex/name_parser.output
+coverage
+.byebug_history
+.DS_Store
+.ruby-version
+Gemfile.lock
+pkg

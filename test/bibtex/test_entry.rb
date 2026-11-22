@@ -1,0 +1,1058 @@
+# frozen_string_literal: true
+
+require 'helper'
+
+module BibTeX
+  class EntryTest < Minitest::Spec
+    class SuffixB < BibTeX::Filter
+      def apply(value)
+        value.is_a?(::String) ? "#{value}b" : value
+      end
+    end
+
+    describe 'a new entry' do
+      it "won't be nil" do
+        _(Entry.new).wont_be_nil
+      end
+
+      describe 'given an attribute hash' do
+        before do
+          @attributes = { bibtex_type: :book, bibtex_key: 'rails', title: 'Agile Web Development', year: 2009 }
+        end
+
+        it 'takes type and key from the hash and the remaining keys as fields' do
+          entry = Entry.new(@attributes)
+
+          _(entry.type).must_equal :book
+          _(entry.key).must_equal 'rails'
+          _(entry.fields.keys).must_equal %i[title year]
+          _(entry[:title]).must_equal 'Agile Web Development'
+          _(entry[:year]).must_equal '2009'
+        end
+
+        it 'leaves the hash unchanged' do
+          expected = @attributes.dup
+          Entry.new(@attributes)
+
+          _(@attributes).must_equal expected
+        end
+
+        it 'accepts a frozen hash' do
+          entry = Entry.new(@attributes.freeze)
+
+          _(entry.type).must_equal :book
+          _(entry.key).must_equal 'rails'
+          _(entry.fields.keys).must_equal %i[title year]
+        end
+      end
+    end
+
+    describe '#type?' do
+      before { @entry = Entry.new(bibtex_type: :book) }
+
+      it 'matches the entry type by name' do
+        assert @entry.type?(:book)
+        refute @entry.type?(:article)
+      end
+
+      it 'matches the entry class' do
+        assert @entry.type?(Entry)
+      end
+
+      it 'does not match an unrelated class' do
+        refute @entry.type?(Comment)
+      end
+    end
+
+    describe '#add' do
+      it 'preserves BibTeX::Names (and other subclasses of BibTeX::Value)' do
+        e = Entry.new
+        e.add(:author, Names.new(Name.new(first: 'first_name')))
+
+        assert_equal e[:author].class, Names
+      end
+    end
+
+    describe 'cross-references' do
+      it 'has no cross-reference by default' do
+        refute_predicate Entry.new, :has_cross_reference?
+      end
+
+      it 'is not cross-referenced by default' do
+        refute_predicate Entry.new, :cross_referenced?
+        _(Entry.new.cross_referenced_by).must_be_empty
+      end
+
+      describe 'given a bibliography with cross referenced entries' do
+        before do
+          @bib = Bibliography.parse <<-BIBTEX
+            @book{a, editor = "A", title = "A"}
+            @incollection{a1, crossref = "a"}
+            @incollection{b1, crossref = "b2"}
+            @book{b, author = "B", title = "B", date = "2020", urldate = "2020"}
+          BIBTEX
+        end
+
+        describe '#has_cross_reference?' do
+          it 'returns true if the entry has a valid cross-reference' do
+            assert_predicate @bib['a1'], :has_cross_reference?
+          end
+          it 'returns false if the entry has no valid cross-reference' do
+            refute_predicate @bib['a'], :has_cross_reference?
+            refute_predicate @bib['b1'], :has_cross_reference?
+          end
+        end
+
+        describe '#cross_referenced?' do
+          it 'returns true if the entry is cross-referenced by another entry' do
+            assert_predicate @bib['a'], :cross_referenced?
+          end
+          it 'returns false if the entry is not cross-referenced' do
+            refute_predicate @bib['a1'], :cross_referenced?
+          end
+        end
+
+        describe '#cross_referenced_by' do
+          it 'returns a list of all entries that cross-reference this entry' do
+            _(@bib['a'].cross_referenced_by).must_include(@bib['a1'])
+          end
+
+          it 'returns an empty list if there are no cross-references to this entry' do
+            _(@bib['a1'].cross_referenced_by).must_be_empty
+          end
+        end
+
+        describe '#respond_to?' do
+          it 'takes into account the inherited attributes' do
+            @bib['a1'].respond_to?(:title)
+          end
+        end
+
+        describe 'resolve field values using array accessors #[]' do
+          describe 'when a "title" is set in the entry itself' do
+            before { @bib['a1'].title = 'A1' }
+
+            it 'returns the title' do
+              _(@bib['a1'].title).must_be :==, 'A1'
+            end
+          end
+
+          describe 'when "title" is undefined for the entry but defined in the reference' do
+            it 'returns the referenced title' do
+              _(@bib['a1'].title).must_be :==, @bib['a'].title
+            end
+          end
+
+          describe 'when "booktitle" is undefined for the entry but defined in the reference' do
+            before { @bib['a'].booktitle = 'A Booktitle' }
+
+            it 'returns the referenced booktitle' do
+              _(@bib['a1'].booktitle).must_be :==, @bib['a'].booktitle
+            end
+          end
+
+          describe 'when "booktitle" is undefined for the entry and the reference but the reference has a "title"' do
+            it "returns the reference's title" do
+              _(@bib['a1'].booktitle).must_be :==, @bib['a'].title
+            end
+          end
+
+          it 'does not store referenced values permanently' do
+            refute_nil @bib['a1'].booktitle
+            assert_nil @bib['a1'].fields[:booktitle]
+          end
+
+          describe '#inherited_fields' do
+            it 'returns an empty list by default' do
+              _(Entry.new.inherited_fields).must_be_empty
+            end
+
+            it 'returns an empty list if this entry has no cross-reference' do
+              _(@bib['a'].inherited_fields).must_be_empty
+            end
+
+            it 'returns an empty list if this entry has a cross-reference but the reference does not exist in the bibliography' do
+              _(@bib['b1'].inherited_fields).must_be_empty
+            end
+
+            it 'returns a list of all fields not set in the field but in the reference' do
+              _(@bib['a1'].inherited_fields).must_be :==, %i[booktitle editor title]
+            end
+          end
+
+          describe '#to_citeproc' do
+            it 'includes inherited values' do
+              _(@bib['a1'].to_citeproc['container-title']).must_be :==, @bib['a'].title.to_s
+            end
+
+            it 'converts urldate' do
+              _(@bib['b'].to_citeproc['accessed']).must_be :==, 'date-parts' => [[2020]]
+            end
+          end
+
+          describe '#save_inherited_fields' do
+            it 'copies referenced values to the entry' do
+              @bib['a1'].title = 'a1'
+              @bib['a1'].save_inherited_fields
+
+              _(@bib['a1'].fields[:booktitle]).must_be :==, @bib['a'].title
+              _(@bib['a1'].fields[:title]).wont_be :==, @bib['a'].title
+            end
+          end
+        end
+      end
+    end
+
+    describe '#names' do
+      it 'returns an empty list by default' do
+        _(Entry.new.names).must_be :==, []
+      end
+
+      it 'returns the author (if set)' do
+        _(Entry.new(author: 'A').names).must_be :==, %w[A]
+      end
+
+      it 'returns all authors (if set)' do
+        _(Entry.new(author: 'A B and C D').parse_names.names.length).must_be :==, 2
+      end
+
+      it 'returns the editor (if set)' do
+        _(Entry.new(editor: 'A').names).must_be :==, %w[A]
+      end
+
+      it 'returns the translator (if set)' do
+        _(Entry.new(translator: 'A').names).must_be :==, %w[A]
+      end
+    end
+
+    describe 'month conversion' do
+      before do
+        @entry = Entry.new
+      end
+
+      [[:jan, 'January'], [:feb, 'February'], [:sep, 'September']].each do |m|
+        it 'should convert english months' do
+          @entry.month = m[1]
+
+          assert_equal m[0], @entry.month.v
+        end
+      end
+
+      [%i[jan jan], %i[feb feb], %i[sep sep]].each do |m|
+        it 'should convert bibtex abbreviations' do
+          @entry.month = m[1]
+
+          assert_equal m[0], @entry.month.v
+        end
+      end
+
+      it 'prints parsed months as symbols' do
+        @entry.month = :aug
+
+        assert_match(/month = aug/, @entry.content)
+        assert_match(/month = aug/, @entry.to_s)
+      end
+
+      [[:jan, 1], [:feb, 2], [:sep, 9]].each do |m|
+        it 'should convert numbers' do
+          @entry.month = m[1]
+
+          assert_equal m[0], @entry.month.v
+        end
+        it 'should convert numbers when parsing' do
+          @entry = Entry.parse("@misc{id, month = #{m[1]}}")[0]
+
+          assert_equal m[0], @entry.month.v
+          assert_equal m[1], @entry.month_numeric
+        end
+      end
+
+      [
+        [:jan, :jan, 1], [:dec, :dec, 12], [:jan, 'January', 1],
+        [:jan, 'jan', 1], [:jan, ' Jan ', 1], [:jan, 'JAN', 1],
+        [:sep, 'Sept.', 9], [:mar, 'March 2020', 3], [:jan, '1', 1],
+        [:jan, '01', 1], [:dec, '12', 12], [:dec, 12, 12], [:dec, :'12', 12],
+        ['13', '13', nil], ['13', 13, nil], ['Spring', 'Spring', nil],
+        ['0', '0', nil], ['00', '00', nil],
+        ['', '', nil], [:foo, :foo, nil]
+      ].each do |expected, input, numeric|
+        it "normalises month #{input.inspect} to #{expected.inspect}" do
+          @entry.month = input
+
+          assert_equal expected, @entry.month.v
+          if numeric
+            assert_equal numeric, @entry.month_numeric
+            assert_equal numeric.to_s, @entry[:month_numeric].v
+          else
+            assert_nil @entry.month_numeric
+            refute @entry.field?(:month_numeric)
+          end
+        end
+      end
+
+      it 'normalises parsed months, keeping unknown values as-is' do
+        bib = Bibliography.parse(<<~BIB)
+          @misc{a, month = {January}}
+          @misc{b, month = "  Sep "}
+          @misc{c, month = {12}}
+          @misc{d, month = 13}
+          @misc{e, month = "Spring" # " 2020"}
+        BIB
+
+        months = bib.map { |e| e.month.v }
+
+        assert_equal [:jan, :sep, :dec, '13', '"Spring" # " 2020"'], months
+        assert_equal [1, 9, 12, nil, nil], bib.map(&:month_numeric)
+      end
+
+      it 'does not share month values between entries' do
+        a = Entry.new
+        b = Entry.new
+        a.month = :aug
+        b.month = :aug
+
+        refute_same a.month, b.month
+
+        a.month.replace('August')
+
+        assert_equal :aug, b.month.v
+      end
+
+      it 'does not share a month value assigned to several entries' do
+        month = Value.new('jan')
+        a = Entry.new
+        b = Entry.new
+        a.month = month
+        b.month = month
+
+        assert_equal a.month, b.month
+        refute_same a.month, b.month
+        refute_same month, a.month
+      end
+
+      it 'does not share unknown month values between parsed entries' do
+        a, b = Bibliography.parse('@misc{a, month = {Spring}} @misc{b, month = {Spring}}').map { |e| e }
+
+        assert_equal a.month, b.month
+        refute_same a.month, b.month
+      end
+
+      it 'does not allocate more on repeated parses' do
+        skip 'GC.stat has no allocation counter' unless GC.stat.key?(:total_allocated_objects)
+
+        months = %w[jan Feb 3 {April}]
+        input = (1..300).map { |i| "@misc{k#{i}, month = #{months[i % 4]}}" }.join("\n")
+        Bibliography.parse(input)
+        allocations = Array.new(3) do
+          before = GC.stat(:total_allocated_objects)
+          Bibliography.parse(input)
+          GC.stat(:total_allocated_objects) - before
+        end
+        skip 'GC.stat does not count allocations here' if allocations.first.zero?
+
+        assert_operator allocations.last, :<, allocations.first * 1.2,
+                        "allocations grew across parses: #{allocations.inspect}"
+      end
+    end
+
+    describe '#values_at' do
+      it 'returns an empty array by default' do
+        assert_equal [], Entry.new.values_at
+      end
+
+      it 'returns an empty array when given no arguments' do
+        assert_equal [], Entry.new(title: 'foo').values_at
+      end
+
+      it 'returns a nil array if the passed in key is not set' do
+        assert_equal [nil], Entry.new.values_at(:title)
+      end
+
+      it 'returns an array with the value of the passed in key' do
+        assert_equal ['x'], Entry.new(title: 'x').values_at(:title)
+        assert_equal %w[a b], Entry.new(title: 'b', year: 'a').values_at(:year, :title)
+      end
+    end
+
+    describe '#digest' do
+      it 'returns an empty string by default' do
+        assert_equal '', Entry.new.digest
+      end
+
+      it 'includes type and all defined fields' do
+        assert_equal 'book', Entry.new(bibtex_type: 'book').digest
+        assert_equal 'book|title:foo', Entry.new(bibtex_type: 'book', title: 'foo').digest
+      end
+
+      it 'accepts a filter' do
+        assert_equal 'book|year:2012', Entry.new(bibtex_type: 'book', title: 'foo', year: 2012).digest([:year])
+      end
+    end
+
+    describe 'given an entry' do
+      before do
+        @entry = Entry.new do |e|
+          e.type = :book
+          e.key = :key
+          e.title = 'Moby Dick'
+          e.author = 'Herman Melville'
+          e.publisher = 'Penguin'
+          e.address = 'New York'
+          e.month = 'Nov'
+          e.year = 1993
+          e.parse_names
+        end
+      end
+
+      it 'supports renaming! of field attributes' do
+        @entry.rename!(title: :foo)
+
+        refute @entry.has_field?(:title)
+        assert_equal 'Moby Dick', @entry[:foo]
+      end
+
+      it 'supports renaming of field attributes' do
+        e = @entry.rename(title: :foo)
+
+        assert @entry.has_field?(:title)
+        refute @entry.has_field?(:foo)
+
+        assert e.has_field?(:foo)
+        refute e.has_field?(:title)
+
+        assert_equal 'Moby Dick', @entry[:title]
+        assert_equal 'Moby Dick', e[:foo]
+      end
+
+      describe 'citeproc export' do
+        it 'supports citeproc export' do
+          e = @entry.to_citeproc
+
+          assert_equal 'book', e['type']
+          assert_equal 'New York', e['publisher-place']
+          assert_equal [1993, 11], e['issued']['date-parts'][0]
+          assert_equal 1, e['author'].length
+          assert_equal 'Herman', e['author'][0]['given']
+          assert_equal 'Melville', e['author'][0]['family']
+        end
+
+        it 'sets both issue and number in techreports' do
+          report = Entry.new do |r|
+            r.type = :techreport
+            r.number = 1
+          end.to_citeproc
+
+          assert_equal '1', report['number']
+          assert_equal '1', report['issue']
+        end
+
+        it 'uses authority and publisher for proceedings' do
+          proceedings = Entry.new do |p|
+            p.type = :inproceedings
+            p.publisher = 'Publisher'
+            p.organization = 'Organization'
+          end.to_citeproc
+
+          assert_equal 'Publisher', proceedings['publisher']
+          assert_equal 'Organization', proceedings['authority']
+
+          proceedings = Entry.new do |p|
+            p.type = :inproceedings
+            p.organization = 'Organization'
+          end.to_citeproc
+
+          assert_equal 'Organization', proceedings['publisher']
+          refute proceedings.key?('authority')
+
+          proceedings = Entry.new do |p|
+            p.type = :inproceedings
+            p.publisher = 'Publisher'
+          end.to_citeproc
+
+          assert_equal 'Publisher', proceedings['publisher']
+          refute proceedings.key?('authority')
+        end
+
+        it 'uses event_place for conferences' do
+          conference = Entry.new do |p|
+            p.type = :conference
+            p.address = 'Place'
+          end.to_citeproc
+
+          assert_equal 'Place', conference['event-place']
+        end
+
+        it 'support literal dates in citeproc export' do
+          @entry.year = 'Test'
+          e = @entry.to_citeproc
+
+          assert_equal({ 'literal' => 'Test' }, e['issued'])
+        end
+
+        it 'combines year, month and day in issued date' do
+          @entry.update year: 2005, month: 5, day: 31
+
+          assert_equal [[2005, 5, 31]], @entry.to_citeproc['issued']['date-parts']
+        end
+
+        it 'prefers biblatex syntax' do
+          @entry.date = '2014-07-13'
+
+          assert_equal [[2014, 7, 13]], @entry.to_citeproc['issued']['date-parts']
+        end
+
+        it 'supports biblatex date ranges' do
+          @entry.date = '2014-06-12/2014-07-13'
+
+          assert_equal [[2014, 6, 12], [2014, 7, 13]],
+                       @entry.to_citeproc['issued']['date-parts']
+        end
+
+        it 'supports biblatex partial dates' do
+          @entry.date = '2014-07'
+
+          assert_equal [[2014, 7]], @entry.to_citeproc['issued']['date-parts']
+        end
+      end
+
+      describe 'given a filter object or a filter name' do
+        before do
+          @filter = Object.new
+          def @filter.apply(value)
+            value.is_a?(::String) ? value.upcase : value
+          end
+        end
+
+        it 'supports arbitrary conversion' do
+          _(@entry.convert(@filter).title).must_equal 'MOBY DICK'
+          _(@entry.convert(:suffixb).title).must_equal 'Moby Dickb'
+        end
+
+        it 'supports multiple filters' do
+          _(@entry.convert(@filter, :suffixb).title).must_equal 'MOBY DICKb'
+          _(@entry.convert(:suffixb, @filter).title).must_equal 'MOBY DICKB'
+        end
+
+        it 'supports arbitrary in-place conversion' do
+          _(@entry.convert!(@filter).title).must_equal 'MOBY DICK'
+        end
+
+        it 'supports conditional arbitrary in-place conversion' do
+          @entry.convert!(@filter) { |k, _v| k.to_s =~ /publisher/i }
+
+          assert_equal 'Moby Dick', @entry.title
+          assert_equal 'PENGUIN', @entry.publisher
+        end
+
+        it 'supports conditional arbitrary conversion' do
+          e = @entry.convert(@filter) { |k, _v| k.to_s =~ /publisher/i }
+
+          assert_equal 'Moby Dick', e.title
+          assert_equal 'PENGUIN', e.publisher
+          assert_equal 'Penguin', @entry.publisher
+        end
+      end
+
+      describe 'LaTeX filter' do
+        before do
+          @entry.title = 'M\\"{o}by Dick'
+        end
+
+        describe '#convert' do
+          it 'converts LaTeX umlauts' do
+            _(@entry.convert(:latex).title).must_be :==, 'Möby Dick'
+          end
+
+          it 'does not change the original entry' do
+            e = @entry.convert(:latex)
+
+            _(e).wont_be :==, @entry
+            _(e.title.to_s).wont_be :==, @entry.title.to_s
+            _(e.title.to_s.length).must_be :<, @entry.title.to_s.length
+          end
+
+          it 'does not change the author of a parsed entry' do
+            entry = BibTeX.parse('@book{o, author = {M\\"{o}by Dick}}')[0]
+            e = entry.convert(:latex)
+
+            _(e).wont_be :==, entry
+            _(e.author.to_s.length).must_be :<, entry.author.to_s.length
+          end
+        end
+
+        describe '#convert!' do
+          it 'converts LaTeX umlauts' do
+            _(@entry.convert!(:latex).title).must_be :==, 'Möby Dick'
+          end
+
+          it 'changes the original entry in-place' do
+            e = @entry.convert!(:latex)
+
+            _(e).must_be :equal?, @entry
+            _(e.title.to_s.length).must_be :==, @entry.title.to_s.length
+          end
+        end
+      end
+    end
+
+    describe '#to_citeproc' do
+      before do
+        @entry = Entry.new do |e|
+          e.type = :book
+          e.key = :key
+          e.author = 'van Beethoven, Ludwig'
+          e.parse_names
+        end
+      end
+
+      it 'should use non-dropping-particle by default' do
+        assert_equal 'van', @entry.to_citeproc['author'][0]['non-dropping-particle']
+      end
+
+      it 'should accept option to use non-dropping-particle' do
+        assert_equal 'van', @entry.to_citeproc(particle: 'non-dropping-particle')['author'][0]['non-dropping-particle']
+      end
+
+      describe 'howpublished' do
+        it 'converts to "URL" when there is a url (without filters)' do
+          bibtex = <<-BIBTEX
+            @book{noauthor_2017-xx,
+              title = "Google",
+              howpublished = "\\url{http://www.google.com/}"
+            }
+          BIBTEX
+          bibliography = Bibliography.parse(bibtex)
+
+          citeproc = bibliography.to_citeproc
+
+          assert_equal('http://www.google.com/', citeproc[0]['URL'])
+          assert_nil(citeproc[0]['publisher'])
+        end
+
+        it 'converts to "URL" when there is a url (with latex)' do
+          bibtex = <<-BIBTEX
+            @book{noauthor_2017-xx,
+              title = "Google",
+              howpublished = "\\url{http://www.google.com/}"
+            }
+          BIBTEX
+          bibliography = Bibliography.parse(bibtex, filter: :latex)
+
+          citeproc = bibliography.to_citeproc
+
+          assert_equal('http://www.google.com/', citeproc[0]['URL'])
+        end
+      end
+    end
+
+    describe '#to_s' do
+      before do
+        @bib = Bibliography.parse(<<-BIBINPUT, parse_months: false)
+          @misc{foo,
+            title  = {A
+                       title},
+            series = {A
+                       series},
+            month  = dec
+          }
+        BIBINPUT
+      end
+
+      it 'applies filters when converting to strings' do
+        assert_equal "@misc{foo,\n  " \
+                     "title = {A title},\n  " \
+                     "series = {A series},\n  " \
+                     "month = dec\n" \
+                     "}\n", @bib['foo'].to_s(filter: :linebreaks)
+      end
+
+      it 'leaves the options hash unchanged' do
+        options = { filter: :linebreaks }
+        @bib['foo'].to_s(options)
+
+        _(options).must_equal({ filter: :linebreaks })
+      end
+
+      it 'accepts a frozen options hash' do
+        _(@bib['foo'].to_s({}.freeze)).must_include 'title = {A'
+      end
+    end
+
+    describe '#to_hash' do
+      before do
+        @entry = Entry.new(bibtex_type: :book, bibtex_key: 'rails', title: 'Rails')
+      end
+
+      it 'leaves the options hash unchanged' do
+        options = {}
+        @entry.to_hash(options)
+
+        _(options).must_be_empty
+      end
+
+      it 'accepts a frozen options hash' do
+        _(@entry.to_hash({}.freeze)[:title]).must_equal '{Rails}'
+      end
+    end
+
+    describe 'default keys' do
+      before do
+        @e1 = Entry.new(bibtex_type: 'book', author: 'Poe, Edgar A.', title: 'The Raven', editor: 'John Hopkins', year: 1996)
+        @e2 = Entry.new(bibtex_type: 'book', title: 'The Raven', editor: 'John Hopkins', year: 1996)
+        @e3 = Entry.new(bibtex_type: 'book', author: 'Poe, Edgar A.', title: 'The Raven', editor: 'John Hopkins')
+        @e4 = Entry.new(bibtex_type: 'book', author: 'Poe, Edgar A.', title: 'The Raven', editor: 'John Hopkins', date: '2003-09')
+        @e5 = Entry.new(bibtex_type: 'book', author: 'Poe, Edgar A.', title: 'The Raven', editor: 'John Hopkins', year: 'n.d.')
+        @e6 = Entry.new(bibtex_type: 'book', author: 'Poe, Edgar A.', title: 'The Raven', editor: 'John Hopkins', year: '[2009]')
+      end
+
+      it 'should return "unknown-a" for an empty Entry' do
+        _(Entry.new.key).must_be :==, 'unknown-a'
+      end
+
+      it 'should return a key made up of author-year-a if all fields are present' do
+        _(@e1.key).must_be :==, 'poe1996a'
+      end
+
+      it 'should return a key made up of editor-year-a if there is no author' do
+        _(@e2.key).must_be :==, 'john1996a'
+      end
+
+      it 'should return use the last name if the author/editor names have been parsed' do
+        _(@e2.parse_names.key).must_be :==, 'hopkins1996a'
+      end
+
+      it 'skips the year if not present' do
+        _(@e3.key).must_be :==, 'poe-a'
+      end
+
+      it 'skips the year if not numeric' do
+        _(@e5.key).must_be :==, 'poe-a'
+      end
+
+      it 'extracts the year from the date field if present' do
+        _(@e4.key).must_be :==, 'poe2003a'
+      end
+
+      it 'extracts the year from as a number' do
+        _(@e6.key).must_be :==, 'poe2009a'
+      end
+    end
+
+    describe 'when the entry is added to a Bibliography' do
+      before do
+        @e = Entry.new
+        @bib = Bibliography.new
+      end
+
+      it 'should register itself with its key' do
+        @bib << @e
+
+        _(@bib.entries.keys).must_include @e.key
+      end
+
+      describe "when there is already an element registered with the entry's key" do
+        before { @bib << Entry.new }
+
+        it 'should find a suitable key' do
+          k = @e.key
+          @bib << @e
+
+          _(@bib.entries.keys).must_include @e.key
+          _(k).wont_be :==, @e.key
+        end
+      end
+    end
+
+    describe '#meet?' do
+      before { @e = Entry.new }
+
+      it 'returns true for an empty condition list' do
+        assert @e.meet? []
+        assert @e.meet? ['']
+      end
+
+      it 'it returns true when all equality conditions hold' do
+        refute @e.meet? ['author = Edgar']
+
+        @e.author = 'Poe, Edgar A.'
+
+        refute @e.meet? ['author = Edgar']
+        refute @e.meet? ['author = Poe, Edgar']
+
+        assert @e.meet? ['author = Poe, Edgar A.']
+      end
+
+      it 'it returns true when all prefix and pattern conditions hold' do
+        @e.author = 'Poe, Edgar A.'
+
+        assert @e.meet? ['author ^= Poe']
+        refute @e.meet? ['author ^= Edgar']
+
+        assert @e.meet? ['author ~= Edgar']
+
+        assert @e.meet? ['author ~= .']
+        assert @e.meet? ['author ~= [a-z]*']
+
+        assert @e.meet? ['author ^= P\w+']
+      end
+
+      it 'it returns true when all date comparisons hold' do
+        @e.date = '2019-11-18'
+
+        assert @e.meet? ['date = 2019-11-18']
+        assert @e.meet? ['date >= 2019-10-18']
+        assert @e.meet? ['date <= 2019-12-18']
+        assert @e.meet? ['date > 2019-10-18']
+        assert @e.meet? ['date < 2019-12-18']
+      end
+
+      it 'it returns false when a date comparison fails' do
+        @e.date = '2019-11-18'
+
+        refute @e.meet? ['date >= 2019-12-18']
+        refute @e.meet? ['date <= 2019-10-18']
+        refute @e.meet? ['date > 2019-12-18']
+        refute @e.meet? ['date < 2019-10-18']
+        refute @e.meet? ['date > 2019-11-18']
+        refute @e.meet? ['date < 2019-11-18']
+      end
+
+      it 'it compares numeric values numerically' do
+        @e['x'] = '019'
+
+        assert @e.meet? ['x < 20']
+        assert @e.meet? ['x >= 19']
+      end
+    end
+
+    describe '#valid?' do
+      before do
+        @misc = Entry.new
+        @book = Entry.new(bibtex_type: :book)
+        @article = Entry.new(bibtex_type: :article)
+      end
+
+      it 'is true by default' do
+        assert_predicate @misc, :valid?
+      end
+
+      it 'is not true by default for types with mandatory fields' do
+        refute_predicate @book, :valid?
+        refute_predicate @article, :valid?
+      end
+
+      it 'is true only if all mandatory fields are present' do
+        @book.update(
+          author: 'Henry James',
+          title: 'What Maisie Knew',
+          year: 1897,
+          publisher: 'Heineman'
+        )
+
+        assert_predicate @book, :valid?
+
+        @book.delete :publisher
+
+        refute_predicate @book, :valid?
+
+        @book.publisher = 'Heineman'
+
+        assert_predicate @book, :valid?
+
+        @book.delete :year
+
+        refute_predicate @book, :valid?
+      end
+    end
+
+    describe '#fetch' do
+      let(:pages) { '1--2' }
+      let(:entry) do
+        e = Entry.new
+        e.add(:pages, pages)
+      end
+
+      describe '(:pages)' do
+        it 'should fetch pages' do
+          assert_equal(entry.fetch(:pages), pages)
+        end
+      end
+    end
+
+    describe '#to_s escaping of &' do
+      it 'escapes a bare & in a field value' do
+        entry = BibTeX.parse('@article{a, journal = {Trends in Ecology & Evolution}}')[:a]
+
+        _(entry.to_s).must_include 'journal = {Trends in Ecology \\& Evolution}'
+      end
+
+      it 'does not double-escape an already escaped \\&' do
+        entry = BibTeX.parse('@article{a, journal = {Trends in Ecology \\& Evolution}}')[:a]
+
+        _(entry.to_s).must_include 'journal = {Trends in Ecology \\& Evolution}'
+        _(entry.to_s).wont_include '\\\\&'
+      end
+
+      it 'escapes & again after convert(:latex)' do
+        bib = BibTeX.parse('@article{a, journal = {Trends in Ecology \\& Evolution}}')
+        converted = bib[:a].convert(:latex)
+
+        _(converted.journal.to_s).must_equal 'Trends in Ecology & Evolution'
+        _(converted.to_s).must_include 'journal = {Trends in Ecology \\& Evolution}'
+      end
+
+      it 'leaves the in-memory value untouched' do
+        entry = BibTeX.parse('@article{a, journal = {A & B}}')[:a]
+        entry.to_s
+
+        _(entry.journal.to_s).must_equal 'A & B'
+        _(entry.to_hash[:journal]).must_equal '{A & B}'
+      end
+
+      it 'does not escape & in verbatim fields' do
+        entry = BibTeX.parse(<<~BIB)[:a]
+          @misc{a,
+            url = {http://example.com/?a=1&b=2},
+            doi = {10.1000/a&b},
+            howpublished = {\\url{http://example.com/?a=1&b=2}},
+            note = {A & B}
+          }
+        BIB
+        out = entry.to_s
+
+        _(out).must_include 'url = {http://example.com/?a=1&b=2}'
+        _(out).must_include 'doi = {10.1000/a&b}'
+        _(out).must_include 'howpublished = {\\url{http://example.com/?a=1&b=2}}'
+        _(out).must_include 'note = {A \\& B}'
+      end
+
+      it 'does not escape & in BibDesk url fields' do
+        entry = BibTeX.parse('@misc{a, bdsk-url-1 = {http://example.com/?a=1&b=2}}')[:a]
+
+        _(entry.to_s).must_include 'bdsk-url-1 = {http://example.com/?a=1&b=2}'
+      end
+
+      it 'escapes & in howpublished without \\url' do
+        entry = BibTeX.parse('@misc{a, howpublished = {Smith & Sons}}')[:a]
+
+        _(entry.to_s).must_include 'howpublished = {Smith \\& Sons}'
+      end
+
+      it 'escapes & in fields that only resemble BibDesk url fields' do
+        entry = BibTeX.parse('@misc{a, bdsk-url-x = {A & B}}')[:a]
+
+        _(entry.to_s).must_include 'bdsk-url-x = {A \\& B}'
+      end
+
+      it 'returns values without & as is, without copying them' do
+        entry = BibTeX::Entry.new
+        value = +'{Trends in Ecology}'
+
+        _(entry.send(:escape_value, :journal, value)).must_be_same_as value
+      end
+    end
+  end
+
+  # Classic tests live outside EntryTest: methods defined in a Minitest::Spec
+  # are inherited by every nested describe class and would run once per class.
+  class EntryClassicTest < Minitest::Test
+    def test_simple
+      bib = BibTeX::Bibliography.open(Test.fixtures(:entry), debug: false)
+
+      refute_nil(bib)
+      assert_instance_of(BibTeX::Bibliography, bib)
+      assert_equal(4, bib.data.length)
+      assert_equal([BibTeX::Entry], bib.data.map(&:class).uniq)
+    end
+
+    def test_simple_keys_and_types
+      entries = BibTeX::Bibliography.open(Test.fixtures(:entry), debug: false).data[0, 3]
+
+      assert_equal(%w[key:0 key:1 foo], entries.map(&:key))
+      assert_equal(%i[book article article], entries.map(&:type))
+    end
+
+    def test_simple_first_entry
+      entry = BibTeX::Bibliography.open(Test.fixtures(:entry), debug: false).data[0]
+
+      assert_equal('Poe, Edgar A.', entry[:author].to_s)
+      assert_equal('2003', entry[:year])
+      assert_equal('American Library', entry[:publisher])
+      assert_equal('Selected \\emph{Poetry} and `Tales\'', entry.title)
+    end
+
+    def test_simple_second_entry
+      entry = BibTeX::Bibliography.open(Test.fixtures(:entry), debug: false).data[1]
+
+      assert_equal('Hawthorne, Nathaniel', entry[:author].to_s)
+      assert_equal('2001', entry[:year])
+      assert_equal('American Library', entry[:publisher])
+      assert_equal('Tales and Sketches', entry.title)
+    end
+
+    def test_ghost_methods
+      bib = BibTeX::Bibliography.open(Test.fixtures(:entry), debug: false)
+
+      assert_equal 'Poe, Edgar A.', bib[0].author.to_s
+
+      expected = 'Poe, Edgar Allen'
+      bib.data[0].author = expected
+
+      assert_equal expected, bib[0].author.to_s
+    end
+
+    def test_creation_simple
+      entry = BibTeX::Entry.new
+      entry.type = :book
+      entry.key = :raven
+      entry.author = 'Poe, Edgar A.'
+      entry.title = 'The Raven'
+
+      assert_equal :book, entry.type
+      assert_equal 'raven', entry.key
+      assert_equal 'Poe, Edgar A.', entry.author
+      assert_equal 'The Raven', entry.title
+    end
+
+    def test_creation_from_hash
+      entry = BibTeX::Entry.new(
+        bibtex_type: 'book',
+        bibtex_key: :raven,
+        author: 'Poe, Edgar A.',
+        title: 'The Raven'
+      )
+
+      assert_equal :book, entry.type
+      assert_equal 'raven', entry.key
+      assert_equal 'Poe, Edgar A.', entry.author
+      assert_equal 'The Raven', entry.title
+    end
+
+    def test_creation_from_block
+      entry = BibTeX::Entry.new do |e|
+        e.type = :book
+        e.key = 'raven'
+        e.author = 'Poe, Edgar A.'
+        e.title = 'The Raven'
+      end
+
+      assert_equal :book, entry.type
+      assert_equal 'raven', entry.key
+      assert_equal 'Poe, Edgar A.', entry.author
+      assert_equal 'The Raven', entry.title
+    end
+
+    def test_sorting
+      entries = []
+      entries << Entry.new(bibtex_type: 'book', bibtex_key: 'raven3', author: 'Poe, Edgar A.', title: 'The Raven')
+      entries << Entry.new(bibtex_type: 'book', bibtex_key: 'raven2', author: 'Poe, Edgar A.', title: 'The Raven')
+      entries << Entry.new(bibtex_type: 'book', bibtex_key: 'raven1', author: 'Poe, Edgar A.', title: 'The Raven')
+      entries << Entry.new(bibtex_type: 'book', bibtex_key: 'raven1', author: 'Poe, Edgar A.', title: 'The Aven')
+
+      entries.sort!
+
+      assert_equal %w[raven1 raven1 raven2 raven3], entries.map(&:key)
+      assert_equal ['The Aven', 'The Raven'], entries.map(&:title)[0, 2]
+    end
+  end
+end

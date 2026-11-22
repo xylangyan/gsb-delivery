@@ -1,0 +1,34 @@
+# frozen_string_literal: true
+
+source 'https://rubygems.org', cooldown: 7
+gemspec
+
+gem 'rdf', '~>3.0'
+gem 'rdf-vocab', '~>3.0'
+
+gem 'rexml', '~>3.2'
+
+group :debug do
+  gem 'debug', '>= 1.0', require: false, platforms: :mri
+end
+
+group :test do
+  gem 'cucumber'
+  gem 'minitest', require: false
+end
+
+group :profile do
+  gem 'memory_profiler', platforms: [:mri]
+end
+
+group :coverage do
+  gem 'simplecov', require: false, platforms: [:ruby]
+end
+
+group :development do
+  gem 'rake'
+  gem 'rubocop', '~> 1.92', require: false
+  gem 'rubocop-minitest', '~> 0.41', require: false
+  gem 'rubocop-performance', '~> 1.27', require: false
+  gem 'rubocop-rake', '~> 0.7', require: false
+end
