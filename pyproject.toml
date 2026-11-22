@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "docopt-ng"
+dynamic = ["version"]
+description = "Jazzband-maintained fork of docopt, the humane command line arguments parser."
+authors = [
+    {name = "Vladimir Keleshev", email = "vladimir@keleshev.com"},
+]
+maintainers = [
+    {name = "Nick Crews", email = "nicholas.b.crews@gmail.com"},
+]
+dependencies = []
+requires-python = ">=3.7"
+license = "MIT"
+license-files = ["LICENSE-MIT"]
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+[project.urls]
+Homepage = "https://github.com/jazzband/docopt-ng"
+Repository = "https://github.com/jazzband/docopt-ng"
+
+[tool.hatch.version]
+path = "docopt/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["docopt"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["dist"]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "ruff",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "pytest-mypy",
+]
+
+
+[tool.pytest.ini_options]
+testpaths = ["./tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle
+    "F",  # pyflakes
+    "I",  # isort
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
