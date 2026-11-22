@@ -16,6 +16,9 @@ from .field import Field
 from .storage import Storage
 from .validate import validate
 from .infer import infer
+from .dayorder import DayOrderLedger
+from .dayorder import reconcile as reconcile_day_orders
+from .dayorder import infer_day_orders
 from .schema import FailedCast
 from .exceptions import DataPackageException
 from .exceptions import TableSchemaException

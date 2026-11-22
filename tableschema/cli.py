@@ -9,6 +9,7 @@ import click
 import tableschema
 import json as json_module
 from . import config
+from .dayorder import DayOrderLedger
 
 
 # Module API
@@ -87,3 +88,22 @@ def validate(schema):
     except Exception as exception:
         click.echo(exception)
         sys.exit(1)
+
+
+@cli.command(name='reconcile-day-orders')
+@click.argument('evidence', nargs=-1, required=True)
+@click.option('--columns', multiple=True)
+@click.option('--date_column', default='date')
+@click.option('--json', 'as_json', is_flag=True)
+def reconcile_day_orders(evidence, columns, date_column, as_json):
+    """Reconcile day/month date orders from evidence JSON files."""
+    ledger = DayOrderLedger(date_column=date_column)
+    try:
+        for path in evidence:
+            ledger.commit(path)
+    except Exception as exception:
+        click.echo(exception)
+        sys.exit(1)
+    published = ledger.publish(columns=list(columns) or None)
+    click.echo(json_module.dumps(
+        published, ensure_ascii=False, indent=4, default=str))

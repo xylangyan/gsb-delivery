@@ -1269,6 +1269,74 @@ __Returns__
 `dict`: returns schema descriptor
 
 
+### `DayOrderLedger`
+```python
+DayOrderLedger(date_column='date', quantity_columns=None)
+```
+Incrementally reconcile day/month date orders across sites.
+
+Every site promises one day/month order for its whole batch. When the same
+bill number occurs at two sites, both observations must settle to the same
+calendar day. An ISO date, or an unambiguous numeric date, is an absolute
+witness for the bill it belongs to. Sites linked only by shared bills are
+either same-order or opposite-order, and the ledger propagates that relation
+without enumerating site-order combinations.
+
+Evidence documents carry a stable `id`. Committing the same identifier twice
+has no further effect. A document can be revoked and later committed again
+under a new identifier:
+
+```python
+from tableschema import DayOrderLedger
+
+ledger = DayOrderLedger()
+ledger.declare_site('A', columns=['bill', 'date', 'quantity'], sample=100)
+ledger.commit({'id': 'e1', 'rows': [
+    {'site': 'A', 'bill': 'B1', 'date': '2026-05-04'},
+    {'site': 'B', 'bill': 'B1', 'date': '05/04/2026'},
+]})
+ledger.commit({'id': 'e2', 'rows': [
+    {'site': 'B', 'bill': 'B2', 'date': '04/05/2026'},
+]})
+published = ledger.publish(columns=['bill', 'date', 'quantity'])
+published['formats']      # {'A': 'default', 'B': '%m/%d/%Y'}
+published['sites']['B']   # format, dateFormat, columns, fields
+ledger.revoke('e1')       # the linked sites become undecided again
+```
+
+`publish` returns `fields` (a readable shared Table Schema descriptor),
+`descriptor`, per-site `formats`, column projections and `conflicts`. A site
+whose order is not uniquely determined has `dateFormat` set to `None` and no
+date column in its projection, while independently decidable columns such as
+quantities remain readable.
+
+`conflict` returns the minimal certificate for a contradiction: the fewest
+distinct bill numbers and sites, their `links`, `anchors` and the original
+`records` needed to replay the contradiction. `statistics` returns each
+site's declared sample count, business columns and missing values.
+
+__Arguments__
+- __date_column (str)__: business name of the shipment date column
+- __quantity_columns (str[])__: business names treated as numeric quantities
+
+__Returns__
+
+`DayOrderLedger`: an incremental evidence ledger
+
+
+### `reconcile_day_orders`
+```python
+reconcile_day_orders(evidences,
+                     columns=None,
+                     sites=None,
+                     date_column='date',
+                     quantity_columns=None)
+```
+Reconcile a batch of evidence documents and publish a Table Schema
+projection. Also available as `infer_day_orders` and
+`tableschema.dayorder.reconcile`.
+
+
 ### `FailedCast`
 ```python
 FailedCast(self, value)
