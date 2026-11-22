@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyee"
+version = "16.1.0"
+authors = [
+  {name = "Josh Holbrook", email = "josh.holbrook@gmail.com"}
+]
+urls = {Repository = "https://github.com/jfhbrook/pyee", Documentation = "https://pyee.readthedocs.io"}
+description = "A rough port of Node.js's EventEmitter to Python with a few tricks of its own"
+readme = "README.md"
+keywords = ["events", "emitter", "node.js", "node", "eventemitter", "event_emitter"]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Other/Nonlisted Topic",
+]
+requires-python = ">=3.12"
+
+dependencies = [
+    "typing-extensions",
+]
+
+[dependency-groups]
+dev = [
+  "build",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-trio",
+  "jupyter-console",
+  "mkdocs",
+  "mkdocs-include-markdown-plugin",
+  "mkdocstrings[python]",
+  "mypy",
+  "ruff",
+  "sphinx",
+  "trio",
+  "trio-typing",
+  "twisted",
+  "validate-pyproject[all]",
+]
+
+[tool.isort]
+profile = "appnexus"
+known_application = "pyee"
+
+[tool.pyright]
+include = ["pyee", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--verbose -s"
+testpaths = [ "tests" ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pyee"]

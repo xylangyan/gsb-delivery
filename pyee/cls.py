@@ -1,0 +1,184 @@
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from functools import wraps
+from inspect import getattr_static
+from typing import Any
+
+from pyee import EventEmitter
+
+
+@dataclass
+class Handler:
+    """
+    An event name and its associated method.
+    """
+
+    event: str
+    method: Callable
+
+
+class Handlers:
+    """
+    A collection of handlers. Handlers from all evented classes are collected by the
+    `on` decorator, and are then taken in the `evented` decorator.
+
+    """
+
+    def __init__(self) -> None:
+        self._handlers: list[Handler] = []
+
+    def append(self, handler) -> None:
+        self._handlers.append(handler)
+
+    def __iter__(self) -> Iterator[Handler]:
+        return iter(self._handlers)
+
+    def reset(self):
+        self._handlers = []
+
+    def take(self, cls: type) -> list[Handler]:
+        """
+        Collect pending handlers belonging to the specified class, remove them from
+        pending handlers, and return them.
+        """
+
+        # Get all the expected members of the class
+        members = list(vars(cls).values())
+        # Seen method IDs
+        method_ids = set()
+        while members:
+            # Grab a member
+            member = members.pop()
+            if id(member) in method_ids:
+                # If we've seen the member before, continue. This can happen if
+                # we encounter an alias or cyclic __wrapped__ link.
+                continue
+
+            method_ids.add(id(member))
+
+            # @on may have received the function beneath a descriptor or a
+            # functools.wraps wrapper. Inspect these links without binding
+            # descriptors or executing user-defined attribute access.
+            if isinstance(member, (staticmethod, classmethod)):
+                members.append(member.__func__)
+
+            # The method is expected to be wrapped, so grab that wrapped method
+            wrapped = getattr_static(member, "__wrapped__", None)
+            if wrapped is not None:
+                members.append(wrapped)
+
+        handlers = []
+        remaining = []
+
+        # Remove handlers for taken methods, respecting identity. Identity matters
+        # because methods on different classes may have the same name.
+        for handler in self._handlers:
+            if id(handler.method) in method_ids:
+                handlers.append(handler)
+            else:
+                remaining.append(handler)
+
+        self._handlers = remaining
+
+        return handlers
+
+
+HANDLERS = Handlers()
+
+
+def on(event: str) -> Callable[[Callable], Callable]:
+    """
+    Register an event handler on an evented class. See the `evented` class
+    decorator for a full example.
+
+    Args:
+        event: Event name the decorated method handles.
+
+    Returns:
+        A decorator that records the method for `evented` and returns the
+            method unchanged.
+    """
+
+    def decorator(method: Callable) -> Callable:
+        HANDLERS.append(Handler(event=event, method=method))
+        return method
+
+    return decorator
+
+
+def _bind(self: Any, method: Any) -> Any:
+    @wraps(method)
+    def bound(*args, **kwargs) -> Any:
+        return method(self, *args, **kwargs)
+
+    return bound
+
+
+def evented[Cls: type[Any]](cls: Cls) -> Cls:
+    """
+    Configure an evented class.
+
+    Evented classes are classes which use an EventEmitter to call instance
+    methods during runtime. To achieve this without this helper, you would
+    instantiate an `EventEmitter` in the `__init__` method and then call
+    `event_emitter.on` for every method on `self`.
+
+    This decorator and the `on` function help make things look a little nicer
+    by defining the event handler on the method in the class and then adding
+    the `__init__` hook in a wrapper:
+
+    ```py
+    from pyee.cls import evented, on
+
+    @evented
+    class Evented:
+        @on("event")
+        def event_handler(self, *args, **kwargs):
+            print(self, args, kwargs)
+
+    evented_obj = Evented()
+
+    evented_obj.event_emitter.emit(
+        "event", "hello world", numbers=[1, 2, 3]
+    )
+    ```
+
+    The `__init__` wrapper will create a `self.event_emitter: EventEmitter`
+    automatically but you can also define your own event_emitter inside your
+    class's unwrapped `__init__` method. For example, to use this
+    decorator with a `TwistedEventEmitter`::
+
+    ```py
+    @evented
+    class Evented:
+        def __init__(self):
+            self.event_emitter = TwistedEventEmitter()
+
+        @on("event")
+        async def event_handler(self, *args, **kwargs):
+            await self.some_async_action(*args, **kwargs)
+    ```
+
+    Args:
+        cls: Class to configure. `__init__` is wrapped so each instance
+            registers the methods marked with `on`.
+
+    Returns:
+        The same class, after `__init__` is wrapped.
+    """
+    handlers = HANDLERS.take(cls)
+
+    og_init: Callable = cls.__init__
+
+    @wraps(cls.__init__)
+    def init(self: Any, *args: Any, **kwargs: Any) -> None:
+        og_init(self, *args, **kwargs)
+        if not hasattr(self, "event_emitter"):
+            self.event_emitter = EventEmitter()
+
+        for h in handlers:
+            self.event_emitter.on(h.event, _bind(self, h.method))
+
+    cls.__init__ = init
+
+    return cls

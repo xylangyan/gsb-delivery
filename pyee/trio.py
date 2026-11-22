@@ -1,0 +1,162 @@
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from inspect import isawaitable
+from types import TracebackType
+from typing import (
+    Any,
+    Optional,
+    Self,
+)
+
+import trio
+
+from pyee.base import EventEmitter, PyeeError
+
+__all__ = ["TrioEventEmitter"]
+
+
+Nursery = trio.Nursery
+
+
+class TrioEventEmitter(EventEmitter):
+    """An event emitter class which can run trio tasks in a trio nursery.
+
+    By default, this class will lazily create both a nursery manager (the
+    object returned from `trio.open_nursery()` and a nursery (the object
+    yielded by using the nursery manager as an async context manager). It is
+    also possible to supply an existing nursery manager via the `manager`
+    argument, or an existing nursery via the `nursery` argument.
+
+    Instances of TrioEventEmitter are themselves async context managers, so
+    that they may manage the lifecycle of the underlying trio nursery. For
+    example, typical usage of this library may look something like this::
+
+    ```py
+    async with TrioEventEmitter() as ee:
+        # Underlying nursery is instantiated and ready to go
+        @ee.on('data')
+        async def handler(data):
+            print(data)
+
+        ee.emit('event')
+
+    # Underlying nursery and manager have been cleaned up
+    ```
+
+    Unlike the case with the EventEmitter, all exceptions raised by event
+    handlers are automatically emitted on the `error` event. This is
+    important for trio coroutines specifically but is also handled for
+    synchronous functions for consistency.
+
+    For trio coroutine event handlers, calling emit is non-blocking. In other
+    words, you should not attempt to await emit; the coroutine is scheduled
+    in a fire-and-forget fashion.
+
+    Args:
+        nursery: Nursery that runs handlers. Mutually exclusive with
+            `manager`.
+        manager: Async context manager that yields a nursery, such as the
+            return value of `trio.open_nursery`. Mutually exclusive with
+            `nursery`. When both are omitted or `None`, a manager from
+            `trio.open_nursery` is stored.
+
+    Raises:
+        PyeeError: Both `nursery` and `manager` were passed.
+    """
+
+    def __init__(
+        self: Self,
+        nursery: Nursery | None = None,
+        manager: Optional["AbstractAsyncContextManager[trio.Nursery]"] = None,
+    ):
+        super().__init__()
+        self._nursery: Nursery | None = None
+        self._manager: AbstractAsyncContextManager[trio.Nursery] | None = None
+        if nursery:
+            if manager:
+                raise PyeeError(
+                    "You may either pass a nursery or a nursery manager but not both"
+                )
+            self._nursery = nursery
+        elif manager:
+            self._manager = manager
+        else:
+            self._manager = trio.open_nursery()
+
+    def _async_runner(
+        self: Self,
+        f: Callable,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Callable[[], Awaitable[None]]:
+        async def runner() -> None:
+            try:
+                result = f(*args, **kwargs)
+                if isawaitable(result):
+                    await result
+            except Exception as exc:  # noqa
+                self.emit("error", exc)
+
+        return runner
+
+    def _emit_run(
+        self: Self,
+        f: Callable,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        if not self._nursery:
+            raise PyeeError("Uninitialized trio nursery")
+        self._nursery.start_soon(self._async_runner(f, args, kwargs))
+
+    @asynccontextmanager
+    async def context(
+        self: Self,
+    ) -> AsyncGenerator["TrioEventEmitter", None]:
+        """Returns an async contextmanager which manages the underlying
+        nursery to the EventEmitter. The `TrioEventEmitter`'s
+        async context management methods are implemented using this
+        function, but it may also be used directly for clarity.
+
+        Returns:
+            This emitter, as an async context manager. Entering it yields
+                this emitter. A set nursery is used as-is. Otherwise the
+                manager is opened and its nursery is used. The managed nursery
+                is cleared when the context exits, even on failure. A supplied
+                nursery is borrowed and is not closed by this method.
+
+        Raises:
+            PyeeError: Neither a nursery nor a nursery manager is set.
+        """
+        if self._nursery is not None:
+            yield self
+        elif self._manager is not None:
+            try:
+                async with self._manager as nursery:
+                    self._nursery = nursery
+                    yield self
+            finally:
+                self._nursery = None
+        else:
+            raise PyeeError("Uninitialized nursery or nursery manager")
+
+    async def __aenter__(self: Self) -> "TrioEventEmitter":  # noqa
+        self._context: AbstractAsyncContextManager[TrioEventEmitter] | None = (
+            self.context()
+        )
+        return await self._context.__aenter__()
+
+    async def __aexit__(
+        self: Self,
+        type: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        if self._context is None:
+            raise PyeeError("Attempting to exit uninitialized context")
+        try:
+            return await self._context.__aexit__(type, value, traceback)
+        finally:
+            self._context = None
+            self._nursery = None
+            self._manager = None

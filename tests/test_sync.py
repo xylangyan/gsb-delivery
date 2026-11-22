@@ -1,0 +1,372 @@
+from collections import OrderedDict
+from pickle import dumps, loads
+from unittest.mock import Mock
+
+from pytest import raises
+
+from pyee import EventEmitter
+
+
+class PyeeTestException(Exception):
+    pass
+
+
+def test_emit_sync():
+    """Basic synchronous emission works"""
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    @ee.on("event")
+    def event_handler(data, **kwargs):
+        call_me()
+        assert data == "emitter is emitted!"
+
+    assert ee.event_names() == {"event"}
+
+    # Making sure data is passed propers
+    ee.emit("event", "emitter is emitted!", error=False)
+
+    call_me.assert_called_once()
+
+
+def test_emit_error():
+    """Errors raise with no event handler, otherwise emit on handler"""
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    test_exception = PyeeTestException("lololol")
+
+    with raises(PyeeTestException):
+        ee.emit("error", test_exception)
+
+    @ee.on("error")
+    def on_error(exc):
+        call_me()
+
+    assert ee.event_names() == {"error"}
+
+    # No longer raises and error instead return True indicating handled
+    assert ee.emit("error", test_exception) is True
+    call_me.assert_called_once()
+
+
+def test_emit_return():
+    """Emit returns True when handlers are registered on an event, and false
+    otherwise.
+    """
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    assert ee.event_names() == set()
+
+    # make sure emitting without a callback returns False
+    assert not ee.emit("data")
+
+    # add a callback
+    ee.on("data")(call_me)
+
+    # should return True now
+    assert ee.emit("data")
+
+
+def test_new_listener_event():
+    """The 'new_listener' event fires whenever a new listener is added."""
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    ee.on("new_listener", call_me)
+
+    # Should fire new_listener event
+    @ee.on("event")
+    def event_handler(data):
+        pass
+
+    assert ee.event_names() == {"new_listener", "event"}
+
+    call_me.assert_called_once_with("event", event_handler)
+
+
+def test_listener_removal():
+    """Removing listeners removes the correct listener from an event."""
+
+    ee = EventEmitter()
+
+    # Some functions to pass to the EE
+    def first():
+        return 1
+
+    ee.on("event", first)
+
+    @ee.on("event")
+    def second():
+        return 2
+
+    @ee.on("event")
+    def third():
+        return 3
+
+    def fourth():
+        return 4
+
+    ee.on("event", fourth)
+
+    assert ee.event_names() == {"event"}
+
+    assert ee._events["event"] == OrderedDict(
+        [(first, first), (second, second), (third, third), (fourth, fourth)]
+    )
+
+    ee.remove_listener("event", second)
+
+    assert ee._events["event"] == OrderedDict(
+        [(first, first), (third, third), (fourth, fourth)]
+    )
+
+    ee.remove_listener("event", first)
+    assert ee._events["event"] == OrderedDict([(third, third), (fourth, fourth)])
+
+    ee.remove_all_listeners("event")
+    assert "event" not in ee._events
+    assert ee.event_names() == set()
+
+
+def test_remove_all_listeners_clears_every_event():
+    """`remove_all_listeners()` with no argument removes every event."""
+
+    ee = EventEmitter()
+
+    @ee.on("a")
+    def a_handler():
+        pass
+
+    @ee.on("b")
+    def b_handler():
+        pass
+
+    assert ee.event_names() == {"a", "b"}
+
+    ee.remove_all_listeners()
+
+    assert ee._events == {}
+    assert ee.event_names() == set()
+    assert ee.emit("a") is False
+    assert ee.emit("b") is False
+
+
+def test_listener_removal_on_emit():
+    """Test that a listener removed during an emit is called inside the current
+    emit cycle.
+    """
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    def should_remove():
+        ee.remove_listener("remove", call_me)
+
+    ee.on("remove", should_remove)
+    ee.on("remove", call_me)
+
+    assert ee.event_names() == {"remove"}
+
+    ee.emit("remove")
+
+    call_me.assert_called_once()
+
+    call_me.reset_mock()
+
+    # Also test with the listeners added in the opposite order
+    ee = EventEmitter()
+    ee.on("remove", call_me)
+    ee.on("remove", should_remove)
+
+    assert ee.event_names() == {"remove"}
+
+    ee.emit("remove")
+
+    call_me.assert_called_once()
+
+
+def test_listener_removal_on_repeated_emit():
+    """A cleanup handler can remove the same listener on subsequent emits."""
+
+    ee = EventEmitter()
+    call_me = Mock()
+
+    def cleanup():
+        ee.remove_listener("event", call_me)
+
+    ee.on("event", cleanup)
+    ee.on("event", call_me)
+
+    assert ee.emit("event") is True
+    assert ee.emit("event") is True
+
+    call_me.assert_called_once()
+    assert ee.listeners("event") == [cleanup]
+    assert ee.event_names() == {"event"}
+
+
+def test_removing_unknown_listener_preserves_other_listeners():
+    """Removing an unregistered handler does not affect registered handlers."""
+
+    ee = EventEmitter()
+    listener = Mock()
+    unknown_listener = Mock()
+    ee.on("event", listener)
+
+    ee.remove_listener("event", unknown_listener)
+
+    assert ee.listeners("event") == [listener]
+    assert ee.emit("event") is True
+    listener.assert_called_once()
+    unknown_listener.assert_not_called()
+
+
+def test_once():
+    """Test that `once()` method works propers."""
+
+    # very similar to "test_emit" but also makes sure that the event
+    # gets removed afterwards
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    def once_handler(data):
+        assert data == "emitter is emitted!"
+        call_me()
+
+    # Tests to make sure that after event is emitted that it's gone.
+    ee.once("event", once_handler)
+
+    assert ee.event_names() == {"event"}
+
+    ee.emit("event", "emitter is emitted!")
+
+    call_me.assert_called_once()
+
+    assert ee.event_names() == set()
+
+    assert "event" not in ee._events
+
+
+def test_once_removal():
+    """Removal of once functions works"""
+
+    ee = EventEmitter()
+
+    def once_handler(data):
+        pass
+
+    handle = ee.once("event", once_handler)
+
+    assert handle == once_handler
+    assert ee.event_names() == {"event"}
+
+    ee.remove_listener("event", handle)
+
+    assert "event" not in ee._events
+    assert ee.event_names() == set()
+
+
+def test_once_is_removed_before_reentrant_emit():
+    """A once handler must not run again during its own nested emission."""
+    ee = EventEmitter()
+    calls = []
+
+    @ee.once("event")
+    def once_handler(value):
+        calls.append(("once", value))
+        if value == 1:
+            assert ee.emit("event", 2) is True
+
+    @ee.on("event")
+    def persistent_handler(value):
+        calls.append(("persistent", value))
+
+    assert ee.emit("event", 1) is True
+    assert calls == [("once", 1), ("persistent", 2), ("persistent", 1)]
+    assert ee.listeners("event") == [persistent_handler]
+
+    assert ee.emit("event", 3) is True
+    assert calls[-1] == ("persistent", 3)
+    assert len(calls) == 4
+
+
+def test_listeners():
+    """`listeners()` returns a copied list of listeners."""
+
+    call_me = Mock()
+    ee = EventEmitter()
+
+    @ee.on("event")
+    def event_handler():
+        pass
+
+    @ee.once("event")
+    def once_handler():
+        pass
+
+    listeners = ee.listeners("event")
+
+    assert listeners[0] == event_handler
+    assert listeners[1] == once_handler
+
+    # listeners is a copy, you can't mutate the innards this way
+    listeners[0] = call_me
+
+    ee.emit("event")
+
+    call_me.assert_not_called()
+
+
+def test_listeners_does_work_with_unknown_listeners():
+    """`listeners()` should not throw."""
+    ee = EventEmitter()
+    listeners = ee.listeners("event")
+    assert listeners == []
+
+
+def test_properties_preserved():
+    """Test that the properties of decorated functions are preserved."""
+
+    call_me = Mock()
+    call_me_also = Mock()
+    ee = EventEmitter()
+
+    @ee.on("always")
+    def always_event_handler():
+        """An event handler."""
+        call_me()
+
+    @ee.once("once")
+    def once_event_handler():
+        """Another event handler."""
+        call_me_also()
+
+    assert always_event_handler.__doc__ == "An event handler."
+    assert once_event_handler.__doc__ == "Another event handler."
+
+    always_event_handler()
+    call_me.assert_called_once()
+
+    once_event_handler()
+    call_me_also.assert_called_once()
+
+    call_me_also.reset_mock()
+
+    # Calling the event handler directly doesn't clear the handler
+    ee.emit("once")
+    call_me_also.assert_called_once()
+
+
+def test_if_serializable():
+    """`pickle`ing should not throw."""
+    ee = EventEmitter()
+    ee_copy = loads(dumps(ee))
+    assert ee._lock
+    assert ee_copy._lock
