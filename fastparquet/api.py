@@ -315,6 +315,84 @@ class ParquetFile(object):
                 break
         return self[:i+1].to_pandas(**kwargs).head(nrows)
 
+    def read_row_window(self, start, stop, columns=None, filters=None,
+                        categories=None):
+        """Read a window of rows [start, stop) from this dataset.
+
+        Only the data pages overlapping the window have their values
+        decoded; pages before the window contribute just their repetition
+        and definition levels, which are still required to establish row
+        boundaries (a row's elements may span data pages, so the first
+        in-window page can begin in the middle of a row), and pages after
+        the window are not read at all.
+
+        Parameters
+        ----------
+        start, stop: int
+            Row window, with ``0 <= start <= stop <=`` number of rows in
+            the dataset.
+        columns: list of str or None
+            Columns to read (default: all columns). Nested (list/map)
+            columns are supported, including NULL lists, empty lists and
+            lists containing NULL elements.
+        filters: list of lists or list of tuples
+            Predicates, with the same syntax as in ``to_pandas``. Parent
+            rows failing the predicates are excluded from the output, but
+            the remaining rows are NOT shifted left to fill the gaps:
+            every output row keeps its original row number.
+        categories: dict or None
+            As for ``to_pandas``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The index contains the actual original row numbers, so the
+            output matches, row for row (same parent rows, same elements
+            and same NULL/empty-list semantics), a full read followed by
+            ``df.iloc[start:stop]`` and applying the filters.
+        """
+        n_rows = self.fmd.num_rows
+        if not 0 <= start <= stop <= n_rows:
+            raise ValueError(
+                "Invalid row window [%s, %s) for dataset of %i rows"
+                % (start, stop, n_rows))
+        categories = self.check_categories(categories)
+        columns = list(columns) if columns is not None else list(self.columns)
+        read_columns = list(columns)
+        if filters:
+            for c in self._columns_from_filters(filters):
+                if c not in read_columns:
+                    read_columns.append(c)
+        parts = []
+        offset = 0
+        for rg in self.row_groups:
+            lo = max(start, offset)
+            hi = min(stop, offset + rg.num_rows)
+            if lo < hi:
+                df, assign = self.pre_allocate(hi - lo, read_columns,
+                                               categories, index=False)
+                with self.open(self.row_group_filename(rg), mode='rb') as f:
+                    core.read_row_group(
+                        f, rg, read_columns, categories, self.schema,
+                        self.cats, selfmade=self.selfmade, index=False,
+                        assign=assign, scheme=self.file_scheme,
+                        start=lo - offset, stop=hi - offset)
+                df.index = pd.Index(np.arange(lo, hi))
+                parts.append(df)
+            offset += rg.num_rows
+        if parts:
+            out = pd.concat(parts) if len(parts) > 1 else parts[0]
+        else:
+            out, _ = self.pre_allocate(0, read_columns, categories,
+                                       index=False)
+            out.index = pd.Index(np.arange(0, 0))
+        if filters:
+            out = out[self._column_filter(out, filters)]
+            drop = [c for c in read_columns if c not in columns]
+            if drop:
+                out = out.drop(columns=drop)
+        return out
+
     def __getitem__(self, item):
         """Select among the row-groups using integer/slicing"""
         import copy

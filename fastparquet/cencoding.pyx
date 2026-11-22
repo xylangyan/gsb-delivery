@@ -461,6 +461,10 @@ def _assemble_objects(object[:] assign, const uint8_t[:] defi, const uint8_t[:] 
         val = dic[val]
     i = prev_i
     part = []
+    if rep.shape[0] == 0:
+        # empty page: no rows start and no row continues here; the row
+        # left open by the previous page (at i - 1) is still the open one
+        return i - 1
     for counter in range(rep.shape[0]):
         de = defi[counter] if defi is not None else max_defi
         re = rep[counter]
@@ -472,7 +476,7 @@ def _assemble_objects(object[:] assign, const uint8_t[:] defi, const uint8_t[:] 
                 i += 1
             else:
                 # first time: no row to save yet, unless it's a row continued from previous page
-                if vali > 0:
+                if vali > 0 or part:
                     assign[i - 1].extend(part) # add the items to previous row
                     part = []
                     # don't increment i since we only filled i-1
@@ -490,6 +494,8 @@ def _assemble_objects(object[:] assign, const uint8_t[:] defi, const uint8_t[:] 
         assign[i] = None if have_null else part
     else: # can only happen if the only elements in this page are the continuation of the last row from previous page
         assign[i - 1].extend(part)
+        # the open row is still the one started in a previous page
+        i -= 1
     return i
 
 

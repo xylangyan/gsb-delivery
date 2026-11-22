@@ -184,6 +184,56 @@ def skip_definition_bytes(io_obj, num):
         n //= 128
 
 
+def read_page_levels(f, helper, header, metadata):
+    """Read only the repetition and definition levels of a v1 data page.
+
+    The values themselves are not decoded. Used when scanning for row
+    boundaries in pages that fall (partly) outside a requested row window:
+    the levels are still required to prove where rows begin and end.
+    """
+    daph = header.data_page_header
+    raw_bytes = _read_page(f, header, metadata)
+    io_obj = encoding.NumpyIO(raw_bytes)
+    repetition_levels = read_rep(io_obj, daph, helper, metadata)
+    definition_levels, _ = read_def(io_obj, daph, helper, metadata)
+    return definition_levels, repetition_levels
+
+
+def row_window_slice(rep, rows_started, start, stop):
+    """Level-entry slice [i0, i1) of one page for the row window [start, stop)
+
+    rep: repetition levels of this page (a 0 marks the start of a new row)
+    rows_started: number of rows that started in earlier pages
+    start, stop: row window within the row group
+
+    Returns None if no level entries of this page belong to the window.
+    Note that a page may begin in the middle of a row (when that row's
+    elements span pages); such a continuation belongs to the row started
+    in an earlier page, and is kept only if that row is inside the window.
+    """
+    starts = np.nonzero(rep == 0)[0]
+    n_starts = len(starts)
+    first_row = rows_started - 1 if (len(rep) and rep[0] != 0) else rows_started
+    if rows_started + n_starts <= start or first_row >= stop:
+        return None
+    i0 = starts[start - rows_started] if start >= rows_started else 0
+    i1 = starts[stop - rows_started] if stop < rows_started + n_starts else len(rep)
+    return i0, i1
+
+
+def slice_page_values(defi, i0, i1, max_defi, val):
+    """Slice the values array to match level entries [i0, i1).
+
+    Values only exist for entries at the maximum definition level, so the
+    value offsets must be derived from the definition levels.
+    """
+    if defi is None:
+        return val[i0:i1]
+    v0 = int((defi[:i0] == max_defi).sum())
+    v1 = int((defi[:i1] == max_defi).sum())
+    return val[v0:v1]
+
+
 def read_dictionary_page(file_obj, schema_helper, page_header, column_metadata, utf=False):
     """Read a page containing dictionary data.
 
@@ -440,7 +490,7 @@ def read_data_page_v2(infile, schema_helper, se, data_header2, cmd,
 
 def read_col(column, schema_helper, infile, use_cat=False,
              selfmade=False, assign=None, catdef=None,
-             row_filter=None, arrow_parts=None):
+             row_filter=None, arrow_parts=None, start=None, stop=None):
     """Using the given metadata, read one column in one row-group.
 
     Parameters
@@ -464,6 +514,14 @@ def read_col(column, schema_helper, infile, use_cat=False,
         into the (object-dtype) ``assign`` array.  The caller is responsible
         for concatenating and assigning the final ArrowStringArray to the
         DataFrame column after all row groups are consumed.
+    start, stop: int or None
+        If given, restrict reading to the row window [start, stop) within
+        this row-group. Data pages lying completely before the window are
+        not decoded: only their repetition/definition levels are read, which
+        are required to establish row boundaries (a row's elements may span
+        data pages, so the first in-window page can begin in the middle of
+        a row). Pages after the window are not read at all. Cannot be
+        combined with a boolean ``row_filter`` array.
     """
     cmd = column.meta_data
     try:
@@ -478,7 +536,19 @@ def read_col(column, schema_helper, infile, use_cat=False,
     infile.seek(off)
     column_binary = infile.read(cmd.total_compressed_size)
     infile = encoding.NumpyIO(column_binary)
-    rows = row_filter.sum() if isinstance(row_filter, np.ndarray) else cmd.num_values
+
+    windowed = start is not None or stop is not None
+    if windowed and isinstance(row_filter, np.ndarray):
+        raise ValueError("Cannot combine a row window with a row_filter array")
+    start = start or 0
+    max_rep = schema_helper.max_repetition_level(cmd.path_in_schema)
+    max_defi = schema_helper.max_definition_level(cmd.path_in_schema)
+    if isinstance(row_filter, np.ndarray):
+        rows = row_filter.sum()
+    elif windowed and max_rep == 0 and stop is not None:
+        rows = stop - start
+    else:
+        rows = cmd.num_values
 
     # Determine whether to use the arrow accumulation path for this column.
     # Conditions: pyarrow available, arrow strings are the default, utf=True
@@ -508,8 +578,9 @@ def read_col(column, schema_helper, infile, use_cat=False,
     row_idx = [0]  # map/list objects
     dic = None
     index_off = 0  # how far through row_filter we are
+    rows_started = 0  # rows that began in earlier pages (row windows)
 
-    while num < rows:
+    while num < rows and infile.tell() < infile.len:
         off = infile.tell()
         ph = ThriftObject.from_buffer(infile, "PageHeader")
         if ph.type == parquet_thrift.PageType.DICTIONARY_PAGE:
@@ -535,10 +606,43 @@ def read_col(column, schema_helper, infile, use_cat=False,
             raise TypeError("Attempt to load as categorical a column with no dictionary")
 
         if ph.type == parquet_thrift.PageType.DATA_PAGE_V2:
+            if windowed:
+                raise NotImplementedError(
+                    "Row windows (start/stop) are not supported for data "
+                    "page V2; column: %s" % (cmd.path_in_schema,))
             num += read_data_page_v2(infile, schema_helper, se, ph.data_page_header_v2, cmd,
                                      dic, assign, num, use_cat, off, ph, row_idx, selfmade=selfmade,
                                      row_filter=row_filter, arrow_parts=arrow_parts)
             continue
+        if windowed:
+            # Decide from the levels alone whether this page overlaps the
+            # row window, before decoding any values.
+            if ph.data_page_header.num_values == 0:
+                infile.seek(ph.compressed_page_size, 1)
+                continue
+            if max_rep == 0:
+                page_rows = ph.data_page_header.num_values
+                if rows_started + page_rows <= start:
+                    # page fully before the window: skip without decoding
+                    rows_started += page_rows
+                    infile.seek(ph.compressed_page_size, 1)
+                    continue
+                if stop is not None and rows_started >= stop:
+                    break
+            else:
+                page_start = infile.tell()
+                _, rep_levels = read_page_levels(infile, schema_helper, ph, cmd)
+                n_starts = int((rep_levels == 0).sum())
+                if rows_started + n_starts <= start:
+                    # all rows touched by this page end before the window
+                    rows_started += n_starts
+                    continue
+                # a page can begin in the middle of a row started earlier
+                first_row = rows_started - 1 if rep_levels[0] != 0 else rows_started
+                if stop is not None and first_row >= stop:
+                    break
+                # page overlaps the window: go back and decode values too
+                infile.seek(page_start)
         if (selfmade and hasattr(cmd, 'statistics') and
                 getattr(cmd.statistics, 'null_count', 1) == 0):
             skip_nulls = True
@@ -546,6 +650,22 @@ def read_col(column, schema_helper, infile, use_cat=False,
             skip_nulls = False
         defi, rep, val = read_data_page(infile, schema_helper, ph, cmd,
                                         skip_nulls, selfmade=selfmade)
+        if windowed:
+            # trim this page's levels/values to the row window
+            n_entries = len(defi) if defi is not None else len(val)
+            if rep is None:
+                i0 = min(max(start - rows_started, 0), n_entries)
+                i1 = n_entries if stop is None else min(
+                    max(stop - rows_started, 0), n_entries)
+                rows_started += n_entries
+            else:
+                i0, i1 = row_window_slice(
+                    rep, rows_started, start,
+                    stop if stop is not None else np.iinfo(np.int64).max)
+                rows_started += int((rep == 0).sum())
+            val = slice_page_values(defi, i0, i1, max_defi, val)
+            defi = defi[i0:i1] if defi is not None else None
+            rep = rep[i0:i1] if rep is not None else None
         max_defi = schema_helper.max_definition_level(cmd.path_in_schema)
         if isinstance(row_filter, np.ndarray):
             io = index_off + len(val)  # will be new index_off
@@ -644,7 +764,7 @@ def read_col(column, schema_helper, infile, use_cat=False,
 
 def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
                           selfmade=False, assign=None, row_filter=False,
-                          arrow_string_columns=None):
+                          arrow_string_columns=None, start=None, stop=None):
     """
     Read a row group and return as a dict of arrays
 
@@ -660,6 +780,11 @@ def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
         pages are appended here instead of being stored in the pre-allocated
         object array.  The caller concatenates and assigns the final
         ``ArrowStringArray`` after all row groups are processed.
+    start, stop : int or None
+        If given, read only the row window [start, stop) of this row-group;
+        ``assign`` arrays must have been allocated with ``stop - start``
+        rows. Pages outside the window are not decoded (only their
+        repetition/definition levels are used to find row boundaries).
     """
     out = assign
     remains = set(_ for _ in out if not _.endswith("-catdef") and not _ + "-catdef" in out)
@@ -681,7 +806,8 @@ def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
                  selfmade=selfmade, assign=out[name],
                  catdef=out.get(name+'-catdef', None),
                  row_filter=row_filter,
-                 arrow_parts=arrow_string_columns.get(name))
+                 arrow_parts=arrow_string_columns.get(name),
+                 start=start, stop=stop)
 
         if _is_map_like(schema_helper, column):
             # TODO: could be done in fast loop in _assemble_objects?
@@ -701,7 +827,7 @@ def read_row_group_arrays(file, rg, columns, categories, schema_helper, cats,
 def read_row_group(file, rg, columns, categories, schema_helper, cats,
                    selfmade=False, index=None, assign=None,
                    scheme='hive', partition_meta=None, row_filter=False,
-                   arrow_string_columns=None):
+                   arrow_string_columns=None, start=None, stop=None):
     """
     Access row-group in a file and read some columns into a data-frame.
     """
@@ -710,7 +836,8 @@ def read_row_group(file, rg, columns, categories, schema_helper, cats,
         raise RuntimeError('Going with pre-allocation!')
     read_row_group_arrays(file, rg, columns, categories, schema_helper,
                           cats, selfmade, assign=assign, row_filter=row_filter,
-                          arrow_string_columns=arrow_string_columns)
+                          arrow_string_columns=arrow_string_columns,
+                          start=start, stop=stop)
 
     for cat in cats:
         if cat not in assign:

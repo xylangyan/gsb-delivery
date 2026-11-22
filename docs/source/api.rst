@@ -7,6 +7,7 @@ API
     ParquetFile
     ParquetFile.to_pandas
     ParquetFile.iter_row_groups
+    ParquetFile.read_row_window
     ParquetFile.info
     ParquetFile.head
     ParquetFile.count
@@ -19,6 +20,8 @@ API
 .. automethod:: ParquetFile.to_pandas
 
 .. automethod:: ParquetFile.iter_row_groups
+
+.. automethod:: ParquetFile.read_row_window
 
 .. autofunction:: write
 
