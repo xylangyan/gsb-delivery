@@ -1,0 +1,13 @@
+en:
+  dry_schema:
+    rules:
+      email: "E-mail address"
+    company:
+      rules:
+        email: "Company email"
+    errors:
+      rules:
+        email:
+          filled?: "Please provide your email"
+      email?: "must be an email"
+      future_date?: "must be in the future"

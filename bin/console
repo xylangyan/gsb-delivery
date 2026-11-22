@@ -1,0 +1,27 @@
+#!/usr/bin/env ruby
+
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "pry"
+require "dry/schema"
+
+module Types
+  include Dry::Types()
+end
+
+class Context
+  def schema(&)
+    Dry::Schema.define(&)
+  end
+
+  def params(&)
+    Dry::Schema.Params(&)
+  end
+
+  def json(&)
+    Dry::Schema.JSON(&)
+  end
+end
+
+Pry.start(Context.new, prompt: [proc { "dry-schema> " }, proc { "dry-schema*> " }])
