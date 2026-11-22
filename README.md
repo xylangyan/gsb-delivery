@@ -148,6 +148,65 @@ each remote Public Suffix List request.
 extract = tldextract.TLDExtract(extra_suffixes=["foo", "bar.baz"])
 ```
 
+### How to layer enterprise operating zones over public suffix rules
+
+An operating zone configuration overlays your own named, explicitly
+prioritized suffix lists on the public suffix rules. Rules use the PSL
+format: exact, `*` wildcard, and `!` exception. The rule covering the most
+labels wins; ties between same-length declarations are broken by the
+explicit list priority, never by the order lists are passed in. A winning
+exception drops the grouping suffix one label shorter.
+
+```python
+>>> from tldextract import ZoneEvaluator, ZoneList
+
+>>> public_rules = ["com", "co.uk"]
+>>> regions = ZoneList(name="regions", priority=10, rules=[
+...     "*.example.com",
+...     "!hq.example.com",
+... ])
+>>> teams = ZoneList(name="teams", priority=20, rules=["team.example.com"])
+>>> zones = ZoneEvaluator(public_rules=public_rules, zone_lists=[regions, teams])
+
+>>> match = zones.explain("app.team.example.com")  # zone mode
+>>> (match.suffix, match.group, match.rule, match.source)
+('team.example.com', 'app.team.example.com', 'team.example.com', 'teams')
+
+>>> public_match = zones.explain_public("app.team.example.com")  # non-zone mode
+>>> (public_match.suffix, public_match.group, public_match.source)
+('com', 'example.com', 'public')
+```
+
+Zone rules may subdivide one original registered organization, but must
+never merge two different original registered organizations into one
+operating group. Before publishing, validate the combination over the whole
+potential host space beneath your managed DNS parent domains — no site
+inventory and no network access needed. Violations are reported with a pair
+of legal witness addresses and the rules involved, so you can recompute
+them:
+
+```python
+>>> report = zones.validate(managed_parents=["example.com"])
+>>> report.boundary_unchanged
+True
+
+>>> shady = ZoneEvaluator(
+...     public_rules=public_rules,
+...     zone_lists=[ZoneList(name="bad", priority=30, rules=["!co.uk"])],
+... )
+>>> report = shady.validate(managed_parents=["firm.co.uk", "other.co.uk"])
+>>> report.boundary_unchanged
+False
+>>> violation = report.violations[0]
+>>> (violation.rule, violation.source, violation.group)
+('!co.uk', 'bad', 'co.uk')
+>>> violation.organizations
+('firm.co.uk', 'other.co.uk')
+```
+
+To build an evaluator from a `TLDExtract` instance's already-resolved public
+rules, use `extractor.zone_evaluator(zone_lists)`.
+
 ### How to validate URLs before extraction
 
 ```python

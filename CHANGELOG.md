@@ -3,6 +3,11 @@
 After upgrading, update your cache file by deleting it or via `tldextract
 --update`.
 
+## Unreleased
+
+* Features
+  * Add `tldextract.zones`: enterprise operating zones layered over public suffix rules. Named zone lists with explicit priorities support exact, wildcard, and exception rules; same-length matches are decided by source priority, not list order. `ZoneEvaluator.validate` checks, before publishing and without network access, that the combined lists never merge two different original registered organizations into one operating group over the whole potential host space beneath caller-provided managed DNS parent domains, reporting reproducible witness addresses and the rules involved. `ZoneEvaluator.explain` reports which zone rule a host hits, from which list, and the suffix actually used for grouping; `explain_public` is the non-zone-mode report using the original public rules. Build one from an existing extractor with `TLDExtract.zone_evaluator`.
+
 ## 5.4.0 (2026-10-03)
 
 * Features

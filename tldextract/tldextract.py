@@ -55,6 +55,7 @@ from .remote import (
     looks_like_ipv6,
 )
 from .suffix_list import get_suffix_lists
+from .zones import ZoneEvaluator, ZoneList
 
 
 def _get_default_cache_fetch_timeout() -> str | None:
@@ -588,6 +589,23 @@ class TLDExtract:
         This will vary based on `include_psl_private_domains` and `extra_suffixes`.
         """
         return list(self._get_tld_extractor(session=session).tlds())
+
+    def zone_evaluator(
+        self,
+        zone_lists: Sequence[ZoneList] = (),
+        include_psl_private_domains: bool | None = None,
+        session: requests.Session | None = None,
+    ) -> ZoneEvaluator:
+        """Build a `ZoneEvaluator` from this extractor's loaded public suffix rules.
+
+        The evaluator layers the given enterprise zone lists over the public
+        rules, for zone-aware grouping and pre-publish validation. See
+        `tldextract.zones` for the matching and validation semantics.
+        """
+        self._get_tld_extractor(session=session)
+        return ZoneEvaluator.from_tldextract(
+            self, zone_lists, include_psl_private_domains
+        )
 
     def _get_tld_extractor(
         self, session: requests.Session | None = None
