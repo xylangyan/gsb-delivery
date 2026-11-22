@@ -1,0 +1,8 @@
+include README.md LICENSE
+include requirements.txt
+include src/ezdxf/py.typed
+include src/ezdxf/resources/*.png
+recursive-include src/ezdxf/acc *.pxd *.pyx
+recursive-include tests *.py
+recursive-include integration_tests *.py
+recursive-include integration_tests/data *
