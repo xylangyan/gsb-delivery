@@ -1,0 +1,60 @@
+buildvariants:
+  - matrix_name: "mri-latest"
+    matrix_spec: { ruby: <%= latest_mri_ruby %>, all-os: '*' }
+    display_name: "${ruby}, ${all-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "mri-sample"
+    matrix_spec: { ruby: <%= sample_without_latest %>, all-os: ubuntu2004 }
+    display_name: "${ruby}, ${all-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "activesupport-5-6"
+    matrix_spec:
+      ruby: <%= older_rubies %>
+      all-os: ubuntu2004
+      as: [ '5.1', '5.2', '6.0', '6.1' ]
+    display_name: "AS ${as} ${ruby}, ${all-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "activesupport-7"
+    matrix_spec:
+      ruby: <%= latest_mri_ruby %>
+      all-os: ubuntu2004
+      as: [ '7.0', '7.1' ]
+    display_name: "AS ${as} ${ruby}, ${all-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "activesupport-8"
+    matrix_spec:
+      ruby: <%= latest_mri_ruby %>
+      all-os: ubuntu2004
+      as: '8.0'
+    display_name: "AS ${as} ${ruby}, ${all-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "special-os"
+    matrix_spec: { ruby: <%= recent_rubies - %w[ jruby-10.0 ] %>, special-os: '*' }
+    display_name: "${ruby}, ${special-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "jruby"
+    matrix_spec: { ruby: <%= jrubies %>, all-os: ubuntu2404 }
+    display_name: "${ruby}, ${all-os}"
+    tasks:
+      - name: "test"
+
+  - matrix_name: "compact"
+    matrix_spec:
+      ruby: <%= sample_mri_rubies %>
+      all-os: ubuntu2004
+      compact: "on"
+    display_name: "${ruby} with GC.compact"
+    tasks:
+      - name: "test"

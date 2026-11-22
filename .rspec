@@ -1,0 +1,9 @@
+--tty
+--colour
+<% if %w(1 true yes).include?(ENV['CI']&.downcase) %>
+--format RspecJunitFormatter
+--out tmp/rspec.xml
+--format 'Rfc::Riff'
+<% else %>
+--format Fuubar
+<% end %>
