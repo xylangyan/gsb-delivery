@@ -1,0 +1,638 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+require 'stringio'
+require 'tmpdir'
+
+# Regression tests for security fixes. Each group forges malformed xBase bytes
+# and asserts the parser degrades safely rather than injecting code, escaping
+# the database directory, over-allocating, looping unboundedly, or crashing on
+# a nil read.
+RSpec.describe 'DBF security' do # rubocop:disable RSpec/DescribeClass
+  def dbf_header(version: 0x03, record_count: 0, header_length: 0, record_length: 0)
+    bytes = (+"\x00").b * 32
+    bytes.setbyte(0, version)
+    bytes[4, 4] = [record_count].pack('V')
+    bytes[8, 2] = [header_length].pack('v')
+    bytes[10, 2] = [record_length].pack('v')
+    bytes
+  end
+
+  # A header that cannot hold its column descriptors makes the parser warn
+  # that it ignored them
+  def warn_ignored_columns
+    output(/\ADBF: ignored the columns after the first \d+: they do not fit/).to_stderr
+  end
+
+  def dbf_column(name: 'COL1', type: 'C', length: 10, decimal: 0)
+    bytes = (+"\x00").b * 32
+    encoded = name.b[0, 11]
+    bytes[0, encoded.bytesize] = encoded
+    bytes.setbyte(11, type.ord)
+    bytes.setbyte(16, length & 0xFF)
+    bytes.setbyte(17, decimal & 0xFF)
+    bytes
+  end
+
+  def dbf_table(version: 0x03, record_count: 0, record_length: nil, columns: nil, records: '')
+    columns ||= [dbf_column]
+    descriptors = columns.join
+    header_length = 32 + descriptors.bytesize + 1
+    # Default to the record width the descriptors imply: flag byte + columns
+    record_length ||= 1 + columns.sum { |column| column.getbyte(16) }
+    dbf_header(version:, record_count:, header_length:, record_length:) +
+      descriptors + "\x0D".b + records.b
+  end
+
+  # --- VULN-001 ---
+  describe 'generated schema escaping (CWE-94)' do
+    let(:hostile_table_name) { 'x", :evil => system("id")  #' }
+    let(:bytes) { dbf_table(columns: [dbf_column(name: 'A"B', type: 'C', length: 5)]) }
+
+    it 'escapes quotes in column names in the ActiveRecord schema' do
+      table = DBF::Table.new(StringIO.new(bytes), nil, nil, name: 'safe')
+      expect(table.schema(:activerecord)).to include 'a"b'.inspect
+    end
+
+    it 'escapes quotes in column names in the Sequel schema' do
+      table = DBF::Table.new(StringIO.new(bytes), nil, nil, name: 'safe')
+      expect(table.schema(:sequel)).to include :'a"b'.inspect
+    end
+
+    it 'escapes a hostile table name in the ActiveRecord schema' do
+      table = DBF::Table.new(StringIO.new(bytes), nil, nil, name: hostile_table_name)
+      expect(table.schema(:activerecord)).to include hostile_table_name.inspect
+    end
+
+    it 'escapes a hostile table name in the Sequel schema' do
+      table = DBF::Table.new(StringIO.new(bytes), nil, nil, name: hostile_table_name)
+      expect(table.schema(:sequel)).to include hostile_table_name.to_sym.inspect
+    end
+  end
+
+  # --- VULN-002 ---
+  describe 'CSV formula injection (CWE-1236)' do
+    def csv_for(bytes)
+      io = StringIO.new(+'')
+      DBF::Table.new(StringIO.new(bytes)).to_csv(io)
+      io.string
+    end
+
+    it 'neutralizes a cell value that begins with a formula trigger' do
+      bytes = dbf_table(record_count: 1, record_length: 6,
+                        columns: [dbf_column(name: 'F', type: 'C', length: 5)],
+                        records: ' =1+2 ')
+      expect(csv_for(bytes)).to include %("'=1+2")
+    end
+
+    it 'neutralizes a column name that begins with a formula trigger' do
+      bytes = dbf_table(record_count: 0, record_length: 6,
+                        columns: [dbf_column(name: '=X', type: 'C', length: 5)])
+      expect(csv_for(bytes)).to include %("'=X")
+    end
+
+    it 'does not raise on values whose bytes are invalid in the declared encoding' do
+      bytes = dbf_table(record_count: 1, record_length: 6,
+                        columns: [dbf_column(name: 'F', type: 'C', length: 5)],
+                        records: " =\xFF\xFE\x9E\x8E".b)
+      expect { csv_for(bytes) }.to_not raise_error
+    end
+
+    it 'still neutralizes a formula when later bytes are invalid' do
+      bytes = dbf_table(record_count: 1, record_length: 6,
+                        columns: [dbf_column(name: 'F', type: 'C', length: 5)],
+                        records: " =\xFF\xFE\x9E\x8E".b)
+      expect(csv_for(bytes)).to include "'="
+    end
+
+    it 'does not raise when a binary cell is mixed with text cells' do
+      bytes = dbf_table(record_count: 1, record_length: 7,
+                        columns: [dbf_column(name: 'T', type: 'C', length: 2),
+                                  dbf_column(name: 'G', type: 'G', length: 4)],
+                        records: " ab\xFF\x9E\x80\x81".b)
+      expect { csv_for(bytes) }.to_not raise_error
+    end
+
+    it 'leaves ordinary values untouched' do
+      bytes = dbf_table(record_count: 1, record_length: 6,
+                        columns: [dbf_column(name: 'F', type: 'C', length: 5)],
+                        records: ' safe ')
+      expect(csv_for(bytes)).to include %("safe")
+    end
+  end
+
+  # --- VULN-003 ---
+  describe 'FoxPro .dbc table path traversal (CWE-22)' do
+    let(:db) { DBF::Database::Foxpro.new fixture('foxprodb/FOXPRO-DB-TEST.DBC') }
+
+    it 'refuses a container name that escapes the database directory' do
+      Dir.mktmpdir do |dir|
+        FileUtils.cp fixture('dbase_83.dbf'), File.join(dir, 'secret.dbf')
+        outside = ('../' * 12) + File.join(dir, 'secret').delete_prefix('/')
+        expect { db.table_path(outside) }.to raise_error(DBF::FileNotFoundError)
+      end
+    end
+
+    it 'strips path separators rather than following them' do
+      expect(db.table_path('../contacts')).to end_with File.join('foxprodb', 'contacts.dbf')
+    end
+
+    it 'still resolves a legitimate table name' do
+      expect(db.table_path('contacts')).to end_with 'contacts.dbf'
+    end
+  end
+
+  # --- VULN-004 ---
+  describe 'FoxPro .dbc glob expansion (CWE-400)' do
+    let(:db) { DBF::Database::Foxpro.new fixture('foxprodb/FOXPRO-DB-TEST.DBC') }
+
+    it 'does not treat a wildcard in the name as a glob pattern' do
+      expect { db.table_path('contact*') }.to raise_error(DBF::FileNotFoundError)
+    end
+
+    it 'does not expand brace groups in the name' do
+      expect { db.table_path('{contacts,calls}') }.to raise_error(DBF::FileNotFoundError)
+    end
+
+    it 'still matches a legitimate name case-insensitively' do
+      expect(db.table_path('CONTACTS')).to end_with 'contacts.dbf'
+    end
+  end
+
+  # --- VULN-005 ---
+  describe 'record buffer allocation bound (CWE-789)' do
+    it 'does not allocate beyond the file for a crafted record count and length' do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, 'crafted.dbf')
+        File.binwrite(path, dbf_table(record_count: 4_294_967_295, record_length: 65_535,
+                                      columns: [dbf_column(name: 'A', type: 'C', length: 10)]))
+        File.open(path, 'rb') do |io|
+          iterator = DBF::RecordIterator.new(io, nil, 32, 65_535, 4_294_967_295)
+          expect(iterator.send(:record_capacity)).to eq 0
+          expect { |b| iterator.each(&b) }.to_not yield_control
+        end
+      end
+    end
+  end
+
+  # --- VULN-006 ---
+  describe 'record iteration bound (CWE-835)' do
+    it 'yields only the records actually present in the file' do
+      bytes = dbf_table(record_count: 1_000_000, record_length: 10,
+                        columns: [dbf_column(name: 'A', type: 'C', length: 9)],
+                        records: " #{'x' * 9}")
+      expect(DBF::Table.new(StringIO.new(bytes)).each.to_a.size).to eq 1
+    end
+
+    it 'yields nothing when the header declares a zero record length' do
+      bytes = dbf_table(record_count: 1_000_000, record_length: 0,
+                        columns: [dbf_column(name: 'A', type: 'C', length: 9)],
+                        records: " #{'x' * 9}")
+      table = DBF::Table.new(StringIO.new(bytes))
+      expect { table.columns }.to warn_ignored_columns
+      expect(table.each.to_a).to be_empty
+    end
+  end
+
+  # --- VULN-007 ---
+  describe 'dBase IV memo allocation bound (CWE-400)' do
+    let(:data) { ("\x00".b * 512) + "\x00\x00\x00\x00#{[4_294_967_295].pack('L')}" + ('m'.b * 100) }
+
+    it 'never reads more than the memo file holds' do
+      io = StringIO.new(data)
+      allow(io).to receive(:read).and_call_original
+      DBF::Memo::Dbase4.new(io, '8b').get(1)
+      expect(io).to_not have_received(:read).with(satisfy { |n| n.is_a?(Integer) && n > data.bytesize })
+    end
+
+    it 'still returns the memo content' do
+      expect(DBF::Memo::Dbase4.new(StringIO.new(data), '8b').get(1)).to eq('m' * 100)
+    end
+  end
+
+  # --- VULN-008 ---
+  describe 'FoxPro memo allocation bound (CWE-400)' do
+    let(:data) do
+      bytes = (+"\x00").b * 1024
+      bytes[6, 2] = [64].pack('n')
+      bytes[64, 64] = [1, 4_294_967_295].pack('NN') + ('m'.b * 56)
+      bytes
+    end
+
+    it 'never reads more than the memo file holds' do
+      io = StringIO.new(data)
+      allow(io).to receive(:read).and_call_original
+      DBF::Memo::Foxpro.new(io, '30').get(1)
+      expect(io).to_not have_received(:read).with(satisfy { |n| n.is_a?(Integer) && n > data.bytesize })
+    end
+  end
+
+  # --- VULN-009 ---
+  describe 'truncated header and column terminator (CWE-248)' do
+    it 'returns no columns when the file ends before the column terminator' do
+      bytes = dbf_header(record_count: 1, header_length: 32, record_length: 5)
+      expect(DBF::Table.new(StringIO.new(bytes)).columns).to eq []
+    end
+
+    it 'tolerates an empty header read' do
+      expect { DBF::Header.new(nil) }.to_not raise_error
+    end
+
+    it 'tolerates an empty file' do
+      expect { DBF::Table.new(StringIO.new(+'')).columns }.to_not raise_error
+    end
+
+    it 'tolerates a header shorter than 32 bytes' do
+      expect { DBF::Table.new(StringIO.new("\x03\x00\x00")).columns }.to_not raise_error
+    end
+  end
+
+  # --- VULN-010 ---
+  describe 'truncated numeric cells (CWE-248)' do
+    it 'does not crash decoding a Currency cell shorter than its width' do
+      bytes = dbf_table(record_count: 1,
+                        columns: [dbf_column(name: 'AMT', type: 'Y', length: 8, decimal: 4)],
+                        records: ' ab')
+      table = DBF::Table.new(StringIO.new(bytes))
+      expect { table.record(0).to_a }.to_not raise_error
+    end
+
+    it 'decodes a truncated AutoIncrement cell to nil' do
+      bytes = dbf_table(record_count: 1,
+                        columns: [dbf_column(name: 'INC', type: '+', length: 4)],
+                        records: ' ab')
+      table = DBF::Table.new(StringIO.new(bytes))
+      expect(table.record(0).to_a).to eq [nil]
+    end
+  end
+
+  # --- VULN-011 ---
+  describe 'truncated column descriptor (CWE-248)' do
+    it 'stops column parsing instead of building an invalid column' do
+      partial = ('N'.b * 11) + 'C'.b + ("\x00".b * 4)
+      bytes = dbf_header(record_count: 1, header_length: 49, record_length: 5) + partial
+      expect { DBF::Table.new(StringIO.new(bytes)).columns }.to warn_ignored_columns
+    end
+  end
+
+  # --- VULN-012 ---
+  describe 'dBase III memo past EOF (CWE-248)' do
+    it 'returns nil when the start block is past the end of the file' do
+      memo = DBF::Memo::Dbase3.new(StringIO.new("\x00".b * 512), '83')
+      expect(memo.get(99)).to be_nil
+    end
+  end
+
+  # --- VULN-013 ---
+  describe 'dBase IV memo past EOF (CWE-248)' do
+    it 'returns nil when the block header cannot be read' do
+      memo = DBF::Memo::Dbase4.new(StringIO.new("\x00".b * 512), '8b')
+      expect(memo.get(99)).to be_nil
+    end
+  end
+
+  # --- VULN-014 ---
+  describe 'FoxPro memo pointer on a truncated record (CWE-248)' do
+    it 'does not crash when the record ends before the memo column' do
+      bytes = dbf_table(version: 0x30, record_count: 1, record_length: 25,
+                        columns: [dbf_column(name: 'A', type: 'C', length: 20),
+                                  dbf_column(name: 'M', type: 'M', length: 4)],
+                        records: "\x00XXXX")
+      table = DBF::Table.new(StringIO.new(bytes), StringIO.new("\x00".b * 1024))
+      expect { table.record(0)&.to_a }.to_not raise_error
+    end
+  end
+
+  # --- VULN-015 ---
+  describe 'column descriptor cut short by EOF (CWE-248)' do
+    (10..17).each do |size|
+      it "stops cleanly when the column area holds only #{size} bytes" do
+        bytes = dbf_header(record_count: 1, header_length: 32 + size, record_length: 5) + ('A'.b * size)
+        expect { DBF::Table.new(StringIO.new(bytes)).columns }.to warn_ignored_columns
+      end
+    end
+
+    it 'stops cleanly for a truncated dBase II column area' do
+      bytes = dbf_header(version: 0x02, record_count: 1, record_length: 5) + ('A'.b * 6)
+      expect { DBF::Table.new(StringIO.new(bytes)).columns }.to warn_ignored_columns
+    end
+  end
+
+  # --- VULN-017 ---
+  describe 'non-ASCII column type byte (CWE-248)' do
+    let(:bytes) do
+      dbf_table(columns: [dbf_column(name: 'A', type: "\x9E".b, length: 5)])
+    end
+
+    it 'exposes a type that can be serialized to JSON' do
+      expect { DBF::Table.new(StringIO.new(bytes)).schema(:json) }.to_not raise_error
+    end
+
+    it 'keeps a valid encoding for the type' do
+      expect(DBF::Table.new(StringIO.new(bytes)).columns.first.type).to be_valid_encoding
+    end
+
+    it 'leaves ordinary type characters untouched' do
+      ordinary = dbf_table(columns: [dbf_column(name: 'A', type: 'C', length: 5)])
+      expect(DBF::Table.new(StringIO.new(ordinary)).columns.first.type).to eq 'C'
+    end
+  end
+
+  # --- VULN-016 ---
+  describe 'record body missing after the delete flag (CWE-248)' do
+    def table_with(records)
+      bytes = dbf_table(record_count: 1, record_length: 6,
+                        columns: [dbf_column(name: 'A', type: 'C', length: 5)],
+                        records:)
+      DBF::Table.new(StringIO.new(bytes))
+    end
+
+    it 'returns nil instead of crashing when the record body is absent' do
+      expect(table_with(' ').record(0)).to be_nil
+    end
+
+    it 'still returns a record when the body is present' do
+      expect(table_with(' hello').record(0).to_a).to eq ['hello']
+    end
+  end
+
+  # --- VULN-018 ---
+  describe 'memo auto-discovery (CWE-200, CWE-400)' do
+    let(:dir) { Dir.mktmpdir }
+
+    after { FileUtils.remove_entry(dir) }
+
+    # Closes the table before the directory is removed; Windows cannot
+    # delete open files.
+    def memo_file?(name)
+      path = File.join(dir, name)
+      File.binwrite(path, dbf_table(version: 0x83))
+      DBF::Table.open(path, &:has_memo_file?)
+    end
+
+    it 'does not pick up a memo whose name merely starts with the table name' do
+      File.binwrite(File.join(dir, '12.dbt'), '')
+      expect(memo_file?('1.dbf')).to be false
+    end
+
+    # Braces rather than * or ?, which Windows does not allow in filenames
+    it 'does not expand glob metacharacters in the table filename' do
+      File.binwrite(File.join(dir, 'ac.dbt'), '')
+      expect(memo_file?('{a,b}c.dbf')).to be false
+    end
+
+    it 'still finds a same-named memo case-insensitively' do
+      File.binwrite(File.join(dir, 'DATA.DBT'), '')
+      expect(memo_file?('data.dbf')).to be true
+    end
+  end
+
+  # --- VULN-019 ---
+  describe 'column descriptor amplification (CWE-400)' do
+    let(:columns) { Array.new(2_000) { |i| dbf_column(name: "C#{i}", length: 255) } }
+
+    it 'ignores descriptors beyond header_length' do
+      bytes = dbf_header(record_count: 1, header_length: 32 + (2 * 32) + 1, record_length: 1_000) +
+        columns.join + "\x0D".b
+      table = DBF::Table.new(StringIO.new(bytes))
+      expect { table.columns }.to output(/the first 2: they do not fit within the header length of 97 bytes/).to_stderr
+      expect(table.columns.size).to eq 2
+    end
+
+    it 'ignores columns that do not fit within record_length' do
+      bytes = dbf_table(record_count: 0xFFFF_FFFF, record_length: 1 + 255 + 10, columns:)
+      table = DBF::Table.new(StringIO.new(bytes))
+      expect { table.columns }.to output(/the first 1: they do not fit within the record length of 266 bytes/).to_stderr
+      expect(table.columns.sum(&:length)).to be <= 265
+    end
+  end
+
+  # --- VULN-020 ---
+  describe 'invalid bytes in an untranscoded string column (CWE-838)' do
+    it 'returns a validly encoded value that can be serialized to JSON' do
+      bytes = dbf_table(record_count: 1, columns: [dbf_column(name: 'NAME', length: 5)], records: " ab\xFFc".b)
+      value = DBF::Table.new(StringIO.new(bytes), nil, Encoding.default_external).record(0)['NAME']
+      expect(value).to be_valid_encoding
+      expect { JSON.generate([value]) }.to_not raise_error
+    end
+  end
+
+  # --- VULN-021 ---
+  describe 'DateTime column narrower than 8 bytes (CWE-248)' do
+    it 'decodes to nil instead of crashing' do
+      bytes = dbf_table(record_count: 1, columns: [dbf_column(name: 'WHEN', type: 'T', length: 4)],
+                        records: " \x01\x00\x00\x00".b)
+      expect(DBF::Table.new(StringIO.new(bytes)).record(0).to_a).to eq [nil]
+    end
+  end
+
+  # --- VULN-022 ---
+  describe 'column names that shadow implicit conversions (CWE-915)' do
+    let(:record) do
+      bytes = dbf_table(record_count: 1, columns: [dbf_column(name: 'TO_STR', length: 5)], records: ' evil!')
+      DBF::Table.new(StringIO.new(bytes)).record(0)
+    end
+
+    it 'does not respond to to_str' do
+      expect(record).to_not respond_to(:to_str)
+    end
+
+    it 'is not implicitly converted to a String' do
+      expect { +'prefix-' + record }.to raise_error(TypeError)
+    end
+
+    it 'still exposes the value through #[]' do
+      expect(record['TO_STR']).to eq 'evil!'
+    end
+  end
+
+  # --- VULN-023 ---
+  describe 'out-of-range record index (CWE-129)' do
+    let(:table) do
+      bytes = dbf_table(record_count: 1, columns: [dbf_column(name: 'A', length: 5)], records: ' hello')
+      DBF::Table.new(StringIO.new(bytes))
+    end
+
+    it 'returns nil for a negative index instead of reading the header' do
+      expect(table.record(-1)).to be_nil
+    end
+
+    it 'returns nil for a negative index instead of raising Errno::EINVAL' do
+      expect(table.record(-20)).to be_nil
+    end
+  end
+
+  # --- VULN-024 ---
+  describe 'UTF-8 C1 control characters on a terminal (CWE-150)' do
+    it 'replaces U+009B (CSI) in sanitized output' do
+      expect(DBF::CLI.sanitize("a\u009B2Jb")).to eq 'a?2Jb'
+    end
+
+    it 'leaves other non-ASCII characters untouched' do
+      expect(DBF::CLI.sanitize('café')).to eq 'café'
+    end
+  end
+
+  # --- VULN-025 ---
+  describe 'zero-length column amplification (CWE-400)' do
+    let(:columns) { Array.new(2_000) { |i| dbf_column(name: "C#{i}", length: 0) } }
+
+    it 'declares no more columns than a record has bytes' do
+      bytes = dbf_table(record_count: 3, record_length: 3, columns:, records: ' ' * 9)
+      table = DBF::Table.new(StringIO.new(bytes))
+      expect { table.columns }.to warn_ignored_columns
+      expect(table.columns.size).to eq 2
+    end
+
+    it 'keeps a zero-length column that fits alongside the others' do
+      bytes = dbf_table(record_count: 1, columns: [dbf_column(name: 'A', length: 5), dbf_column(name: 'Z', length: 0)],
+                        records: ' hello')
+      expect(DBF::Table.new(StringIO.new(bytes)).record(0).to_a).to eq ['hello', nil]
+    end
+  end
+
+  # --- VULN-026 ---
+  describe 'memo pointer too large to seek to (CWE-248)' do
+    {0x83 => 'dBase III', 0x8b => 'dBase IV'}.each do |version, format|
+      it "decodes a #{format} memo to nil instead of raising RangeError" do
+        bytes = dbf_table(version:, record_count: 1, columns: [dbf_column(name: 'NOTES', type: 'M', length: 30)],
+                          records: " #{'9' * 30}")
+        table = DBF::Table.new(StringIO.new(bytes), StringIO.new(+''))
+        expect(table.record(0).to_a).to eq [nil]
+      end
+    end
+  end
+
+  # --- VULN-027 ---
+  describe 'language driver without a Ruby converter (CWE-248)' do
+    def table_with(driver)
+      bytes = dbf_table(record_count: 1, columns: [dbf_column(name: "N\x8Ame".b, length: 5)], records: " \x87\x9Aabc".b)
+      bytes.setbyte(29, driver)
+      DBF::Table.new(StringIO.new(bytes))
+    end
+
+    it 'decodes Macintosh Central European (0x97) text' do
+      table = table_with(0x97)
+      expect([table.columns.first.name, table.record(0)['Näme']]).to eq %w[Näme áöabc]
+    end
+
+    it 'transcodes every code page in DBF::ENCODINGS' do
+      DBF::ENCODINGS.each_key do |driver|
+        expect { table_with(driver.to_i(16)).record(0).to_a }.to_not raise_error
+      end
+    end
+  end
+
+  # --- VULN-028 ---
+  describe 'errors that are not DBF::Error (CWE-248)' do
+    it 'raises UnsupportedEncodingError for an unknown encoding name instead of ArgumentError' do
+      expect { DBF::Table.new(fixture('dbase_03.dbf'), nil, 'bogus') }
+        .to raise_error(DBF::UnsupportedEncodingError, 'unsupported encoding: bogus')
+    end
+
+    it 'raises UnsupportedEncodingError for an encoding Ruby cannot transcode instead of failing on read' do
+      expect { DBF::Table.new(fixture('dbase_03.dbf'), nil, Encoding::UTF_7) }
+        .to raise_error(DBF::UnsupportedEncodingError, 'unsupported encoding: UTF-7')
+    end
+
+    it 'accepts an encoding decoded through a vendored table' do
+      expect(DBF::Table.new(fixture('dbase_03.dbf'), nil, 'cp620').encoding).to eq 'cp620'
+    end
+
+    it 'raises FileAccessError for a directory instead of Errno::EISDIR' do
+      Dir.mktmpdir do |dir|
+        expect { DBF::Table.new(dir) }.to raise_error(DBF::FileAccessError)
+      end
+    end
+
+    it 'raises FileNotFoundError for a missing memo path instead of Errno::ENOENT, closing the data file' do
+      opened = []
+      allow(File).to(receive(:open).and_wrap_original { |original, *args| original.call(*args).tap { |file| opened << file } })
+      expect { DBF::Table.new(fixture('dbase_83.dbf'), 'missing.dbt') }
+        .to raise_error(DBF::FileNotFoundError, 'file not found: missing.dbt')
+      expect(opened).to contain_exactly(an_object_having_attributes(closed?: true))
+    end
+  end
+
+  # --- VULN-029 ---
+  describe 'memo output blow-up (CWE-400)' do
+    let(:unterminated) { ("\x00".b * 512) + ('m'.b * 16_384) }
+
+    def memo_table(record_count, memo, **)
+      records = " #{'1'.rjust(10)}" * record_count
+      bytes = dbf_table(version: 0x83, record_count:, columns: [dbf_column(name: 'NOTES', type: 'M', length: 10)], records:)
+      DBF::Table.new(StringIO.new(bytes), StringIO.new(memo), **)
+    end
+
+    it 'reads every memo in full by default' do
+      expect(memo_table(3, unterminated).map { |record| record['NOTES'].bytesize }).to eq [16_384] * 3
+    end
+
+    it 'cuts off each memo at max_memo_size when many records share one large memo' do
+      expect(memo_table(200, unterminated, max_memo_size: 100).map { |record| record['NOTES'] }).to all(eq('m' * 100))
+    end
+
+    it 'stops reading an unterminated dBase III memo once max_size bytes are read' do
+      io = StringIO.new(unterminated)
+      expect(DBF::Memo::Dbase3.new(io, '83', max_size: 100).get(1)).to eq 'm' * 100
+      expect(io.pos).to eq 1024
+    end
+
+    it 'reads at most max_size bytes of a dBase IV memo' do
+      io = StringIO.new(("\x00".b * 512) + "\x00\x00\x00\x00#{[100_000].pack('L')}" + ('m'.b * 100_000))
+      expect(DBF::Memo::Dbase4.new(io, '8b', max_size: 10).get(1)).to eq 'm' * 10
+      expect(io.pos).to eq 512 + 8 + 10
+    end
+
+    it 'reads at most max_size bytes of a FoxPro memo that spans blocks' do
+      bytes = ("\x00".b * 64) + [1, 100_000].pack('NN') + ('m'.b * 100_000)
+      bytes[6, 2] = [64].pack('n')
+      io = StringIO.new(bytes)
+      expect(DBF::Memo::Foxpro.new(io, '30', max_size: 100).get(1)).to eq 'm' * 100
+      expect(io.pos).to eq 64 + 8 + 100
+    end
+
+    it 'passes max_memo_size through Table.open' do
+      memos = DBF::Table.open(fixture('dbase_83.dbf'), max_memo_size: 5) { |table| table.filter_map { |record| record['DESC'] } }
+      expect(memos).to include(satisfy { |memo| memo.bytesize == 5 })
+      expect(memos).to all(satisfy { |memo| memo.bytesize <= 5 })
+    end
+
+    [0, -1, 1.5, '100'].each do |size|
+      it "raises ArgumentError for max_memo_size #{size.inspect}" do
+        expect { DBF::Table.new(fixture('dbase_83.dbf'), max_memo_size: size) }
+          .to raise_error(ArgumentError, 'max_memo_size must be a positive Integer or nil')
+      end
+    end
+  end
+
+  # --- VULN-030 ---
+  describe 'server paths in error messages (CWE-209)' do
+    let(:dir) { File.join(Dir.tmpdir, 'srv', 'uploads') }
+
+    it 'names only the missing file, keeping the full path on #path' do
+      path = File.join(dir, 'missing.dbf')
+      expect { DBF::Table.new(path) }.to raise_error(DBF::FileNotFoundError, 'file not found: missing.dbf') { |error|
+        expect(error.path).to eq path
+      }
+    end
+
+    it 'names only the missing memo file' do
+      expect { DBF::Table.new(fixture('dbase_83.dbf'), File.join(dir, 'missing.dbt')) }
+        .to raise_error(DBF::FileNotFoundError, 'file not found: missing.dbt')
+    end
+
+    it 'names only the file that cannot be opened' do
+      Dir.mktmpdir do |parent|
+        path = File.join(parent, 'upload.dbf')
+        Dir.mkdir(path)
+        expect { DBF::Table.new(path) }.to raise_error(DBF::FileAccessError, 'cannot open file: upload.dbf (Is a directory)')
+      end
+    end
+
+    it 'names only the missing database container' do
+      expect { DBF::Database::Foxpro.new(File.join(dir, 'missing.dbc')) }
+        .to raise_error(DBF::FileNotFoundError, 'file not found: missing.dbc')
+    end
+  end
+end

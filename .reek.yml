@@ -1,0 +1,72 @@
+exclude_paths:
+  - spec
+
+detectors:
+  IrresponsibleModule:
+    enabled: false
+  TooManyMethods:
+    exclude:
+      - DBF::Table
+      # One small method per CLI flag is the design
+      - DBF::CLI
+  TooManyInstanceVariables:
+    max_instance_variables: 10
+  TooManyStatements:
+    max_statements: 15
+  BooleanParameter:
+    exclude:
+      - DBF::Schema#schema
+      - DBF::Schema#sequel_schema
+      - DBF::CLI::TerminalFilter#respond_to_missing?
+  ControlParameter:
+    exclude:
+      - DBF::Find#find_all_records
+      - DBF::Schema#sequel_schema
+  DuplicateMethodCall:
+    exclude:
+      - count_allocations
+      - measure_time
+      - DBF::CLI#write_summary
+      - DBF::Database::Foxpro#table_path
+  LongParameterList:
+    max_params: 5
+    exclude:
+      - DBF::RecordIterator#initialize
+  ManualDispatch:
+    exclude:
+      - DBF::CLI#interactive?
+      - DBF::CLI::TerminalFilter#method_missing
+      - DBF::CLI::TerminalFilter#respond_to_missing?
+      # Duck-typed IO acceptance is the documented API contract
+      - DBF::FileHandler#open_data
+      - DBF::FileHandler#data_path
+      - DBF::Table#filename
+      - DBF::Record#==
+  NestedIterators:
+    exclude:
+      - DBF::Table#write_csv
+  # Nil-checks are this library's deliberate degradation strategy for
+  # malformed files (truncated reads return nil rather than raising).
+  NilCheck:
+    enabled: false
+  UncommunicativeModuleName:
+    accept:
+      - Dbase3
+      - Dbase4
+  UncommunicativeVariableName:
+    accept:
+      - e
+      - f
+  FeatureEnvy:
+    enabled: true
+    exclude:
+      - DBF::ColumnType::Number#type_cast
+      - DBF::Database::Foxpro#build_table_data
+      - DBF::Schema#sequel_schema
+      - DBF::Table#csv_safe_value
+      - DBF::Table#validate_max_memo_size
+      - DBF::VersionConfig#read_column_args
+      - DBF::Database::Table#build_columns
+      - DBF::Record#==
+  UtilityFunction:
+    enabled: false

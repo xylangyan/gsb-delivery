@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+Signal.trap('PIPE', 'SYSTEM_DEFAULT')
+
+require 'dbf'
+
+exit DBF::CLI.run(ARGV)
