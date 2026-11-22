@@ -11,6 +11,8 @@ __version__ = config.VERSION
 
 from .cli import cli
 from .table import Table
+from .windows import WindowedTable
+from .windows import WindowParseError
 from .schema import Schema
 from .field import Field
 from .storage import Storage

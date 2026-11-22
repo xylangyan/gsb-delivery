@@ -29,6 +29,7 @@ A Python implementation of the [Table Schema](http://specs.frictionlessdata.io/t
   - [Documentation](#documentation)
     - [Introduction](#introduction)
     - [Working with Table](#working-with-table)
+    - [Fan out a stream into time windows](#fan-out-a-stream-into-time-windows)
     - [Working with Schema](#working-with-schema)
     - [Working with Field](#working-with-field)
   - [API Reference](#api-reference)
@@ -254,6 +255,52 @@ Note that
 - Data rows are yielded even though the data is schema-invalid; this is due to our custom expression handler choosing not to raise exceptions (but rather collect them in the errors list).
 - Data field values that can't get casted properly (if `iter()`/`read()` cast parameter is set to True, which is the default) are wrapped into a `FailedCast` "value holder". This allows for distinguishing uncasted values from successfully casted values on the data consumer side. `FailedCast` instances can only get yielded when custom exception handling is in place.
 - The custom exception handler callable must support a function signature as specified in the `iter()`/`read()` sections of the `Table` class API reference.
+
+### Fan out a stream into time windows
+
+A device log often has to feed several ingestion jobs, each owning a time window, while the source is a single non-rewindable CSV stream. `WindowedTable` opens that stream exactly once and routes every record by its timestamp into independent, left-closed/right-open windows. Each window pulls lazily, so the jobs can be interleaved: a window that stops after its first row does not rescan the source when it resumes, and late rows keep their original order.
+
+```python
+from tableschema import WindowedTable
+
+table = WindowedTable(
+    'devices.csv',
+    schema=schema,
+    time_field='timestamp',
+    timezone='UTC',                      # default tz for timezone-less records
+    buffer_size=1000,                    # per-window in-memory cap; overflow is spooled to disk
+    windows=[
+        {'name': 'first', 'start': '2026-01-01T00:00:00Z', 'end': '2026-01-01T01:00:00Z'},
+        {'name': 'second', 'start': '2026-01-01T01:00:00Z', 'end': '2026-01-02T00:00:00Z'},
+    ])
+
+first = table.window('first')
+second = table.window('second')
+
+first_rows = first.iter(relations=relations, exc_handler=collect_errors)
+second_rows = second.iter(relations=relations, exc_handler=collect_errors)
+
+next(first_rows)      # first window parks after its first record
+next(second_rows)     # second window keeps reading fast through the boundary
+for row in first_rows:  # late first-window rows arrive in source order on resume
+    ...
+
+table.join()          # wait for the single shared producer thread
+table.close()         # closes every window and releases spool files
+```
+
+The two rows sitting on the shared boundary (different offsets, same instant) match only the later window. Per-window buffers keep a bounded memory footprint: rows beyond `buffer_size` are spilled to a temporary file instead of piling up in memory, and a slow window never blocks a faster one.
+
+Integrity is checked inside each window independently — unique keys and foreign keys keep private caches, so the same device number may appear in several windows and an unknown warehouse in one window cannot invalidate the same number's late rows in another. Records whose timestamp cannot be parsed, and (when no default timezone is set) timezone-less records, stay separately traceable with their raw text and source line number rather than silently falling out of the windows:
+
+```python
+for error in first.parse_errors:       # WindowParseError: row_number, row_data, reason
+    log_bad_record(error.row_number, error.row_data)
+for row_number, raw_row in first.naive_rows:  # timezone-less records, raw and keyed
+    log_naive_record(row_number, raw_row)
+```
+
+Closing one window ends only that ingestion job; the other windows keep consuming the shared stream, and once every window is closed the producer stops pulling the source. A `WindowedTable` constructed without windows behaves exactly like a plain `Table`.
 
 ### Working with Schema
 
