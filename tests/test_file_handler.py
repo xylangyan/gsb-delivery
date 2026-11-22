@@ -1,0 +1,1217 @@
+import errno
+import gzip
+import io
+import os
+import threading
+import time
+import warnings
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from functools import partial
+from types import SimpleNamespace
+
+import pytest
+
+import logbook
+from logbook.handlers import _timed_rollover_regex
+
+from .utils import LETTERS, capturing_stderr_context
+
+try:
+    import brotlicffi as brotli
+except ImportError:
+    try:
+        import brotli
+    except ImportError:
+        brotli = None
+
+
+def test_file_handler(logfile, activation_strategy, logger):
+    handler = logbook.FileHandler(
+        logfile,
+        format_string="{record.level_name}:{record.channel}:{record.message}",
+    )
+    with activation_strategy(handler):
+        logger.warning("warning message")
+    handler.close()
+    with open(logfile) as f:
+        assert f.readline() == "WARNING:testlogger:warning message\n"
+
+
+def test_file_handler_unicode(logfile, activation_strategy, logger):
+    with capturing_stderr_context() as captured:
+        with activation_strategy(logbook.FileHandler(logfile)):
+            logger.info("\u0431")
+    assert not captured.getvalue()
+
+
+def test_file_handler_delay(logfile, activation_strategy, logger):
+    handler = logbook.FileHandler(
+        logfile,
+        format_string="{record.level_name}:{record.channel}:{record.message}",
+        delay=True,
+    )
+    assert not os.path.isfile(logfile)
+    with activation_strategy(handler):
+        logger.warning("warning message")
+    handler.close()
+
+    with open(logfile) as f:
+        assert f.readline() == "WARNING:testlogger:warning message\n"
+
+
+@pytest.mark.parametrize("mode", ["a", "w"])
+def test_monitoring_file_handler(logfile, activation_strategy, logger, mode):
+    if os.name == "nt":
+        pytest.skip("unsupported on windows due to different IO (also unneeded)")
+    handler = logbook.MonitoringFileHandler(
+        logfile,
+        mode=mode,
+        format_string="{record.level_name}:{record.channel}:{record.message}",
+        delay=True,
+    )
+    with activation_strategy(handler):
+        logger.warning("warning message")
+        os.rename(logfile, os.fspath(logfile) + ".old")
+        logger.warning("another warning message")
+    handler.close()
+    with open(logfile) as f:
+        assert f.read().strip() == "WARNING:testlogger:another warning message"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="MonitoringFileHandler requires POSIX")
+@pytest.mark.parametrize("recreate", [False, True])
+def test_monitoring_file_handler_rotation_during_write(tmp_path, logger, recreate):
+    filename = tmp_path / "monitor.log"
+    rotated_filename = tmp_path / "monitor.log.old"
+    written = threading.Event()
+    rotated = threading.Event()
+
+    class SynchronizedHandler(logbook.MonitoringFileHandler):
+        def write(self, item):
+            super().write(item)
+            if not written.is_set():
+                written.set()
+                assert rotated.wait(5), "external rotation did not finish"
+
+    def rotate():
+        assert written.wait(5), "first write did not start"
+        try:
+            filename.rename(rotated_filename)
+            if recreate:
+                filename.write_text("replacement\n")
+        finally:
+            rotated.set()
+
+    handler = SynchronizedHandler(filename, format_string="{record.message}")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        rotation = executor.submit(rotate)
+        with handler, logbook.Flags(errors="raise"):
+            logger.info("before rotation")
+            rotation.result(timeout=5)
+            logger.info("after rotation")
+
+    assert rotated_filename.read_text() == "before rotation\n"
+    prefix = "replacement\n" if recreate else ""
+    assert filename.read_text() == prefix + "after rotation\n"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="MonitoringFileHandler requires POSIX")
+def test_monitoring_file_handler_rotation_after_open(tmp_path, logger):
+    filename = tmp_path / "monitor.log"
+    rotated_filename = tmp_path / "monitor.log.old"
+
+    class RotatedOnOpenHandler(logbook.MonitoringFileHandler):
+        opened = 0
+
+        def _open(self, mode=None):
+            super()._open(mode)
+            self.opened += 1
+            if self.opened == 1:
+                filename.rename(rotated_filename)
+                filename.write_text("replacement\n")
+
+    handler = RotatedOnOpenHandler(filename, format_string="{record.message}")
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("first")
+        logger.info("second")
+
+    assert rotated_filename.read_text() == ""
+    assert filename.read_text() == "replacement\nfirst\nsecond\n"
+    assert handler.opened == 2
+
+
+def test_monitoring_file_handler_rejects_windows_before_open(tmp_path, monkeypatch):
+    filename = tmp_path / "rejected.log"
+    fake_os = SimpleNamespace(**vars(os))
+    fake_os.name = "nt"
+    monkeypatch.setattr(logbook.handlers, "os", fake_os)
+    with pytest.raises(RuntimeError, match="does not support Windows"):
+        logbook.MonitoringFileHandler(filename)
+    assert not filename.exists()
+
+
+def test_custom_formatter(activation_strategy, logfile, logger):
+    def custom_format(record, handler):
+        return record.level_name + ":" + record.message
+
+    handler = logbook.FileHandler(logfile)
+    with activation_strategy(handler):
+        handler.formatter = custom_format
+        logger.warning("Custom formatters are awesome")
+
+    with open(logfile) as f:
+        assert f.readline() == "WARNING:Custom formatters are awesome\n"
+
+
+@pytest.mark.parametrize("delay", [False, True])
+@pytest.mark.parametrize("max_size", [5, len("oversized first record\n")])
+@pytest.mark.parametrize("existing_backup", [False, True])
+def test_rotating_file_handler_does_not_back_up_empty_file(
+    tmp_path, logger, delay, max_size, existing_backup
+):
+    filename = tmp_path / "oversized.log"
+    backup = tmp_path / "oversized.log.1"
+    if existing_backup:
+        backup.write_text("previous generation\n")
+    with (
+        logbook.RotatingFileHandler(
+            filename,
+            max_size=max_size,
+            backup_count=1,
+            delay=delay,
+            format_string="{record.message}",
+        ),
+        logbook.Flags(errors="raise"),
+    ):
+        logger.info("oversized first record")
+        expected = (
+            ["oversized.log", "oversized.log.1"]
+            if existing_backup
+            else ["oversized.log"]
+        )
+        assert sorted(path.name for path in tmp_path.iterdir()) == expected
+        if existing_backup:
+            assert backup.read_text() == "previous generation\n"
+        assert filename.read_text() == "oversized first record\n"
+        logger.info("next")
+
+    assert filename.read_text() == "next\n"
+    assert (tmp_path / "oversized.log.1").read_text() == "oversized first record\n"
+
+
+def test_rotating_file_handler(logfile, activation_strategy, logger):
+    basename = os.path.basename(logfile)
+    handler = logbook.RotatingFileHandler(
+        logfile,
+        max_size=2048,
+        backup_count=3,
+    )
+    handler.format_string = "{record.message}"
+    with activation_strategy(handler):
+        for c, _ in zip(LETTERS, range(32)):
+            logger.warning(c * 256)
+    files = [x for x in os.listdir(os.path.dirname(logfile)) if x.startswith(basename)]
+    files.sort()
+
+    assert files == [basename, basename + ".1", basename + ".2", basename + ".3"]
+    with open(logfile) as f:
+        assert f.readline().rstrip() == ("C" * 256)
+        assert f.readline().rstrip() == ("D" * 256)
+        assert f.readline().rstrip() == ("E" * 256)
+        assert f.readline().rstrip() == ("F" * 256)
+
+
+class BrokenStream(io.TextIOWrapper):
+    """A text stream whose next flush or close fails like a disk error would."""
+
+    failing = None
+
+    def flush(self):
+        if self.failing == "flush":
+            self.failing = None
+            raise OSError(errno.EIO, "flush failed")
+        super().flush()
+
+    def close(self):
+        if self.failing == "close":
+            self.failing = None
+            try:
+                super().close()
+            finally:
+                raise OSError(errno.EIO, "close failed")
+        super().close()
+
+
+def break_stream(handler, failing):
+    handler.stream.flush()
+    stream = BrokenStream(handler.stream.detach(), encoding=handler.encoding)
+    stream.failing = failing
+    handler.stream = stream
+
+
+@pytest.mark.parametrize("failing", ["flush", "close"])
+def test_file_handler_keeps_file_after_failed_close(tmp_path, logger, failing):
+    filename = tmp_path / "app.log"
+    handler = logbook.FileHandler(filename, mode="w", format_string="{record.message}")
+    handler.write("before\n")
+    break_stream(handler, failing)
+    stream = handler.stream
+    with pytest.raises(OSError, match=f"{failing} failed"):
+        handler.close()
+    assert stream.closed
+
+    with handler, logbook.Flags(errors="raise"):
+        with pytest.raises(ValueError, match="closed file handler"):
+            logger.info("late")
+    assert filename.read_text() == "before\n"
+
+
+def test_file_handler_reopens_after_failed_close(tmp_path, logger):
+    filename = tmp_path / "app.log"
+    handler = logbook.FileHandler(filename, format_string="{record.message}")
+    handler.write("before\n")
+    break_stream(handler, "close")
+    with pytest.raises(OSError, match="close failed"):
+        handler.close()
+
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("after")
+    assert filename.read_text() == "before\nafter\n"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="MonitoringFileHandler requires POSIX")
+def test_monitoring_file_handler_reopens_after_failed_close(tmp_path, logger):
+    filename = tmp_path / "app.log"
+    moved = tmp_path / "app.log.old"
+    handler = logbook.MonitoringFileHandler(filename, format_string="{record.message}")
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("before")
+        filename.rename(moved)
+        break_stream(handler, "close")
+        with pytest.raises(OSError, match="close failed"):
+            logger.info("lost")
+        logger.info("after")
+
+    assert moved.read_text() == "before\n"
+    assert filename.read_text() == "after\n"
+
+
+def fail_once(monkeypatch, target, name, should_fail, error):
+    original = getattr(target, name)
+    failures = [error]
+
+    def replacement(*args):
+        if failures and should_fail(*args):
+            raise failures.pop()
+        return original(*args)
+
+    monkeypatch.setattr(target, name, replacement)
+
+
+@pytest.mark.parametrize(
+    ("failing", "error"),
+    [("close", None), ("app.log", errno.EACCES)],
+)
+def test_rotating_file_handler_resumes_failed_rollover(
+    tmp_path, monkeypatch, logger, failing, error
+):
+    filename = tmp_path / "app.log"
+    for index in (1, 2):
+        (tmp_path / f"app.log.{index}").write_text(f"backup {index}\n")
+    handler = logbook.RotatingFileHandler(
+        filename, max_size=20, backup_count=3, format_string="{record.message}"
+    )
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("current record")
+        if failing == "close":
+            break_stream(handler, "close")
+        else:
+            fail_once(
+                monkeypatch,
+                logbook.handlers,
+                "rename",
+                lambda src, dst: src == str(tmp_path / failing),
+                OSError(error, os.strerror(error)),
+            )
+        with pytest.raises(OSError):
+            logger.info("trigger")
+        handler.write("written\n")
+        logger.info("retry")
+
+    assert (tmp_path / "app.log.3").read_text() == "backup 2\n"
+    assert (tmp_path / "app.log.2").read_text() == "backup 1\n"
+    assert (tmp_path / "app.log.1").read_text() == "current record\nwritten\n"
+    assert filename.read_text() == "retry\n"
+
+
+def test_rotating_file_handler_reopens_after_failed_open(tmp_path, monkeypatch, logger):
+    filename = tmp_path / "app.log"
+    handler = logbook.RotatingFileHandler(
+        filename, max_size=20, backup_count=2, format_string="{record.message}"
+    )
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("current record")
+        fail_once(
+            monkeypatch,
+            handler,
+            "_open",
+            lambda mode=None: True,
+            OSError(errno.EMFILE, "open failed"),
+        )
+        with pytest.raises(OSError, match="open failed"):
+            logger.info("trigger")
+        handler.write("written\n")
+        logger.info("next")
+        logger.info("last record")
+
+    assert (tmp_path / "app.log.2").read_text() == "current record\n"
+    assert (tmp_path / "app.log.1").read_text() == "written\nnext\n"
+    assert filename.read_text() == "last record\n"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot delete an open file")
+def test_rotating_file_handler_rolls_over_deleted_file(tmp_path, logger):
+    filename = tmp_path / "app.log"
+    handler = logbook.RotatingFileHandler(
+        filename, max_size=20, backup_count=1, format_string="{record.message}"
+    )
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("deleted record")
+        filename.unlink()
+        logger.info("first")
+        logger.info("second")
+
+    assert filename.read_text() == "first\nsecond\n"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires Windows file sharing")
+def test_rotating_file_handler_resumes_after_locked_file(tmp_path, logger):
+    filename = tmp_path / "app.log"
+    for index in (1, 2):
+        (tmp_path / f"app.log.{index}").write_text(f"backup {index}\n")
+    handler = logbook.RotatingFileHandler(
+        filename, max_size=20, backup_count=3, format_string="{record.message}"
+    )
+    with handler, logbook.Flags(errors="raise"):
+        logger.info("current record")
+        with open(tmp_path / "app.log.2"), pytest.raises(OSError):
+            logger.info("trigger")
+        logger.info("retry")
+
+    assert (tmp_path / "app.log.3").read_text() == "backup 2\n"
+    assert (tmp_path / "app.log.2").read_text() == "backup 1\n"
+    assert (tmp_path / "app.log.1").read_text() == "current record\n"
+    assert filename.read_text() == "retry\n"
+
+
+@pytest.fixture
+def started_in_2010(set_clock):
+    # Timed handlers keep records from before they started in the current file.
+    set_clock(datetime(2010, 1, 1, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize("backup_count", [1, 3])
+def test_timed_rotating_file_handler(
+    tmpdir, activation_strategy, backup_count, started_in_2010
+):
+    basename = str(tmpdir.join("trot.log"))
+    handler = logbook.TimedRotatingFileHandler(basename, backup_count=backup_count)
+    handler.format_string = "[{record.time:%H:%M}] {record.message}"
+
+    def fake_record(message, year, month, day, hour=0, minute=0, second=0):
+        lr = logbook.LogRecord("Test Logger", logbook.WARNING, message)
+        lr.time = datetime(year, month, day, hour, minute, second)
+        return lr
+
+    with activation_strategy(handler):
+        for x in range(10):
+            handler.handle(fake_record("First One", 2010, 1, 5, x + 1))
+        for x in range(20):
+            handler.handle(fake_record("Second One", 2010, 1, 6, x + 1))
+        for x in range(10):
+            handler.handle(fake_record("Third One", 2010, 1, 7, x + 1))
+        for x in range(20):
+            handler.handle(fake_record("Last One", 2010, 1, 8, x + 1))
+
+    files = sorted(x for x in os.listdir(str(tmpdir)) if x.startswith("trot"))
+
+    assert files == [f"trot-2010-01-0{i}.log" for i in range(5, 9)][-backup_count:]
+    with open(str(tmpdir.join("trot-2010-01-08.log"))) as f:
+        assert f.readline().rstrip() == "[01:00] Last One"
+        assert f.readline().rstrip() == "[02:00] Last One"
+    if backup_count > 1:
+        with open(str(tmpdir.join("trot-2010-01-07.log"))) as f:
+            assert f.readline().rstrip() == "[01:00] Third One"
+            assert f.readline().rstrip() == "[02:00] Third One"
+
+
+@pytest.mark.parametrize("backup_count", [1, 3])
+def test_timed_rotating_file_handler__rollover_format(
+    tmpdir, activation_strategy, backup_count, started_in_2010
+):
+    basename = str(tmpdir.join("trot.log"))
+    handler = logbook.TimedRotatingFileHandler(
+        basename,
+        backup_count=backup_count,
+        rollover_format="{basename}{ext}.{timestamp}",
+    )
+    handler.format_string = "[{record.time:%H:%M}] {record.message}"
+
+    def fake_record(message, year, month, day, hour=0, minute=0, second=0):
+        lr = logbook.LogRecord("Test Logger", logbook.WARNING, message)
+        lr.time = datetime(year, month, day, hour, minute, second)
+        return lr
+
+    with activation_strategy(handler):
+        for x in range(10):
+            handler.handle(fake_record("First One", 2010, 1, 5, x + 1))
+        for x in range(20):
+            handler.handle(fake_record("Second One", 2010, 1, 6, x + 1))
+        for x in range(10):
+            handler.handle(fake_record("Third One", 2010, 1, 7, x + 1))
+        for x in range(20):
+            handler.handle(fake_record("Last One", 2010, 1, 8, x + 1))
+
+    files = sorted(x for x in os.listdir(str(tmpdir)) if x.startswith("trot"))
+
+    assert files == [f"trot.log.2010-01-0{i}" for i in range(5, 9)][-backup_count:]
+    with open(str(tmpdir.join("trot.log.2010-01-08"))) as f:
+        assert f.readline().rstrip() == "[01:00] Last One"
+        assert f.readline().rstrip() == "[02:00] Last One"
+    if backup_count > 1:
+        with open(str(tmpdir.join("trot.log.2010-01-07"))) as f:
+            assert f.readline().rstrip() == "[01:00] Third One"
+            assert f.readline().rstrip() == "[02:00] Third One"
+
+
+@pytest.mark.parametrize("backup_count", [1, 3])
+@pytest.mark.parametrize("preexisting_file", [True, False])
+def test_timed_rotating_file_handler__not_timed_filename_for_current(
+    tmpdir, activation_strategy, backup_count, preexisting_file, started_in_2010
+):
+    basename = str(tmpdir.join("trot.log"))
+
+    if preexisting_file:
+        with open(basename, "w") as file:
+            file.write("contents")
+        jan_first = time.mktime(datetime(2010, 1, 1).timetuple())
+        os.utime(basename, (jan_first, jan_first))
+
+    handler = logbook.TimedRotatingFileHandler(
+        basename,
+        format_string="[{record.time:%H:%M}] {record.message}",
+        backup_count=backup_count,
+        rollover_format="{basename}{ext}.{timestamp}",
+        timed_filename_for_current=False,
+    )
+
+    def fake_record(message, year, month, day, hour=0, minute=0, second=0):
+        lr = logbook.LogRecord("Test Logger", logbook.WARNING, message)
+        lr.time = datetime(year, month, day, hour, minute, second)
+        return lr
+
+    with activation_strategy(handler):
+        for x in range(10):
+            handler.handle(fake_record("First One", 2010, 1, 5, x + 1))
+        for x in range(20):
+            handler.handle(fake_record("Second One", 2010, 1, 6, x + 1))
+        for x in range(10):
+            handler.handle(fake_record("Third One", 2010, 1, 7, x + 1))
+        for x in range(20):
+            handler.handle(fake_record("Last One", 2010, 1, 8, x + 1))
+
+    computed_files = [x for x in os.listdir(str(tmpdir)) if x.startswith("trot")]
+
+    expected_files = ["trot.log.2010-01-01"] if preexisting_file else []
+    expected_files += [f"trot.log.2010-01-0{i}" for i in range(5, 8)]
+    expected_files += ["trot.log"]
+    expected_files = expected_files[-backup_count:]
+
+    assert sorted(computed_files) == sorted(expected_files)
+
+    with open(str(tmpdir.join("trot.log"))) as f:
+        assert f.readline().rstrip() == "[01:00] Last One"
+        assert f.readline().rstrip() == "[02:00] Last One"
+    if backup_count > 1:
+        with open(str(tmpdir.join("trot.log.2010-01-07"))) as f:
+            assert f.readline().rstrip() == "[01:00] Third One"
+            assert f.readline().rstrip() == "[02:00] Third One"
+
+
+def test_timed_rotating_file_handler_dates_existing_file_on_record_clock(
+    tmp_path, record_time, set_clock
+):
+    current = tmp_path / "app.log"
+    current.write_text("current\n")
+    backup = tmp_path / "app-2010-01-01.log"
+    backup.write_text("backup\n")
+    written = datetime(2010, 1, 2, 1, tzinfo=timezone.utc)
+    os.utime(current, (written.timestamp(), written.timestamp()))
+
+    # Restart 30 seconds after the file was last written.
+    set_clock(written + timedelta(seconds=30))
+    handler = logbook.TimedRotatingFileHandler(
+        current, timed_filename_for_current=False, format_string="{record.message}"
+    )
+    record = logbook.LogRecord("test", logbook.INFO, "new")
+    record.time = record_time(written + timedelta(minutes=1))
+    with handler, logbook.Flags(errors="raise"):
+        handler.handle(record)
+
+    assert backup.read_text() == "backup\n"
+    assert current.read_text() == "current\nnew\n"
+
+
+def test_timed_rotating_file_handler_dates_existing_file_across_dst(
+    tmp_path, new_york, monkeypatch
+):
+    for name in ("_datetime_factory", "_datetime_mode", "_datetime_tzinfo"):
+        monkeypatch.setattr(logbook.base, name, getattr(logbook.base, name))
+    current = tmp_path / "app.log"
+    current.write_text("current\n")
+    backup = tmp_path / "app-2010-07-15-13.log"
+    backup.write_text("backup\n")
+    # 14:30 EDT, then a restart at 09:00 EST.
+    written = datetime(2010, 7, 15, 18, 30, tzinfo=timezone.utc)
+    os.utime(current, (written.timestamp(), written.timestamp()))
+    restart = datetime(2010, 12, 1, 14, tzinfo=timezone.utc)
+    logbook.set_datetime_format(lambda: restart.astimezone())
+
+    handler = logbook.TimedRotatingFileHandler(
+        current,
+        date_format="%Y-%m-%d-%H",
+        timed_filename_for_current=False,
+        format_string="{record.message}",
+    )
+    record = logbook.LogRecord("test", logbook.INFO, "new")
+    record.time = (restart + timedelta(minutes=1)).astimezone()
+    with handler, logbook.Flags(errors="raise"):
+        handler.handle(record)
+
+    assert backup.read_text() == "backup\n"
+    assert (tmp_path / "app-2010-07-15-14.log").read_text() == "current\n"
+
+
+def _decompress(input_file_name, use_gzip=True):
+    if use_gzip:
+        with gzip.open(input_file_name, "rb") as in_f:
+            return in_f.read().decode()
+    else:
+        with open(input_file_name, "rb") as in_f:
+            return brotli.decompress(in_f.read()).decode()
+
+
+def test_gzip_file_handler(logfile, activation_strategy, logger):
+    handler = logbook.GZIPCompressionHandler(logfile)
+    handler.format_string = "{record.level_name}:{record.channel}:{record.message}"
+    with activation_strategy(handler):
+        logger.warning("warning message")
+    handler.close()
+    with gzip.open(logfile, "rb") as f:
+        assert f.read().decode() == "WARNING:testlogger:warning message\n"
+
+
+@pytest.mark.skipif(brotli is None, reason="brotli not installed")
+def test_brotli_file_handler(logfile, activation_strategy, logger):
+    handler = logbook.BrotliCompressionHandler(logfile)
+    handler.format_string = "{record.level_name}:{record.channel}:{record.message}"
+    with activation_strategy(handler):
+        logger.warning("warning message")
+    handler.close()
+    with open(logfile, "rb") as in_f:
+        assert (
+            brotli.decompress(in_f.read()).decode()
+            == "WARNING:testlogger:warning message\n"
+        )
+
+
+@pytest.mark.skipif(brotli is None, reason="brotli not installed")
+def test_brotli_finish_failure_closes_file(tmp_path):
+    path = tmp_path / "test.br"
+    handler = logbook.BrotliCompressionHandler(path, format_string="{record.message}")
+    handler.emit(logbook.LogRecord("test", logbook.INFO, "saved record"))
+    handler.flush()
+    contents = path.read_bytes()
+    stream = handler.stream
+    error = OSError("finish failed")
+
+    class FailingCompressor:
+        def finish(self):
+            raise error
+
+    handler._compressor = FailingCompressor()
+    with pytest.raises(OSError) as caught:
+        handler.close()
+    assert caught.value is error
+    assert stream.closed
+    with pytest.raises(ValueError, match="closed file handler"):
+        handler.emit(logbook.LogRecord("test", logbook.INFO, "later record"))
+    assert path.read_bytes() == contents
+    handler.flush()
+    handler.close()
+
+
+def _read_write_file_handler(path, **kwargs):
+    path.touch()
+    return logbook.FileHandler(path, mode="r+", **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("make_handler", "decompress"),
+    [
+        pytest.param(partial(logbook.FileHandler, mode="w"), lambda data: data),
+        pytest.param(_read_write_file_handler, lambda data: data),
+        pytest.param(partial(logbook.FileHandler, mode="x"), lambda data: data),
+        pytest.param(
+            partial(logbook.MonitoringFileHandler, mode="w"),
+            lambda data: data,
+            marks=pytest.mark.skipif(os.name == "nt", reason="unsupported on Windows"),
+        ),
+        pytest.param(logbook.GZIPCompressionHandler, gzip.decompress),
+        pytest.param(
+            logbook.BrotliCompressionHandler,
+            lambda data: brotli.decompress(data),
+            marks=pytest.mark.skipif(brotli is None, reason="brotli not installed"),
+        ),
+    ],
+    ids=["w", "r+", "x", "monitoring", "gzip", "brotli"],
+)
+def test_closed_handler_keeps_file(tmp_path, logger, make_handler, decompress):
+    path = tmp_path / "app.log"
+    handler = make_handler(path, format_string="{record.message}")
+    with handler.applicationbound(), logbook.Flags(errors="raise"):
+        logger.warning("kept")
+        handler.close()
+        with pytest.raises(ValueError, match="closed file handler"):
+            logger.warning("late")
+    assert decompress(path.read_bytes()).splitlines() == [b"kept"]
+
+
+def test_closed_delayed_handler_creates_no_file(tmp_path, logger):
+    path = tmp_path / "app.log"
+    handler = logbook.FileHandler(path, mode="w", delay=True)
+    handler.close()
+    with handler.applicationbound(), logbook.Flags(errors="raise"):
+        with pytest.raises(ValueError, match="closed file handler"):
+            logger.warning("late")
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("mode", ["a", "a+"])
+def test_closed_append_handler_reopens(tmp_path, logger, mode):
+    path = tmp_path / "app.log"
+    handler = logbook.FileHandler(path, mode=mode, format_string="{record.message}")
+    with handler.applicationbound(), logbook.Flags(errors="raise"):
+        logger.warning("first")
+        handler.close()
+        logger.warning("second")
+    handler.close()
+    assert path.read_text() == "first\nsecond\n"
+
+
+@pytest.mark.parametrize(
+    "handler_class",
+    [
+        logbook.FileHandler,
+        pytest.param(
+            logbook.MonitoringFileHandler,
+            marks=pytest.mark.skipif(os.name == "nt", reason="unsupported on Windows"),
+        ),
+    ],
+)
+def test_closed_handler_reopens_explicitly(tmp_path, logger, handler_class):
+    path = tmp_path / "app.log"
+    handler = handler_class(path, mode="w", format_string="{record.message}")
+    with handler.applicationbound(), logbook.Flags(errors="raise"):
+        logger.warning("first")
+        handler.close()
+        path.rename(tmp_path / "app.log.1")
+        handler._open()
+        logger.warning("second")
+    handler.close()
+    assert (tmp_path / "app.log.1").read_text() == "first\n"
+    assert path.read_text() == "second\n"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires POSIX special files")
+@pytest.mark.parametrize("special_file", ["null", "fifo"])
+@pytest.mark.parametrize("timed", [False, True])
+def test_rotation_preserves_special_files(tmp_path, special_file, timed):
+    filename = tmp_path / "special.log"
+    reader = None
+    if special_file == "null":
+        filename.symlink_to(os.devnull)
+    else:
+        os.mkfifo(filename)
+        reader = os.open(filename, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        if timed:
+            handler = logbook.TimedRotatingFileHandler(
+                filename,
+                timed_filename_for_current=False,
+                backup_count=1,
+                format_string="{record.message}",
+            )
+        else:
+            handler = logbook.RotatingFileHandler(
+                filename,
+                max_size=1,
+                backup_count=1,
+                format_string="{record.message}",
+            )
+        with handler, logbook.Flags(errors="raise"):
+            for day in [1, 2]:
+                record = logbook.LogRecord("test", logbook.INFO, f"message {day}")
+                record.time = datetime(2020, 1, day)
+                handler.handle(record)
+        assert list(tmp_path.iterdir()) == [filename]
+        if special_file == "null":
+            assert filename.is_symlink()
+            assert os.fspath(filename.resolve()) == os.path.realpath(os.devnull)
+        else:
+            assert filename.is_fifo()
+            assert os.read(reader, 4096) == b"message 1\nmessage 2\n"
+    finally:
+        if reader is not None:
+            os.close(reader)
+
+
+def test_size_rollover_appends_to_new_file(tmp_path, logger):
+    filename = tmp_path / "append.log"
+
+    class InterleavedHandler(logbook.RotatingFileHandler):
+        def write(self, item):
+            if item == "rollover\n":
+                with filename.open("a") as other_writer:
+                    other_writer.write("external\n")
+            super().write(item)
+
+    with (
+        InterleavedHandler(
+            filename, max_size=12, backup_count=1, format_string="{record.message}"
+        ),
+        logbook.Flags(errors="raise"),
+    ):
+        logger.info("before")
+        logger.info("rollover")
+
+    assert (tmp_path / "append.log.1").read_text() == "before\n"
+    assert filename.read_text() == "external\nrollover\n"
+
+
+@pytest.mark.parametrize(
+    "handler_class",
+    [logbook.RotatingFileHandler, logbook.TimedRotatingFileHandler],
+    ids=lambda handler_class: handler_class.__name__,
+)
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [((), {}), ((), {"mode": "a"}), (("a",), {})],
+    ids=["default", "keyword", "positional"],
+)
+def test_rotating_mode_deprecation(tmp_path, recwarn, handler_class, args, kwargs):
+    handler_class(tmp_path / "app.log", *args, **kwargs).close()
+    caught = [
+        (w.category, w.filename) for w in recwarn if "mode argument" in str(w.message)
+    ]
+    assert caught == ([(DeprecationWarning, __file__)] if args or kwargs else [])
+
+
+@pytest.mark.filterwarnings("ignore:The mode argument:DeprecationWarning")
+@pytest.mark.parametrize(
+    ("handler_class", "current"),
+    [
+        (logbook.RotatingFileHandler, "app.log"),
+        (logbook.TimedRotatingFileHandler, "app-2010-01-01.log"),
+    ],
+    ids=["size", "timed"],
+)
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [({}, "previous\nnew\n"), ({"mode": "w"}, "new\n")],
+    ids=["default", "w"],
+)
+def test_rotating_mode_on_first_open(
+    tmp_path, logger, handler_class, current, kwargs, expected, started_in_2010
+):
+    (tmp_path / current).write_text("previous\n")
+    with (
+        handler_class(tmp_path / "app.log", format_string="{record.message}", **kwargs),
+        logbook.Flags(errors="raise"),
+    ):
+        logger.info("new")
+
+    assert (tmp_path / current).read_text() == expected
+
+
+@pytest.mark.parametrize("timed_filename_for_current", [True, False])
+def test_timed_rollover_keeps_late_record_in_current_file(
+    tmp_path, timed_filename_for_current, started_in_2010
+):
+    handler = logbook.TimedRotatingFileHandler(
+        tmp_path / "app.log",
+        backup_count=2,
+        timed_filename_for_current=timed_filename_for_current,
+        format_string="{record.message}",
+    )
+    with handler, logbook.Flags(errors="raise"):
+        for day, message in [(1, "first"), (2, "second"), (1, "late"), (2, "again")]:
+            record = logbook.LogRecord("test", logbook.INFO, message)
+            record.time = datetime(2010, 1, day)
+            handler.handle(record)
+
+    current = "app-2010-01-02.log" if timed_filename_for_current else "app.log"
+    assert (tmp_path / current).read_text() == "second\nlate\nagain\n"
+    assert (tmp_path / "app-2010-01-01.log").read_text() == "first\n"
+
+
+def test_timed_rollover_keeps_record_from_before_start_in_current_file(
+    tmp_path, set_clock
+):
+    (tmp_path / "app-2010-01-01.log").write_text("day 1\n")
+    set_clock(datetime(2010, 1, 2, 0, 10, tzinfo=timezone.utc))
+    handler = logbook.TimedRotatingFileHandler(
+        tmp_path / "app.log",
+        timed_filename_for_current=False,
+        format_string="{record.message}",
+    )
+    with handler, logbook.Flags(errors="raise"):
+        for message, when in [
+            ("late", datetime(2010, 1, 1, 23, 50)),
+            ("day 2", datetime(2010, 1, 2, 0, 20)),
+        ]:
+            record = logbook.LogRecord("test", logbook.INFO, message)
+            record.time = when
+            handler.handle(record)
+
+    assert (tmp_path / "app-2010-01-01.log").read_text() == "day 1\n"
+    assert (tmp_path / "app.log").read_text() == "late\nday 2\n"
+
+
+def test_timed_rollover_hourly_across_local_dst(tmp_path, monkeypatch, set_clock):
+    if hasattr(time, "tzset"):
+        monkeypatch.setenv("TZ", "Europe/Berlin")
+        time.tzset()
+    set_clock(datetime(2026, 3, 29, tzinfo=timezone.utc))
+    try:
+        handler = logbook.TimedRotatingFileHandler(
+            tmp_path / "app.log",
+            date_format="%Y-%m-%d-%H",
+            format_string="{record.message}",
+        )
+        with handler, logbook.Flags(errors="raise"):
+            for hour in range(5):
+                record = logbook.LogRecord("test", logbook.INFO, str(hour))
+                record.time = datetime(2026, 3, 29, hour, 30)
+                handler.handle(record)
+    finally:
+        monkeypatch.undo()
+        if hasattr(time, "tzset"):
+            time.tzset()
+
+    assert len(list(tmp_path.iterdir())) == 5
+
+
+def test_timed_rollover_in_repeated_hour(tmp_path, record_time, set_clock):
+    # Starts at 01:40 EDT; records at 01:50 EDT, then 01:10 and 01:20 EST.
+    set_clock(datetime(2026, 11, 1, 5, 40, tzinfo=timezone.utc))
+    times = [
+        record_time(datetime(2026, 11, 1, hour, minute, tzinfo=timezone.utc))
+        for hour, minute in [(5, 50), (6, 10), (6, 20)]
+    ]
+    handler = logbook.TimedRotatingFileHandler(
+        tmp_path / "app.log", date_format="%H-%M", format_string="{record.message}"
+    )
+    with handler, logbook.Flags(errors="raise"):
+        for t in times:
+            record = logbook.LogRecord("test", logbook.INFO, f"{t:%H-%M}")
+            record.time = t
+            handler.handle(record)
+
+    for t in times:
+        assert (tmp_path / f"app-{t:%H-%M}.log").read_text() == f"{t:%H-%M}\n"
+
+
+def test_timed_rollover_restart_keeps_backups(tmp_path, record_time, set_clock):
+    times = [
+        record_time(datetime(2026, 7, 15, hour, 30, tzinfo=timezone.utc))
+        for hour in (12, 13, 14)
+    ]
+    for t in times:
+        (tmp_path / f"app-{t:%Y-%m-%d-%H}.log").touch()
+    set_clock(datetime(2026, 7, 15, 14, 30, tzinfo=timezone.utc))
+    handler = logbook.TimedRotatingFileHandler(
+        tmp_path / "app.log", date_format="%Y-%m-%d-%H", backup_count=3
+    )
+    with handler, logbook.Flags(errors="raise"):
+        record = logbook.LogRecord("test", logbook.INFO, "restarted")
+        record.time = times[-1]
+        handler.handle(record)
+
+    assert len(list(tmp_path.iterdir())) == 3
+
+
+def _log_on_day(handler, day, message, hour=0):
+    record = logbook.LogRecord("test", logbook.INFO, message)
+    record.time = datetime(2010, 1, day, hour)
+    handler.handle(record)
+
+
+@pytest.mark.parametrize(
+    ("timed_filename_for_current", "failure", "old_period", "new_period"),
+    [
+        (False, "rename", "first\nlate\n", "second\n"),
+        (False, "close", "first\nlate\n", "second\n"),
+        (True, "remove", "first\nlate\n", "second\n"),
+        (False, "remove", "first\n", "late\nsecond\n"),
+        (False, "open", "first\n", "late\nsecond\n"),
+        (True, "open", "first\n", "late\nsecond\n"),
+    ],
+    ids=[
+        "fixed-rename",
+        "fixed-close",
+        "dated-remove",
+        "fixed-remove",
+        "fixed-open",
+        "dated-open",
+    ],
+)
+def test_timed_rollover_recovers_from_failure(
+    tmp_path,
+    monkeypatch,
+    timed_filename_for_current,
+    failure,
+    old_period,
+    new_period,
+    started_in_2010,
+):
+    handler = logbook.TimedRotatingFileHandler(
+        tmp_path / "app.log",
+        backup_count=2,
+        timed_filename_for_current=timed_filename_for_current,
+        format_string="{record.message}",
+    )
+    old_file = tmp_path / "app-2010-01-01.log"
+    new_file = tmp_path / (
+        "app-2010-01-02.log" if timed_filename_for_current else "app.log"
+    )
+    with handler, logbook.Flags(errors="raise"):
+        _log_on_day(handler, 1, "first")
+        if failure == "rename":
+            old_file.mkdir()
+        elif failure == "close":
+            break_stream(handler, "close")
+        elif failure == "remove":
+            missing = (0, str(tmp_path / "missing.log"))
+            monkeypatch.setattr(handler, "files_to_delete", lambda: [missing])
+        else:
+            real_open = handler._open
+
+            def open_fails_once(mode=None):
+                monkeypatch.setattr(handler, "_open", real_open)
+                raise OSError
+
+            monkeypatch.setattr(handler, "_open", open_fails_once)
+        with pytest.raises(OSError):
+            _log_on_day(handler, 2, "lost")
+        monkeypatch.undo()
+        if failure == "rename":
+            old_file.rmdir()
+        _log_on_day(handler, 1, "late", hour=12)
+        _log_on_day(handler, 2, "second")
+
+    assert old_file.read_text() == old_period
+    assert new_file.read_text() == new_period
+
+
+def test_timed_rotating_file_handler_deletes_only_own_backups(
+    tmp_path, started_in_2010
+):
+    others = ["app-2010-01-01.log.gz", "app-errors-2010-01-01.log"]
+    for filename in others:
+        (tmp_path / filename).write_text("old\n")
+        os.utime(tmp_path / filename, (0, 0))
+    (tmp_path / "app-2010-01-02.log").mkdir()
+    handler = logbook.TimedRotatingFileHandler(tmp_path / "app.log", backup_count=2)
+    with handler, logbook.Flags(errors="raise"):
+        for day in (3, 4, 5):
+            _log_on_day(handler, day, "record")
+
+    kept = [*others, "app-2010-01-02.log", "app-2010-01-04.log", "app-2010-01-05.log"]
+    assert sorted(os.listdir(tmp_path)) == sorted(kept)
+
+
+def test_timed_rotating_file_handler_deletes_least_recently_modified(
+    tmp_path, started_in_2010
+):
+    for day, mtime in ((1, 2), (2, 1)):
+        path = tmp_path / f"app-2010-01-0{day}.log"
+        path.touch()
+        os.utime(path, (mtime, mtime))
+    handler = logbook.TimedRotatingFileHandler(tmp_path / "app.log", backup_count=2)
+    with handler, logbook.Flags(errors="raise"):
+        _log_on_day(handler, 3, "record")
+
+    assert sorted(os.listdir(tmp_path)) == ["app-2010-01-01.log", "app-2010-01-03.log"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires POSIX symlinks")
+def test_timed_rotating_file_handler_skips_unreadable_backups(
+    tmp_path, started_in_2010
+):
+    loop = tmp_path / "app-2009-12-31.log"
+    loop.symlink_to(loop)
+    handler = logbook.TimedRotatingFileHandler(tmp_path / "app.log", backup_count=2)
+    with handler, logbook.Flags(errors="raise"):
+        _log_on_day(handler, 2, "record")
+
+    assert sorted(os.listdir(tmp_path)) == [loop.name, "app-2010-01-02.log"]
+
+
+def test_timed_rotating_file_handler_warns_for_unrecognised_names(
+    tmp_path, started_in_2010
+):
+    (tmp_path / "app-notes.log").touch()
+    with pytest.warns(UserWarning, match="will not remove any"):
+        handler = logbook.TimedRotatingFileHandler(
+            tmp_path / "app.log", date_format="%Y-%m-%d-%Z", backup_count=1
+        )
+    with handler, logbook.Flags(errors="raise"):
+        for day in (1, 2):
+            _log_on_day(handler, day, "record")
+
+    assert len(os.listdir(tmp_path)) == 3
+
+
+def test_timed_rotating_file_handler_warns_only_with_backup_count(tmp_path):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        handler = logbook.TimedRotatingFileHandler(
+            tmp_path / "app.log", date_format="%Y-%m-%d-%Z"
+        )
+    handler.close()
+
+
+DEFAULT_ROLLOVER = "{basename}-{timestamp}{ext}"
+
+
+@pytest.mark.parametrize(
+    ("date_format", "filename"),
+    [
+        pytest.param("%Y-%G", "app-2010-2009.log", id="4-digit"),
+        pytest.param("%y-%m-%d", "app-10-01-31.log", id="2-digit-date"),
+        pytest.param("%H-%I-%M-%S", "app-23-11-59-58.log", id="2-digit-time"),
+        pytest.param("%U-%W-%V", "app-05-04-53.log", id="2-digit-week"),
+        pytest.param("%j", "app-031.log", id="day-of-year"),
+        pytest.param("%u-%w", "app-7-0.log", id="weekday-number"),
+        pytest.param("%F", "app-2010-01-31.log", id="iso-date"),
+        pytest.param("%Y-%f", "app-2010-000017.log", id="microsecond"),
+        pytest.param("%Y%%", "app-2010%.log", id="percent"),
+        pytest.param("%Y%z", "app-2010+0100.log", id="offset-east"),
+        pytest.param("%Y%z", "app-2010-0530.log", id="offset-west"),
+        pytest.param("%Y%z", "app-2010.log", id="offset-absent"),
+        pytest.param("%Y%z", "app-2010+000030.log", id="offset-seconds"),
+        pytest.param("%Y%z", "app-2010+000030.000001.log", id="offset-microseconds"),
+        pytest.param("%a-%b-%p", "app-Mon-Jan-AM.log", id="short-names"),
+        pytest.param("%A-%B-%p", "app-Sunday-December-PM.log", id="long-names"),
+        pytest.param("%Y.%m", "app-2010.01.log", id="literal"),
+    ],
+)
+def test_timed_rollover_regex_date_format_matches(date_format, filename):
+    regex = _timed_rollover_regex(DEFAULT_ROLLOVER, date_format, "app", ".log")
+    assert regex.fullmatch(filename) is not None
+
+
+@pytest.mark.parametrize(
+    ("date_format", "filename"),
+    [
+        pytest.param("%Y", "app-201.log", id="4-digit-short"),
+        pytest.param("%Y", "app-20100.log", id="4-digit-long"),
+        pytest.param("%Y-%m-%d", "app-2010-1-01.log", id="2-digit-short"),
+        pytest.param("%j", "app-31.log", id="day-of-year-short"),
+        pytest.param("%u", "app-07.log", id="weekday-number-long"),
+        pytest.param("%F", "app-2010-1-31.log", id="iso-date-short"),
+        pytest.param("%f", "app-17.log", id="microsecond-short"),
+        pytest.param("%Y%z", "app-2010+01:00.log", id="offset-colon"),
+        pytest.param("%Y%z", "app-2010+00003.log", id="offset-odd-digits"),
+        pytest.param("%Y%z", "app-2010-old.log", id="offset-word"),
+        pytest.param("%Y-%b", "app-2010-old.log", id="names-other-word"),
+        pytest.param("%Y.%m", "app-2010x01.log", id="literal-escaped"),
+        pytest.param("%Y", "app-\u0662\u0660\u0661\u0660.log", id="non-ascii-digits"),
+    ],
+)
+def test_timed_rollover_regex_date_format_rejects(date_format, filename):
+    regex = _timed_rollover_regex(DEFAULT_ROLLOVER, date_format, "app", ".log")
+    assert regex.fullmatch(filename) is None
+
+
+@pytest.mark.parametrize(
+    ("basename", "ext", "filename"),
+    [
+        pytest.param("a.p+p", ".log", "a.p+p-2010.log", id="basename"),
+        pytest.param("app", ".l+g", "app-2010.l+g", id="ext"),
+        pytest.param("app", "", "app-2010", id="no-ext"),
+    ],
+)
+def test_timed_rollover_regex_path_matches(basename, ext, filename):
+    regex = _timed_rollover_regex(DEFAULT_ROLLOVER, "%Y", basename, ext)
+    assert regex.fullmatch(filename) is not None
+
+
+@pytest.mark.parametrize(
+    ("basename", "ext", "filename"),
+    [
+        pytest.param("a.p+p", ".log", "axppp-2010.log", id="basename-escaped"),
+        pytest.param("app", ".l+g", "app-2010xllg", id="ext-escaped"),
+        pytest.param("app", "", "app-2010.json", id="no-ext-suffix"),
+    ],
+)
+def test_timed_rollover_regex_path_rejects(basename, ext, filename):
+    regex = _timed_rollover_regex(DEFAULT_ROLLOVER, "%Y", basename, ext)
+    assert regex.fullmatch(filename) is None
+
+
+@pytest.mark.parametrize(
+    ("rollover_format", "filename"),
+    [
+        pytest.param("{basename}{ext}({timestamp})", "app.log(2010)", id="literal"),
+        pytest.param("{basename}.{timestamp}", "app.2010", id="no-ext-field"),
+    ],
+)
+def test_timed_rollover_regex_template_matches(rollover_format, filename):
+    regex = _timed_rollover_regex(rollover_format, "%Y", "app", ".log")
+    assert regex.fullmatch(filename) is not None
+
+
+@pytest.mark.parametrize(
+    ("rollover_format", "filename"),
+    [
+        pytest.param(
+            "{basename}{ext}({timestamp})", "app.log2010", id="literal-escaped"
+        ),
+        pytest.param(DEFAULT_ROLLOVER, "app-2010.log.gz", id="suffix"),
+        pytest.param(
+            "{basename}{ext}.{timestamp}",
+            "app.log.2010.12",
+            id="longer-timestamp",
+        ),
+    ],
+)
+def test_timed_rollover_regex_template_rejects(rollover_format, filename):
+    regex = _timed_rollover_regex(rollover_format, "%Y", "app", ".log")
+    assert regex.fullmatch(filename) is None
+
+
+@pytest.mark.parametrize(
+    ("rollover_format", "date_format"),
+    [
+        pytest.param(DEFAULT_ROLLOVER, "%Y-%Z", id="zone-name"),
+        pytest.param(DEFAULT_ROLLOVER, "%c", id="locale-datetime"),
+        pytest.param("{basename}-{timestamp:>12}{ext}", "%Y", id="spec"),
+        pytest.param("{basename}-{timestamp!r}{ext}", "%Y", id="conversion"),
+        pytest.param("{basename}-{date}{ext}", "%Y", id="unknown-field"),
+    ],
+)
+def test_timed_rollover_regex_unsupported(rollover_format, date_format):
+    assert _timed_rollover_regex(rollover_format, date_format, "app", ".log") is None

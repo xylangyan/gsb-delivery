@@ -1,0 +1,15 @@
+include CHANGELOG.md
+include README.md
+include noxfile.py
+include codspeed.yml
+include uv.lock
+include Cargo.lock
+include Cargo.toml
+include newsfragments/template.rst.jinja
+graft benchmark
+graft docs
+graft tests
+recursive-include src/rust Cargo.toml *.rs
+prune docs/_buildx
+global-exclude *.pyc
+exclude .gitignore .readthedocs.yml

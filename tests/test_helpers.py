@@ -1,0 +1,103 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+
+def test_jsonhelper():
+    from logbook.helpers import to_safe_json
+
+    class Bogus:
+        def __str__(self):
+            return "bogus"
+
+    rv = to_safe_json(
+        [
+            None,
+            "foo",
+            "jäger",
+            1,
+            datetime(2000, 1, 1),
+            {"jäger1": 1, "jäger2": 2, Bogus(): 3, "invalid": object()},
+            (1, object()),
+            object(),  # invalid
+        ]
+    )
+
+    assert rv == [
+        None,
+        "foo",
+        "jäger",
+        1,
+        "2000-01-01T00:00:00Z",
+        {"jäger1": 1, "jäger2": 2, "bogus": 3, "invalid": None},
+        (1, None),
+        None,
+    ]
+
+
+def test_datehelpers():
+    from logbook.helpers import format_iso8601, parse_iso8601
+
+    now = datetime.now()
+    rv = format_iso8601()
+    assert rv[:4] == str(now.year)
+
+    with pytest.raises(ValueError):
+        parse_iso8601("foo")
+    v = parse_iso8601("2000-01-01T00:00:00.12Z")
+    assert v.microsecond == 120000
+    v = parse_iso8601("2000-01-01T12:00:00+01:00")
+    assert v.hour == 11
+    v = parse_iso8601("2000-01-01T12:00:00-01:00")
+    assert v.hour == 13
+
+
+@pytest.mark.parametrize("microsecond", [1, 12, 123, 1234, 12345, 123456, 0])
+def test_iso8601_preserves_fractional_seconds(microsecond):
+    from logbook.helpers import format_iso8601, parse_iso8601
+
+    timestamp = datetime(2000, 1, 1, microsecond=microsecond)
+
+    formatted = format_iso8601(timestamp)
+
+    assert parse_iso8601(formatted) == timestamp
+    assert (
+        datetime.fromisoformat(formatted.replace("Z", "+00:00")).replace(tzinfo=None)
+        == timestamp
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "microsecond"),
+    [
+        ("2000-01-01T00:00:00.1234567Z", 123456),
+        ("2000-01-01T00:00:00.0123456Z", 12345),
+    ],
+)
+def test_iso8601_truncates_extra_fraction_digits(value, microsecond):
+    """Records from other producers can have more digits; .NET writes seven."""
+    from logbook.helpers import parse_iso8601
+
+    assert parse_iso8601(value) == datetime(2000, 1, 1, microsecond=microsecond)
+
+
+@pytest.mark.parametrize("offset", ["+24:00", "+00:60"])
+def test_iso8601_rejects_out_of_range_offset(offset):
+    from logbook.helpers import parse_iso8601
+
+    with pytest.raises(ValueError):
+        parse_iso8601(f"2000-01-01T12:00:00{offset}")
+
+
+def test_iso8601_accepts_largest_offset():
+    from logbook.helpers import parse_iso8601
+
+    assert parse_iso8601("2000-01-01T12:00:00+23:59") == datetime(1999, 12, 31, 12, 1)
+
+
+def test_iso8601_keeps_aware_offset():
+    from logbook.helpers import format_iso8601
+
+    moment = datetime(2020, 1, 2, 9, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+
+    assert format_iso8601(moment) == "2020-01-02T09:00:00+05:30"

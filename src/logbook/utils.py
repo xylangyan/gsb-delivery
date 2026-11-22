@@ -1,0 +1,213 @@
+import contextvars
+import functools
+import sys
+import threading
+import warnings
+from contextlib import contextmanager
+
+from .base import DEBUG, Logger
+
+
+class _SlowContextNotifier:
+    def __init__(self, threshold, func):
+        self.threshold = threshold
+        self.func = func
+
+    def __enter__(self):
+        context = contextvars.copy_context()
+        self.timer = threading.Timer(
+            self.threshold, functools.partial(context.run, self.func)
+        )
+        self.timer.start()
+        return self
+
+    def __exit__(self, *_):
+        self.timer.cancel()
+
+
+_slow_logger = Logger("Slow")
+_slow_func_missing = object()
+
+
+def logged_if_slow(*args, **kwargs):
+    """Context manager that logs if operations within take longer than
+    `threshold` seconds.
+
+    :param threshold: Number of seconds (or fractions thereof) allowed before
+                      logging occurs. The default is 1 second.
+    :param logger: :class:`~logbook.Logger` to use. The default is a 'slow'
+                   logger.
+    :param level: Log level. The default is `DEBUG`.
+    :param func: Deprecated. Function to call to perform logging.
+
+    The remaining parameters are passed to the
+    :meth:`~logbook.base.LoggerMixin.log` method.
+
+    .. deprecated:: 1.0
+       The ``func`` argument. Use ``logger`` and ``level``, or a
+       :class:`threading.Timer` for an arbitrary callback. Passing ``func``
+       emits a :class:`DeprecationWarning` from 1.11.
+    """
+    threshold = kwargs.pop("threshold", 1)
+    func = kwargs.pop("func", _slow_func_missing)
+    if (
+        func is not _slow_func_missing
+        and func is not None
+        and ("logger" in kwargs or "level" in kwargs)
+    ):
+        raise TypeError(
+            "If using deprecated func parameter, 'logger' and"
+            " 'level' arguments cannot be passed."
+        )
+    if func is not _slow_func_missing:
+        warnings.warn(
+            "The func argument to logged_if_slow is deprecated; use logger= "
+            "and level= for logging, or threading.Timer for custom callbacks.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    if func is _slow_func_missing or func is None:
+        logger = kwargs.pop("logger", _slow_logger)
+        level = kwargs.pop("level", DEBUG)
+        func = functools.partial(logger.log, level, *args, **kwargs)
+    else:
+        func = functools.partial(func, *args, **kwargs)
+
+    return _SlowContextNotifier(threshold, func)
+
+
+class _Local(threading.local):
+    enabled = True
+
+
+_local = _Local()
+
+
+@contextmanager
+def suppressed_deprecations():
+    """Disables deprecation messages temporarily
+
+    >>> with suppressed_deprecations():
+    ...    call_some_deprecated_logic()
+
+    .. versionadded:: 0.12
+    """
+    prev_enabled = _local.enabled
+    _local.enabled = False
+    try:
+        yield
+    finally:
+        _local.enabled = prev_enabled
+
+
+_deprecation_logger = Logger("deprecation")
+_deprecation_locations = set()
+
+
+def forget_deprecation_locations():
+    _deprecation_locations.clear()
+
+
+def _write_deprecations_if_needed(message, frame_correction):
+    if not _local.enabled:
+        return
+    key = (message, _get_caller_location(frame_correction=frame_correction + 1))
+    if key not in _deprecation_locations:
+        _deprecation_logger.warning(message, frame_correction=frame_correction + 1)
+        _deprecation_locations.add(key)
+
+
+def log_deprecation_message(message, frame_correction=0):
+    _write_deprecations_if_needed(
+        f"Deprecation message: {message}", frame_correction=frame_correction + 1
+    )
+
+
+class _DeprecatedFunction:
+    def __init__(self, func, message, obj=None, objtype=None):
+        super().__init__()
+        self._func = func
+        self._message = message
+        self._obj = obj
+        self._objtype = objtype
+
+    def _get_underlying_func(self):
+        returned = self._func
+        if isinstance(returned, classmethod):
+            if hasattr(returned, "__func__"):
+                returned = returned.__func__
+            else:
+                returned = returned.__get__(self._objtype).__func__
+        return returned
+
+    def __call__(self, *args, **kwargs):
+        func = self._get_underlying_func()
+        warning = f"{self._get_func_str()} is deprecated."
+        if self._message is not None:
+            warning += f" {self._message}"
+        _write_deprecations_if_needed(warning, frame_correction=+1)
+        if self._obj is not None:
+            return func(self._obj, *args, **kwargs)
+        elif self._objtype is not None:
+            return func(self._objtype, *args, **kwargs)
+        return func(*args, **kwargs)
+
+    def _get_func_str(self):
+        func = self._get_underlying_func()
+        if self._objtype is not None:
+            return f"{self._objtype.__name__}.{func.__name__}"
+        return f"{func.__module__}.{func.__name__}"
+
+    def __get__(self, obj, objtype):
+        return self.bound_to(obj, objtype)
+
+    def bound_to(self, obj, objtype):
+        return _DeprecatedFunction(self._func, self._message, obj=obj, objtype=objtype)
+
+    @property
+    def __name__(self):
+        return self._get_underlying_func().__name__
+
+    @property
+    def __doc__(self):
+        if returned := self._get_underlying_func().__doc__:  # pylint: disable=no-member
+            returned += "\n.. deprecated\n"  # pylint: disable=no-member
+            if self._message:
+                returned += f"   {self._message}"  # pylint: disable=no-member
+        return returned
+
+    @__doc__.setter
+    def __doc__(self, doc):
+        self._get_underlying_func().__doc__ = doc
+
+
+def deprecated(func=None, message=None):
+    """Marks the specified function as deprecated, and emits a warning when
+    it's called.
+
+    >>> @deprecated(message='No longer supported')
+    ... def deprecated_func():
+    ...     pass
+
+    This will cause a warning log to be emitted when the function gets called,
+    with the correct filename/lineno.
+
+    .. versionadded:: 0.12
+    """
+    if isinstance(func, str):
+        assert message is None
+        message = func
+        func = None
+
+    if func is None:
+        return functools.partial(deprecated, message=message)
+
+    return _DeprecatedFunction(func, message)
+
+
+def _get_caller_location(frame_correction):
+    frame = sys._getframe(frame_correction + 1)  # pylint: disable=protected-access
+    try:
+        return (frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
+    finally:
+        del frame
