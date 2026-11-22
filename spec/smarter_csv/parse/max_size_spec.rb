@@ -1,0 +1,169 @@
+# frozen_string_literal: true
+
+# ------------------------------------------------------------------------------------------
+# when testing `parse` methods:
+#
+# * SmarterCSV.default_options are not loaded when testing `parse` methods by themselves
+#
+# * make sure to always pass all options to the 'parse' methods, incl. acceleration
+#
+# * always wrap tests, so that both accelerated and un-accelerated code-paths are run,
+#   because the purpose of these tests is to ensure that both accelerated and unaccelerated
+#   code paths are behaving identically.
+# ------------------------------------------------------------------------------------------
+
+# the purpose of the max_size parameter is to handle a corner case where
+# CSV lines contain more fields than the header.
+# In which case the remaining fields in the line are ignored
+
+class Klass
+  include SmarterCSV::Parser
+
+  # Mimic the relevant part of Reader#initialize so the Parser methods can read the
+  # cached @quote_char / @doubled_quote_chars ivars directly — same as in production.
+  def initialize(options = {})
+    @quote_char = options[:quote_char] || '"'
+    @doubled_quote_chars = @quote_char * 2
+  end
+
+  def has_acceleration
+    !!SmarterCSV::Parser.respond_to?(:parse_csv_line_c)
+  end
+end
+
+[true, false].each do |acceleration|
+  describe "fulfills RFC-4180 and more with#{acceleration ? ' C-' : 'out '}acceleration" do
+    let(:options) { {acceleration: acceleration} }
+    let(:instance) { Klass.new(options) }
+
+    describe 'splitting line up to max_size' do
+      before do
+        options.merge!({quote_char: '"', col_sep: ","})
+      end
+
+      context 'without quotes' do
+        it 'without max_size' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options)
+          expect(array).to eq %w[1 2 3 4 5 6]
+        end
+
+        it 'with max_size = 7' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 7)
+          expect(array).to eq %w[1 2 3 4 5 6]
+        end
+
+        it 'with max_size = 6' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 6)
+          expect(array).to eq %w[1 2 3 4 5 6]
+        end
+
+        it 'with max_size = 5' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 5)
+          expect(array).to eq %w[1 2 3 4 5]
+        end
+
+        it 'with max_size = 4' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 4)
+          expect(array).to eq %w[1 2 3 4]
+        end
+
+        it 'with max_size = 3' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 3)
+          expect(array).to eq %w[1 2 3]
+        end
+
+        it 'with max_size = 2' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 2)
+          expect(array).to eq %w[1 2]
+        end
+
+        it 'with max_size = 1' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 1)
+          expect(array).to eq ['1']
+        end
+
+        it 'with max_size = 0' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, 0)
+          expect(array).to eq []
+        end
+
+        it 'with max_size = -1' do
+          line = '1,2,3,4,5,6'
+          array, _array_size = instance.send(:parse, line, options, -1)
+          expect(array).to eq []
+        end
+      end
+
+      context 'with quotes' do
+        it 'without max_size' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options)
+          expect(array).to eq %w[1 2 3 4 5 6]
+        end
+
+        it 'with max_size = 7' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 7)
+          expect(array).to eq %w[1 2 3 4 5 6]
+        end
+
+        it 'with max_size = 6' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 6)
+          expect(array).to eq %w[1 2 3 4 5 6]
+        end
+
+        it 'with max_size = 5' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 5)
+          expect(array).to eq %w[1 2 3 4 5]
+        end
+
+        it 'with max_size = 4' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 4)
+          expect(array).to eq %w[1 2 3 4]
+        end
+
+        it 'with max_size = 3' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 3)
+          expect(array).to eq %w[1 2 3]
+        end
+
+        it 'with max_size = 2' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 2)
+          expect(array).to eq %w[1 2]
+        end
+
+        it 'with max_size = 1' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 1)
+          expect(array).to eq ['1']
+        end
+
+        it 'with max_size = 0' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, 0)
+          expect(array).to eq []
+        end
+
+        it 'with max_size = -1' do
+          line = '"1","2","3","4","5","6"'
+          array, _array_size = instance.send(:parse, line, options, -1)
+          expect(array).to eq []
+        end
+      end
+    end
+  end # acceleration
+end

@@ -1,0 +1,196 @@
+# frozen_string_literal: true
+
+fixture_path = 'spec/fixtures'
+
+# when rows with extra columns are present, we want to be robust against this error, and we auto-generate headers
+#
+describe 'CSV file with more columns that shown in header' do
+  let(:csv_path) { "#{fixture_path}/extra_columns.csv" }
+
+  [true, false].each do |bool|
+    context "with#{bool ? ' C-' : 'out '}acceleration" do
+      let(:options) { { acceleration: bool } }
+      let(:reader) { SmarterCSV::Reader.new(csv_path, options) }
+
+      context "when strict mode (deprecated :strict option)" do
+        before do
+          options.merge!(strict: true)
+        end
+
+        it "raises an exception" do
+          expect{reader.process}.to raise_exception SmarterCSV::HeaderSizeMismatch, "extra columns detected on line 2"
+        end
+
+        it "emits a deprecation warning" do
+          expect { SmarterCSV::Reader.new(csv_path, options.merge(strict: true)) }
+            .to output(/DEPRECATION WARNING.*strict.*missing_headers/i).to_stderr
+        end
+      end
+
+      context "when missing_headers: :raise (new API)" do
+        before do
+          options.merge!(missing_headers: :raise)
+        end
+
+        it "raises HeaderSizeMismatch" do
+          expect { SmarterCSV::Reader.new(csv_path, options).process }
+            .to raise_error(SmarterCSV::HeaderSizeMismatch, /extra columns detected/)
+        end
+
+        it "does not emit a deprecation warning" do
+          expect { SmarterCSV::Reader.new(csv_path, options) }
+            .not_to output(/DEPRECATION WARNING/).to_stderr
+        end
+      end
+
+      # Why this test exists (and why the plain "missing_headers: :raise" test above is not enough):
+      #
+      # missing_headers: :raise gets turned into strict=true in reader_options.rb, and strict is the
+      # flag the C code actually reads. With headers: { only: }, the C code has a speed shortcut: it
+      # stops reading a row as soon as it has the columns you asked for. strict TURNS OFF that shortcut,
+      # so the whole row is read and the extra columns are still noticed (and raised on). If the line
+      # that sets strict from missing_headers ever gets deleted, only: + missing_headers: :raise would
+      # quietly stop raising. (Without only:, the raise comes straight from reader.rb and does not need
+      # that line — so this only:-combination is the one that actually guards it.)
+      context "when headers: { only: } is combined with missing_headers: :raise" do
+        before do
+          options.merge!(headers: { only: [:one, :two] }, missing_headers: :raise)
+        end
+
+        it "still raises HeaderSizeMismatch on extra columns (guards the strict/missing_headers link)" do
+          expect { reader.process }.to raise_error(SmarterCSV::HeaderSizeMismatch, /extra columns detected/)
+        end
+      end
+
+      context "when missing_headers: :auto (new API, default)" do
+        before do
+          options.merge!(missing_headers: :auto)
+        end
+
+        it "auto-generates column names without raising" do
+          reader.process
+          expect(reader.headers).to include(:column_7, :column_8)
+        end
+
+        it "does not emit a deprecation warning" do
+          expect { SmarterCSV::Reader.new(csv_path, options) }
+            .not_to output(/DEPRECATION WARNING/).to_stderr
+        end
+      end
+
+      context "when strict is explicitly false" do
+        before do
+          options.merge!(strict: false)
+        end
+
+        it "does not raise and auto-generates headers for extra columns" do
+          expect { reader.process }.not_to raise_error
+          expect(reader.headers).to eq %i[one two three four five six column_7 column_8 column_9 column_10 column_11]
+        end
+      end
+
+      it "reads all lines of the file" do
+        data = reader.process
+        expect(data.size).to eq 5
+      end
+
+      context "when default behavior" do
+        # default behavior is to remove empty values
+        # it finds column_11, but it is empty, and will not show up as a hash
+        it "generates all extra columns" do
+          reader.process
+          expect(reader.headers).to eq %i[one two three four five six column_7 column_8 column_9 column_10 column_11]
+        end
+
+        it "parses all rows correctly" do
+          data = reader.process
+          expect(data[0]).to eq({one: 1, two: 2, five: 5, column_8: 8, column_9: 9})
+          expect(data[1]).to eq({one: 1, two: 2, three: 3, four: 4, five: 5, six: 6})
+          expect(data[2]).to eq({one: 1, two: 2, three: 3, four: 4, five: 5, six: 6})
+          expect(data[3]).to eq({one: 1, column_10: 10})
+          expect(data[4]).to eq({one: 1, column_10: 10})
+        end
+      end
+
+      context "when keeping empty values" do
+        before do
+          options.merge!(remove_empty_values: false)
+        end
+
+        it "generates all extra columns" do
+          reader.process
+          expect(reader.headers).to eq %i[one two three four five six column_7 column_8 column_9 column_10 column_11]
+        end
+
+        it "parses all rows correctly" do
+          data = reader.process
+          expect(data[0]).to eq({one: 1, two: 2, three: '', four: '', five: 5, six: '', column_7: '', column_8: 8, column_9: 9})
+          expect(data[1]).to eq({one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, column_7: nil, column_8: nil, column_9: nil})
+          expect(data[2]).to eq({one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, column_7: '', column_8: nil, column_9: nil})
+          expect(data[3]).to eq({one: 1, two: '', three: '', four: '', five: '', six: '', column_7: '', column_8: '', column_9: '', column_10: 10})
+          expect(data[4]).to eq({one: 1, two: '', three: '', four: '', five: '', six: '', column_7: '', column_8: '', column_9: '', column_10: 10, column_11: ''})
+        end
+      end
+
+      context "when missing_header_prefix is changed" do
+        before do
+          options.merge!(missing_header_prefix: 'col_')
+        end
+
+        it "generates all extra columns" do
+          reader.process
+          expect(reader.headers).to eq %i[one two three four five six col_7 col_8 col_9 col_10 col_11]
+        end
+
+        it "parses all rows correctly" do
+          data = reader.process
+          expect(data[0]).to eq({one: 1, two: 2, five: 5, col_8: 8, col_9: 9})
+          expect(data[1]).to eq({one: 1, two: 2, three: 3, four: 4, five: 5, six: 6})
+          expect(data[2]).to eq({one: 1, two: 2, three: 3, four: 4, five: 5, six: 6})
+          expect(data[3]).to eq({one: 1, col_10: 10})
+          expect(data[4]).to eq({one: 1, col_10: 10})
+        end
+      end
+
+      context "when user did not provide enough headers manually" do
+        before do
+          options.merge!(headers_in_file: true, user_provided_headers: %i[a b c d e f])
+        end
+
+        it "generates all extra columns" do
+          reader.process
+          expect(reader.headers).to eq %i[a b c d e f column_7 column_8 column_9 column_10 column_11]
+        end
+
+        it "parses all rows correctly" do
+          data = reader.process
+          expect(data[0]).to eq({a: 1, b: 2, e: 5, column_8: 8, column_9: 9})
+          expect(data[1]).to eq({a: 1, b: 2, c: 3, d: 4, e: 5, f: 6})
+          expect(data[2]).to eq({a: 1, b: 2, c: 3, d: 4, e: 5, f: 6})
+          expect(data[3]).to eq({a: 1, column_10: 10})
+          expect(data[4]).to eq({a: 1, column_10: 10})
+        end
+      end
+    end
+  end
+
+  # Generated extra-column names must be correct for ANY missing_header_prefix — including
+  # non-ASCII prefixes and prefixes longer than the C extension's internal buffers — and
+  # identical on both paths.
+  describe 'missing_header_prefix corner cases (both paths)' do
+    require 'stringio'
+
+    [true, false].each do |acceleration|
+      it "handles a non-ASCII prefix (acceleration: #{acceleration})" do
+        data = SmarterCSV.process(StringIO.new("a,b\n1,2,3\n"), missing_header_prefix: 'spalte_ä_', acceleration: acceleration)
+        expect(data).to eq [{ a: 1, b: 2, spalte_ä_3: 3 }]
+      end
+
+      it "handles a prefix longer than 63 bytes (acceleration: #{acceleration})" do
+        prefix = 'p' * 70
+        data = SmarterCSV.process(StringIO.new("a,b\n1,2,3\n4,5,6\n"), missing_header_prefix: prefix, acceleration: acceleration)
+        expect(data).to eq [{ a: 1, b: 2, "#{prefix}3": 3 }, { a: 4, b: 5, "#{prefix}3": 6 }]
+      end
+    end
+  end
+end

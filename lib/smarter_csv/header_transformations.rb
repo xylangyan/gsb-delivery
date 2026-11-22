@@ -1,0 +1,97 @@
+# frozen_string_literal: true
+
+module SmarterCSV
+  module HeaderTransformations
+    # transform the headers that were in the file:
+    def header_transformations(header_array, options)
+      header_array.map!{|x| x.gsub(%r/#{options[:quote_char]}/, '')}
+      header_array.map!{|x| x.strip} if options[:strip_whitespace]
+
+      unless options[:keep_original_headers]
+        # Normalize whitespace-only headers to "" before gsub so they are treated as
+        # blank/missing by disambiguate_headers rather than converted to "_".
+        header_array.map!{|x| blank?(x) ? '' : x} unless options[:strip_whitespace]
+        header_array.map!{|x| x.gsub(/\s+|-+/, '_')}
+        header_array.map!{|x| x.downcase} if options[:downcase_header]
+      end
+
+      # detect duplicate headers and disambiguate
+      header_array = disambiguate_headers(header_array, options) if options[:duplicate_header_suffix]
+      # symbolize headers
+      header_array = header_array.map{|x| x.to_sym } unless options[:strings_as_keys] || options[:keep_original_headers]
+      # doesn't make sense to re-map when we have user_provided_headers
+      header_array = remap_headers(header_array, options) if options[:key_mapping]
+
+      header_array
+    end
+
+    def disambiguate_headers(headers, options)
+      counts = Hash.new(0)
+      prefix = options[:missing_header_prefix] || 'column_'
+      # Pre-collect non-blank header names so auto-generated names can avoid collisions.
+      used = headers.reject { |h| blank?(h) }
+      headers.each_with_index.map do |header, idx|
+        if blank?(header)
+          # Use absolute 1-based column position, consistent with how extra data columns
+          # beyond the header count are named. If the positional name collides with an
+          # existing header, append underscores until a free name is found — this avoids
+          # stealing the positional name from any subsequent blank header.
+          candidate = "#{prefix}#{idx + 1}"
+          suffix = ''
+          while used.include?(candidate)
+            suffix += '_'
+            candidate = "#{prefix}#{idx + 1}#{suffix}"
+          end
+          used << candidate
+          candidate
+        else
+          counts[header] += 1
+          if counts[header] == 1
+            header
+          else
+            # The disambiguated name must not steal the name of a real column (or of a
+            # previously assigned name) — e.g. headers name,name,name2: "name2" is taken,
+            # so bump the counter until a free name is found.
+            candidate = "#{header}#{options[:duplicate_header_suffix]}#{counts[header]}"
+            while used.include?(candidate)
+              counts[header] += 1
+              candidate = "#{header}#{options[:duplicate_header_suffix]}#{counts[header]}"
+            end
+            used << candidate
+            candidate
+          end
+        end
+      end
+    end
+
+    # do some key mapping on the keys in the file header
+    # if you want to completely delete a key, then map it to nil or to ''
+    def remap_headers(headers, options)
+      key_mapping = options[:key_mapping]
+      if key_mapping.empty? || !key_mapping.is_a?(Hash) || key_mapping.keys.empty?
+        raise(SmarterCSV::IncorrectOption, "ERROR: incorrect format for key_mapping! Expecting hash with from -> to mappings")
+      end
+
+      key_mapping = options[:key_mapping]
+      # if silence_missing_keys are not set, raise error if missing header
+      missing_keys = key_mapping.keys - headers
+      # if the user passes a list of speciffic mapped keys that are optional
+      missing_keys -= options[:silence_missing_keys] if options[:silence_missing_keys].is_a?(Array)
+
+      unless missing_keys.empty? || options[:silence_missing_keys] == true
+        raise SmarterCSV::KeyMappingError, "ERROR: can not map headers: #{missing_keys.join(', ')}"
+      end
+
+      headers.map! do |header|
+        if key_mapping.has_key?(header)
+          key_mapping[header].nil? ? nil : key_mapping[header]
+        elsif options[:remove_unmapped_keys]
+          nil
+        else
+          header
+        end
+      end
+      headers
+    end
+  end
+end

@@ -1,0 +1,103 @@
+# frozen_string_literal: true
+
+# ------------------------------------------------------------------------------------------
+# when testing `parse` methods:
+#
+# * SmarterCSV.default_options are not loaded when testing `parse` methods by themselves
+#
+# * make sure to always pass all options to the 'parse' methods, incl. acceleration
+#
+# * always wrap tests, so that both accelerated and un-accelerated code-paths are run,
+#   because the purpose of these tests is to ensure that both accelerated and unaccelerated
+#   code paths are behaving identically.
+# ------------------------------------------------------------------------------------------
+
+class Klass
+  include SmarterCSV::Parser
+
+  # Mimic the relevant part of Reader#initialize so the Parser methods can read the
+  # cached @quote_char / @doubled_quote_chars ivars directly — same as in production.
+  def initialize(options = {})
+    @quote_char = options[:quote_char] || '"'
+    @doubled_quote_chars = @quote_char * 2
+  end
+
+  def has_acceleration
+    !!SmarterCSV::Parser.respond_to?(:parse_csv_line_c)
+  end
+end
+
+[true, false].each do |acceleration|
+  describe "fulfills RFC-4180 and more with#{acceleration ? ' C-' : 'out '}acceleration" do
+    describe 'parse with col_sep' do
+      let(:options) { {quote_char: '"', acceleration: acceleration} }
+      let(:instance) { Klass.new(options) }
+
+      it 'parses with comma' do
+        line = "a,b,,d"
+        options.merge!({col_sep: ","})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ['a', 'b', '', 'd']
+        expect(array_size).to eq 4
+      end
+
+      it 'parses trailing commas' do
+        line = "a,b,c,,"
+        options.merge!({col_sep: ","})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ['a', 'b', 'c', '', '']
+        expect(array_size).to eq 5
+      end
+
+      it 'parses with space' do
+        line = "a b  d"
+        options.merge!({col_sep: " "})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ['a', 'b', '', 'd']
+        expect(array_size).to eq 4
+      end
+
+      it 'parses with tab' do
+        line = "a\tb\t\td"
+        options.merge!({col_sep: "\t"})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ['a', 'b', '', 'd']
+        expect(array_size).to eq 4
+      end
+
+      it 'parses with multiple space separator' do
+        line = "a b    d"
+        options.merge!({col_sep: "  "})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ['a b', '', 'd']
+        expect(array_size).to eq 3
+      end
+
+      it 'parses with multiple char separator' do
+        line = '<=><=>A<=>B<=>C'
+        options.merge!({col_sep: "<=>"})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ["", "", "A", "B", "C"]
+        expect(array_size).to eq 5
+      end
+
+      it 'parses trailing multiple char separator' do
+        line = '<=><=>A<=>B<=>C<=><=>'
+        options.merge!({col_sep: "<=>"})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ["", "", "A", "B", "C", "", ""]
+        expect(array_size).to eq 7
+      end
+
+      it 'closes a quote followed by an embedded row separator (multi-char col_sep, :standard boundary)' do
+        # A closing quote is valid when followed by col_sep, ROW_SEP, or end of line —
+        # the row_sep case needs the row separator embedded inside the parsed string.
+        line = "\"x\"\ny||z"
+        options.merge!({col_sep: '||', row_sep: "\n", quote_boundary: :standard, strip_whitespace: true})
+        array, array_size = instance.send(:parse, line, options)
+        expect(array).to eq ["\"x\"\ny", 'z']
+        expect(array_size).to eq 2
+      end
+    end
+  end
+end

@@ -1,0 +1,218 @@
+# frozen_string_literal: true
+
+require 'tempfile'
+require 'stringio'
+require 'set'
+
+module SmarterCSV
+  #
+  # Generate CSV files
+  #
+  # Create an instance of the Writer class with the filename and options.
+  # call `<<` one or multiple times to append data to the file.
+  # call `finalize` to save the file.
+  #
+  # The `<<` method can take different arguments:
+  #  * a single Hash
+  #  * an array of Hashes
+  #  * nested arrays of arrays of Hashes
+  #
+  # By default SmarterCSV::Writer automatically discovers all headers that are present
+  # in the data on-the-fly. This can be disabled, then only given headers are used.
+  # Disabling can be useful when you want to select attributes from hashes, or ActiveRecord instances.
+  #
+  # If `discover_headers` is enabled, and headers are given, any new headers that are found in the data will still be appended.
+  #
+  # The Writer automatically quotes fields containing the col_sep, row_sep, or the quote_char.
+  #
+  # See SmarterCSV::Writer::Options::DEFAULT_OPTIONS for all options and their defaults.
+  #
+  # Options:
+  #   col_sep : defaults to , but can be set to any other character
+  #   row_sep : defaults to LF \n , but can be set to \r\n or \r or anything else
+  #   quote_char : defaults to "
+  #   discover_headers : defaults to true
+  #   headers : defaults to []
+  #   quote_headers: defaults to false
+  #   force_quotes: defaults to false
+  #   map_headers: defaults to {}, can be a hash of key -> value mappings
+  #   value_converters: optional hash of key -> lambda to control serialization
+  #   encoding: optional encoding string for the output file, e.g. 'UTF-8', 'ISO-8859-1'
+  #             supports Ruby's 'external:internal' transcoding notation, e.g. 'ISO-8859-1:UTF-8'
+  #             defaults to nil (system default). Only applies when writing to a file path.
+  #   write_nil_value: string written in place of nil field values (default: '')
+  #   write_empty_value: string written in place of empty-string field values (default: '')
+  #   write_bom: when true, prepends a UTF-8 BOM (\xEF\xBB\xBF) to the output (default: false)
+  #              Useful for Excel compatibility with non-ASCII content.
+  #   write_headers: when false, suppresses the header line (default: true). Useful when appending to
+  #                  an existing CSV file opened in 'a' mode — the caller controls the file mode.
+  #
+  # IMPORTANT NOTES:
+  #  * Data hashes could contain strings or symbols as keys.
+  #    Make sure to use the correct form when specifying headers manually,
+  #    in combination with the :discover_headers option
+
+  attr_reader :options, :row_sep, :col_sep, :quote_char, :force_quotes, :discover_headers, :headers, :map_headers, :output_file
+
+  class Writer
+    include ::SmarterCSV::Writer::Options
+
+    def self.default_options
+      Options::DEFAULT_OPTIONS
+    end
+
+    def initialize(file_path_or_io, given_options = {})
+      opts = Options::DEFAULT_OPTIONS.merge(given_options)
+      @options = opts
+
+      @row_sep = opts[:row_sep]
+      @col_sep = opts[:col_sep]
+      @quote_char = opts[:quote_char]
+      @escaped_quote_char = @quote_char * 2
+      @force_quotes = opts[:force_quotes] == true
+      @quote_headers = opts[:quote_headers] == true
+      @disable_auto_quoting = opts[:disable_auto_quoting] == true
+      @value_converters = opts[:value_converters] || {}
+      @encoding = opts[:encoding]
+      @write_nil_value = opts[:write_nil_value]
+      @write_empty_value = opts[:write_empty_value]
+      @write_bom = opts[:write_bom] == true
+      @write_headers = opts[:write_headers] == true
+      @map_all_keys = @value_converters.has_key?(:_all)
+      @mapped_keys = Set.new(@value_converters.keys - [:_all])
+      @header_converter = opts[:header_converter]
+
+      if given_options.has_key?(:discover_headers)
+        @discover_headers = given_options[:discover_headers] == true
+      else
+        @discover_headers = !(given_options.has_key?(:map_headers) || given_options.has_key?(:headers))
+      end
+
+      @headers = opts[:headers].dup
+      @headers = given_options[:map_headers].keys if given_options.has_key?(:map_headers) && !given_options.has_key?(:headers)
+      @map_headers = opts[:map_headers]
+
+      # Accept an IO-like object (StringIO, IO, etc.) or any path-like object (String, Pathname, etc.)
+      if file_path_or_io.respond_to?(:write)
+        # External IO handed in — we should not close it ourselves.
+        @output_file = file_path_or_io
+        @file_opened_by_us = false
+      else
+        path =
+          if file_path_or_io.respond_to?(:to_path)
+            file_path_or_io.to_path
+          elsif file_path_or_io.is_a?(String)
+            file_path_or_io
+          else
+            raise ArgumentError,
+                  "SmarterCSV::Writer expects an IO-like object (responding to #write) " \
+                  "or a path-like object (responding to #to_path or being a String), " \
+                  "but got #{file_path_or_io.class}"
+          end
+        mode = @encoding ? "w+:#{@encoding}" : 'w+'
+        @output_file = File.open(path, mode)
+        @file_opened_by_us = true
+      end
+      @quote_regex = Regexp.union(@col_sep, @row_sep, @quote_char)
+
+      if !@discover_headers && !@headers.empty?
+        # Headers are fully known at construction time — write the header line immediately
+        # and stream data rows directly to @output_file, bypassing the temp file entirely.
+        @temp_file = nil
+        @output_file.write("\xEF\xBB\xBF") if @write_bom
+        write_header_line if @write_headers
+      else
+        @temp_file = Tempfile.new('smarter_csv')
+      end
+    end
+
+    def <<(data)
+      case data
+      when Hash
+        process_hash(data)
+      when Array
+        data.each { |item| self << item }
+      when NilClass
+        # ignore
+      else
+        raise InvalidInputData, "Invalid data type: #{data.class}. Must be a Hash or an Array."
+      end
+    end
+
+    def finalize
+      if @temp_file
+        # Header-discovery mode: headers were accumulated while writing rows;
+        # now prepend the header line and copy the buffered rows to the output.
+        @output_file.write("\xEF\xBB\xBF") if @write_bom
+        write_header_line if @write_headers
+        @temp_file.rewind
+        @output_file.write(@temp_file.read)
+        @temp_file.close!
+      end
+      # In direct-write mode (@temp_file == nil) the header line and all data rows
+      # were already written to @output_file — nothing left to do but flush and close.
+      @output_file.flush
+      @output_file.close if @file_opened_by_us # only close files we opened; caller owns external IO objects
+    end
+
+    private
+
+    def write_header_line
+      mapped_headers = @headers.map { |header| @map_headers[header] || header }
+      mapped_headers = mapped_headers.map { |header| @header_converter.call(header) } if @header_converter
+      force_quotes = @quote_headers || @force_quotes
+      mapped_headers = mapped_headers.map { |x| escape_csv_field(x, force_quotes) }
+      @output_file.write(mapped_headers.join(@col_sep) + @row_sep) unless mapped_headers.empty?
+    end
+
+    def process_hash(hash)
+      if @discover_headers
+        hash_keys = hash.keys
+        new_keys = hash_keys - @headers
+        @headers.concat(new_keys)
+      end
+
+      # Reorder the hash to match the current headers order and fill + map missing keys
+      ordered_row = @headers.map do |header|
+        has_header = hash.key?(header)
+        value = has_header ? hash[header] : '' # default to empty value
+
+        # first map individual keys
+        value = map_value(header, value) if @mapped_keys.include?(header)
+
+        # then apply general mapping rules
+        value = map_all_values(header, value) if @map_all_keys
+
+        value = @write_nil_value if value.nil?
+        value = @write_empty_value if !value.nil? && value.respond_to?(:empty?) && value.empty?
+
+        escape_csv_field(value, @force_quotes) # for backwards compatibility
+      end
+
+      (@temp_file || @output_file).write(ordered_row.join(@col_sep) << @row_sep) unless ordered_row.empty?
+    end
+
+    def map_value(key, value)
+      @value_converters[key].call(value)
+    end
+
+    def map_all_values(key, value)
+      @value_converters[:_all].call(key, value)
+    end
+
+    def escape_csv_field(field, force_quotes = false)
+      str = field.to_s
+      return str if @disable_auto_quoting && !force_quotes
+
+      # quote fields if we force that, or if the field contains the col_sep, row_sep, or quote_char
+      contains_special_char = str.match(@quote_regex)
+      if force_quotes || contains_special_char
+        str = str.gsub(@quote_char, @escaped_quote_char) if contains_special_char # escape the quote_char
+
+        "#{@quote_char}#{str}#{@quote_char}"
+      else
+        str
+      end
+    end
+  end
+end

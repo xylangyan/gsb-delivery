@@ -1,0 +1,460 @@
+# frozen_string_literal: true
+
+RSpec.describe SmarterCSV::Reader do
+  let(:fixture_path) { 'spec/fixtures' }
+
+  describe "initialize" do
+    let(:filename) { "#{fixture_path}/basic.csv" }
+
+    it "initializes the internal state" do
+      reader = SmarterCSV::Reader.new(filename)
+      expect(reader.chunk_count).to eq 0
+      expect(reader.csv_line_count).to eq 0
+      expect(reader.file_line_count).to eq 0
+      expect(reader.enforce_utf8).to eq false
+      expect(reader.has_rails).to eq false
+      expect(reader.input).to eq filename
+      expect(reader.headers).to be_nil
+      expect(reader.raw_header).to be_nil
+      expect(reader.warnings).to be_empty
+      expect(reader.errors).to be_empty
+      expect(reader.result).to eq []
+      # initializes to the default options
+      expect(reader.options).to eq SmarterCSV::Reader::Options::DEFAULT_OPTIONS
+    end
+
+    it "sets options" do
+      reader = SmarterCSV::Reader.new(
+        filename, {
+          col_sep: ";", row_sep: "\r\n", quote_char: "'",
+          accelleration: false,
+        }
+      )
+      expect(reader.options[:col_sep]).to eq ';'
+      expect(reader.options[:row_sep]).to eq "\r\n"
+      expect(reader.options[:quote_char]).to eq "'"
+      expect(reader.options[:accelleration]).to eq false
+    end
+  end
+
+  describe "input handling" do
+    require 'pathname'
+    require 'tempfile'
+
+    let(:filename) { "#{fixture_path}/basic.csv" }
+
+    # Concrete baseline: a plain String path parses into the rows we expect. Every other
+    # input form below is then asserted to produce this exact same result.
+    it "parses a String file path into the expected rows" do
+      reader = SmarterCSV::Reader.new(filename)
+      result = reader.process
+      expect(result).not_to be_empty
+      expect(reader.headers).to eq %i[first_name last_name dogs cats birds fish]
+    end
+
+    # The path-vs-IO decision at reader.rb is parser-independent, but run every input form
+    # end-to-end through both the C and the Ruby parser so the fix is proven on both paths.
+    [true, false].each do |acceleration|
+      context "with acceleration: #{acceleration}" do
+        let(:expected) { SmarterCSV::Reader.new(filename, acceleration: acceleration).process }
+
+        it "opens a Pathname path and yields the same rows as the String path (issue #337)" do
+          expect(SmarterCSV::Reader.new(Pathname.new(filename), acceleration: acceleration).process).to eq expected
+        end
+
+        it "reads directly from an already-open File handle" do
+          File.open(filename) do |io|
+            expect(SmarterCSV::Reader.new(io, acceleration: acceleration).process).to eq expected
+          end
+        end
+
+        it "reads directly from a StringIO" do
+          expect(SmarterCSV::Reader.new(StringIO.new(File.read(filename)), acceleration: acceleration).process).to eq expected
+        end
+
+        it "reads directly from a Tempfile" do
+          Tempfile.create(['input', '.csv']) do |tf|
+            tf.write(File.read(filename))
+            tf.rewind
+            expect(SmarterCSV::Reader.new(tf, acceleration: acceleration).process).to eq expected
+          end
+        end
+      end
+    end
+
+    it "raises the same file-not-found error for a missing path, whether String or Pathname" do
+      missing = "#{fixture_path}/no_such_file_337.csv"
+      expect { SmarterCSV::Reader.new(missing).process }.to raise_error(Errno::ENOENT)
+      expect { SmarterCSV::Reader.new(Pathname.new(missing)).process }.to raise_error(Errno::ENOENT)
+    end
+  end
+
+  describe "#headerA (deprecated)" do
+    let(:filename) { "#{fixture_path}/basic.csv" }
+    let(:reader) { SmarterCSV::Reader.new(filename) }
+
+    it "returns the initial value of @headerA" do
+      allow(reader).to receive(:warn) # suppress the deprecation message
+      expect(reader.headerA).to eq []
+    end
+
+    it "records a :deprecation / :header_a_method warning" do
+      allow(reader).to receive(:warn)
+      reader.headerA
+      w = reader.warnings.first
+      expect(w[:type]).to eq :deprecation
+      expect(w[:code]).to eq :header_a_method
+      expect(w[:message]).to match(/'headerA' will be removed/)
+      expect(w[:count]).to eq 1
+    end
+
+    it "dedupes repeat calls into a single record" do
+      allow(reader).to receive(:warn)
+      3.times { reader.headerA }
+      expect(reader.warnings.size).to eq 1
+      expect(reader.warnings.first[:count]).to eq 3
+    end
+  end
+
+  # Calling #each without a block returns an Enumerator and must not change the reader's
+  # configuration: the chunk_size restore in #each must not run on the early enum_for return,
+  # where the original value was never captured.
+  describe '#each called without a block (Enumerator form)' do
+    it 'does not change the configured chunk_size option' do
+      reader = SmarterCSV::Reader.new(StringIO.new("a,b\n1,2\n"), chunk_size: 500)
+      reader.each # Enumerator form, no block
+      expect(reader.options[:chunk_size]).to eq 500
+    end
+
+    it 'each_chunk still honors the configured chunk_size afterwards' do
+      reader = SmarterCSV::Reader.new(StringIO.new("a,b\n1,1\n2,2\n3,3\n4,4\n5,5\n"), chunk_size: 2)
+      reader.each # Enumerator form, discarded
+      sizes = []
+      reader.each_chunk { |chunk, _index| sizes << chunk.size }
+      expect(sizes).to eq [2, 2, 1]
+    end
+  end
+
+  # -----------------------------------------------------------------------
+  # Tests targeting previously uncovered private methods in reader.rb:
+  #   detect_multiline        (lines 435–449)
+  #   detect_multiline_strict (lines 457–507)
+  #   process_line_to_hash    (lines 536–601)
+  # -----------------------------------------------------------------------
+
+  describe 'detect_multiline (private)' do
+    let(:reader) { SmarterCSV::Reader.new("#{fixture_path}/basic.csv", {acceleration: false}) }
+    let(:base_opts) do
+      {col_sep: ',', quote_char: '"', quote_escaping: :double_quotes,
+       row_sep: "\n", strip_whitespace: false}
+    end
+
+    it 'returns false immediately when the line contains no quote character (line 436)' do
+      expect(reader.send(:detect_multiline, 'no,quotes,here', base_opts)).to eq false
+    end
+
+    it 'delegates to detect_multiline_strict for balanced field when quote_boundary: :standard (lines 438–439)' do
+      opts = base_opts.merge(quote_boundary: :standard)
+      expect(reader.send(:detect_multiline, '"hello","world"', opts)).to eq false
+    end
+
+    it 'delegates to detect_multiline_strict for unclosed field when quote_boundary: :standard (lines 438–439)' do
+      opts = base_opts.merge(quote_boundary: :standard)
+      expect(reader.send(:detect_multiline, '"unclosed', opts)).to eq true
+    end
+
+    it 'returns false for :auto mode when quote count is even (lines 440–441, 446)' do
+      opts = base_opts.merge(quote_escaping: :auto)
+      # Two quotes (even) → escaped_count.odd? == false → not multiline
+      expect(reader.send(:detect_multiline, '"hello"', opts)).to eq false
+    end
+
+    it 'returns true for :auto mode when both escaped and rfc counts are odd (lines 440–441, 446)' do
+      opts = base_opts.merge(quote_escaping: :auto)
+      # One unescaped quote → both counts odd → multiline
+      expect(reader.send(:detect_multiline, '"unclosed', opts)).to eq true
+    end
+
+    it 'uses simple odd-count check for non-auto, non-standard mode (lines 447–448)' do
+      expect(reader.send(:detect_multiline, '"unclosed', base_opts)).to eq true
+      expect(reader.send(:detect_multiline, '"closed"', base_opts)).to eq false
+    end
+  end
+
+  describe 'detect_multiline_strict (private)' do
+    let(:reader) { SmarterCSV::Reader.new("#{fixture_path}/basic.csv", {acceleration: false}) }
+    let(:base_opts) do
+      {col_sep: ',', quote_char: '"', row_sep: "\n", strip_whitespace: false}
+    end
+
+    it 'returns false for balanced quoted fields across multiple columns (lines 472–491)' do
+      # Exercises: col_sep reset (473–475), open at boundary (489–491), close at EOL (482, 485–486)
+      expect(reader.send(:detect_multiline_strict, '"hello","world"', base_opts)).to eq false
+    end
+
+    it 'returns true for an unclosed quoted field (line 507)' do
+      expect(reader.send(:detect_multiline_strict, '"unclosed', base_opts)).to eq true
+    end
+
+    it 'accepts a close quote followed by an embedded row separator (multi-char col_sep path)' do
+      # Mirrors the parser: a closing quote is valid before col_sep, ROW_SEP, or end of line.
+      # The row_sep arm needs the separator embedded mid-line (as in a stitched line).
+      opts = base_opts.merge(col_sep: '||')
+      expect(reader.send(:detect_multiline_strict, "\"x\"\ny||z", opts)).to eq false
+    end
+
+    it 'closes field when closing quote is immediately followed by row_sep (line 484)' do
+      opts = base_opts.merge(row_sep: "\n")
+      # "hello"\n — the " at position 6 is followed by \n which matches row_sep → field closes
+      expect(reader.send(:detect_multiline_strict, "\"hello\"\n", opts)).to eq false
+    end
+
+    it 'sets field_started for non-whitespace character outside quotes, strip: false (line 501)' do
+      # Plain unquoted text — exercises the elsif !in_quotes → strip=false → field_started=true path
+      expect(reader.send(:detect_multiline_strict, 'abc,def', base_opts)).to eq false
+    end
+
+    it 'does not set field_started for whitespace before opening quote when strip: true (lines 496–498)' do
+      # " "hello"" — leading space skips field_started, opening quote is at a boundary
+      opts = base_opts.merge(strip_whitespace: true)
+      expect(reader.send(:detect_multiline_strict, ' "hello"', opts)).to eq false
+    end
+
+    it 'does not set field_started for a leading tab before opening quote when strip: true (line 624, b==9)' do
+      # "\t\"hello\"" — tab (byte 9) skips field_started via b==9 check; quote opens field cleanly
+      opts = base_opts.merge(strip_whitespace: true)
+      expect(reader.send(:detect_multiline_strict, "\t\"hello\"", opts)).to eq false
+    end
+
+    it 'sets field_started for non-whitespace character when strip: true (line 498)' do
+      # 'a' triggers field_started=true via the strip branch (line[i] != ' ' and != \t)
+      opts = base_opts.merge(strip_whitespace: true)
+      expect(reader.send(:detect_multiline_strict, 'a,"hello"', opts)).to eq false
+    end
+
+    # ------------------------------------------------------------------
+    # Byteindex fallback paths (lines 548–550, 563–565)
+    #
+    # When BYTEINDEX_AVAILABLE is false (older Ruby / JRuby), detect_multiline_strict
+    # falls back to manual getbyte loops instead of String#byteindex.
+    # Stub the constant to force the fallback on any Ruby version.
+    # ------------------------------------------------------------------
+    context 'byteindex fallback (BYTEINDEX_AVAILABLE: false)' do
+      before { stub_const('SmarterCSV::Parser::BYTEINDEX_AVAILABLE', false) }
+
+      # lines 548–550: getbyte loop searching for next quote byte (in_quotes = true)
+      # lines 563–565: getbyte loop searching for next col_sep byte (field_started = true)
+      it 'returns false for a properly closed quoted field (covers both getbyte loops)' do
+        # "hello" opens (in_quotes → lines 548-550 getbyte loop finds closing quote),
+        # then ,world with field_started=true (lines 563-565 getbyte loop finds next sep)
+        expect(reader.send(:detect_multiline_strict, '"hello",world', base_opts)).to eq false
+      end
+
+      it 'returns true when the getbyte loop reaches end without finding a quote (lines 548-550, nil path)' do
+        # No closing quote: getbyte loop exhausts the string → next_q.nil? → return true
+        expect(reader.send(:detect_multiline_strict, '"unclosed', base_opts)).to eq true
+      end
+
+      it 'returns false for an unquoted line (covers lines 563-565, no col_sep found → break)' do
+        # field_started=true after 'h', getbyte loop searches for col_sep byte,
+        # finds none after the last field → next_sep.nil? → break; returns false
+        expect(reader.send(:detect_multiline_strict, 'hello,world', base_opts)).to eq false
+      end
+    end
+
+    # ------------------------------------------------------------------
+    # Multi-char col_sep path (lines 603–641)
+    #
+    # When col_sep.size > 1, detect_multiline_strict uses a character-by-character
+    # loop with substring comparison rather than the byteindex fast path.
+    # ------------------------------------------------------------------
+    context 'multi-char col_sep (lines 603–641)' do
+      let(:multi_opts) { {col_sep: '<=>', quote_char: '"', row_sep: "\n", strip_whitespace: false} }
+
+      # line 609: col_sep match outside quotes
+      # lines 626-629: opening quote at field boundary
+      # lines 616-624: closing quote followed by col_sep
+      # lines 631, 637-638: non-quote char sets field_started (strip: false)
+      it 'returns false for a balanced quoted field (lines 609, 616-629, 631, 638)' do
+        expect(reader.send(:detect_multiline_strict, '"hello"<=>world', multi_opts)).to eq false
+      end
+
+      # lines 615-629: quote opens field; no closing quote → in_quotes still true → returns true
+      it 'returns true for an unclosed quoted field with multi-char col_sep' do
+        expect(reader.send(:detect_multiline_strict, '"unclosed', multi_opts)).to eq true
+      end
+
+      # lines 619: closing quote at end-of-line (next_i >= line_size branch)
+      it 'returns false when closing quote is at end of line with no trailing sep' do
+        expect(reader.send(:detect_multiline_strict, '"hello"', multi_opts)).to eq false
+      end
+
+      # lines 631, 633, 635: non-quote char outside quotes, strip: true
+      # Space/tab must NOT set field_started; other chars must.
+      it 'handles strip_whitespace: true — space skips field_started, letter sets it (line 663)' do
+        opts = multi_opts.merge(strip_whitespace: true)
+        # Leading space before quoted field: space must not set field_started so the
+        # opening quote is still recognised as a boundary → field closes cleanly.
+        expect(reader.send(:detect_multiline_strict, ' "hello"<=>world', opts)).to eq false
+      end
+
+      it 'handles strip_whitespace: true — tab skips field_started (line 663, "\t" branch)' do
+        opts = multi_opts.merge(strip_whitespace: true)
+        # Leading tab before quoted field: tab must not set field_started (fixed bug: was '\t').
+        expect(reader.send(:detect_multiline_strict, "\t\"hello\"<=>world", opts)).to eq false
+      end
+
+      it 'handles unquoted fields with multi-char col_sep and strip_whitespace: false (line 638)' do
+        expect(reader.send(:detect_multiline_strict, 'hello<=>world', multi_opts)).to eq false
+      end
+
+      # line 641: i += 1 at bottom of loop (incremented on every non-sep iteration)
+      it 'handles multiple fields and a trailing unquoted field' do
+        expect(reader.send(:detect_multiline_strict, '"a"<=>b<=>c', multi_opts)).to eq false
+      end
+
+      # line 621: closing quote followed by row_sep (not col_sep, not end-of-string)
+      # Conditions: next_i < line_size (not EOL), next chars != col_sep, but == row_sep
+      it 'closes field when closing quote is followed by row_sep (line 621)' do
+        opts = multi_opts.merge(row_sep: "\n")
+        # "hello"\n — next_i=7 is within bounds, line[7..9] != "<=>" but line[7] == "\n"
+        expect(reader.send(:detect_multiline_strict, "\"hello\"\n", opts)).to eq false
+      end
+    end
+  end
+
+  describe 'process_line_to_hash (private)' do
+    # Helper: create a reader, call process to initialise all required ivars
+    # (@headers, @use_acceleration, @only_headers_set, @except_headers_set, etc.)
+    # then return the fully-initialised reader for direct send(:process_line_to_hash) calls.
+    def make_reader(csv_string, acceleration: false, **opts)
+      r = SmarterCSV::Reader.new(StringIO.new(csv_string), opts.merge(acceleration: acceleration))
+      r.process
+      r
+    end
+
+    it 'returns a hash for a normal data line (lines 540, 589, 601)' do
+      r = make_reader("col1,col2\n")
+      result = r.send(:process_line_to_hash, "foo,bar", r.options)
+      expect(result).to eq({col1: 'foo', col2: 'bar'})
+    end
+
+    it 'returns :needs_more when the line has an unclosed quoted field (line 543)' do
+      r = make_reader("col1,col2\n")
+      result = r.send(:process_line_to_hash, '"unclosed', r.options)
+      expect(result).to eq :needs_more
+    end
+
+    it 'extends headers for extra columns when not strict (lines 546, 552–553)' do
+      r = make_reader("col1,col2\n")
+      result = r.send(:process_line_to_hash, "x,y,z", r.options)
+      expect(result).to include(col1: 'x', col2: 'y')
+      expect(result.keys).to include(:column_3)
+    end
+
+    it 'raises HeaderSizeMismatch for extra columns when missing_headers: :raise (lines 547–548)' do
+      r = make_reader("col1,col2\n", missing_headers: :raise)
+      expect do
+        r.send(:process_line_to_hash, "x,y,z", r.options)
+      end.to raise_error(SmarterCSV::HeaderSizeMismatch)
+    end
+
+    it 'returns nil for an all-blank row (line 558)' do
+      r = make_reader("col1,col2\n")
+      result = r.send(:process_line_to_hash, ",", r.options)
+      expect(result).to be_nil
+    end
+
+    it 'selects only specified columns when headers: { only: } is set (line 561)' do
+      r = make_reader("col1,col2\n", headers: { only: [:col1] })
+      result = r.send(:process_line_to_hash, "foo,bar", r.options)
+      expect(result).to eq({col1: 'foo'})
+      expect(result.key?(:col2)).to be false
+    end
+
+    it 'excludes specified columns when headers: { except: } is set (line 562)' do
+      r = make_reader("col1,col2\n", headers: { except: [:col2] })
+      result = r.send(:process_line_to_hash, "foo,bar", r.options)
+      expect(result).to eq({col1: 'foo'})
+      expect(result.key?(:col2)).to be false
+    end
+
+    it 'returns nil when hash is empty after transformations with remove_empty_hashes: true (line 599)' do
+      # nil_values_matching: /.*/ nils every string value → empty hash → line 599 returns nil
+      r = make_reader("col1,col2\n", nil_values_matching: /.*/, remove_empty_hashes: true)
+      result = r.send(:process_line_to_hash, "foo,bar", r.options)
+      expect(result).to be_nil
+    end
+
+    # Same assertions on both paths — post-parse orchestration (key handling,
+    # nil_values_matching, value_converters) is identical regardless of which
+    # parser produced the row.
+    [true, false].each do |acceleration|
+      context "acceleration: #{acceleration}" do
+        it 'returns a valid hash for a normal data line' do
+          r = make_reader("col1,col2\n", acceleration: acceleration)
+          result = r.send(:process_line_to_hash, "foo,bar", r.options)
+          expect(result).to be_a(Hash)
+          expect(result[:col1]).to eq 'foo'
+        end
+
+        it 'executes nil/empty-key deletion when key_mapping is set' do
+          # key_mapping sets @delete_nil_keys=true and @delete_empty_keys=true;
+          # hash.delete(nil) and hash.delete('') execute (even if keys are absent)
+          r = make_reader("col1,col2\n", acceleration: acceleration, key_mapping: {col1: :a, col2: :b})
+          result = r.send(:process_line_to_hash, "foo,bar", r.options)
+          expect(result).to be_a(Hash)
+          expect(result.key?(nil)).to be false
+        end
+
+        it 'nils values matching regex' do
+          r = make_reader("col1,col2\n", acceleration: acceleration)
+          opts = r.options.merge(nil_values_matching: /^foo$/)
+          result = r.send(:process_line_to_hash, "foo,bar", opts)
+          # remove_empty_values: true (default) → nil-ified value is then removed
+          expect(result.key?(:col1)).to be false
+          expect(result[:col2]).to eq 'bar'
+        end
+
+        it 'keeps key with nil value when remove_empty_values: false' do
+          r = make_reader("col1,col2\n", acceleration: acceleration)
+          opts = r.options.merge(nil_values_matching: /^foo$/, remove_empty_values: false)
+          result = r.send(:process_line_to_hash, "foo,bar", opts)
+          # remove_empty_values: false → key retained, value set to nil
+          expect(result.key?(:col1)).to be true
+          expect(result[:col1]).to be_nil
+          expect(result[:col2]).to eq 'bar'
+        end
+
+        it 'preserves an all-blank row as an empty hash when remove_empty_hashes is false' do
+          r = make_reader("col1,col2\n", acceleration: acceleration, remove_empty_hashes: false)
+          result = r.send(:process_line_to_hash, ",", r.options)
+          expect(result).to eq({})
+        end
+
+        it 'returns nil for an all-blank row when remove_empty_hashes is true' do
+          r = make_reader("col1,col2\n", acceleration: acceleration, remove_empty_hashes: true)
+          result = r.send(:process_line_to_hash, ",", r.options)
+          expect(result).to be_nil
+        end
+
+        it 'applies value_converters' do
+          converter = double('converter')
+          allow(converter).to receive(:convert).with('foo').and_return('CONVERTED')
+          r = make_reader("col1,col2\n", acceleration: acceleration)
+          opts = r.options.merge(value_converters: {col1: converter})
+          result = r.send(:process_line_to_hash, "foo,bar", opts)
+          expect(result[:col1]).to eq 'CONVERTED'
+        end
+
+        it 'applies lambda value_converters (issue #329)' do
+          converter = ->(v) { v.upcase }
+          r = make_reader("col1,col2\n", acceleration: acceleration)
+          opts = r.options.merge(value_converters: {col1: converter})
+          result = r.send(:process_line_to_hash, "foo,bar", opts)
+          expect(result[:col1]).to eq 'FOO'
+        end
+      end
+    end
+  end
+end
