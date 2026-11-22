@@ -11,6 +11,7 @@ Python equivalents of logical Excel functions.
 """
 import functools
 import numpy as np
+import schedula as sh
 from . import (
     wrap_ufunc, Error, flatten, get_error, wrap_func, XlError, raise_errors,
     Array, replace_empty, _convert2float, return_2d_func
@@ -29,11 +30,36 @@ def solve_cycle(*args):
     return not args[0]
 
 
+_if_ufunc = wrap_ufunc(
+    xif, input_parser=lambda *a: a, check_nan=False,
+    check_error=lambda cond, *a: get_error(cond)
+)
+
+
+class _IfArray(Array):
+    # Result of an IF with a scalar condition: when it is reshaped into a
+    # larger range, the cells it does not cover anymore revert to their
+    # underlying (empty) value instead of being padded with #N/A.
+    _default = sh.EMPTY
+
+
+def _if(condition, x, y=False):
+    condition, x, y = map(replace_empty, (condition, x, y))
+    err = get_error(condition)
+    if err:
+        return err
+    if np.size(condition) == 1:
+        # Scalar condition: the selected branch is returned as it is, so
+        # branches with different shapes are not broadcast together.
+        res = xif(np.ravel(condition)[0], x, y)
+        if not np.ndim(res):
+            res = [[res]]
+        return np.asarray(res, object).view(_IfArray)
+    return _if_ufunc(condition, x, y)
+
+
 FUNCTIONS['IF'] = {
-    'function': wrap_ufunc(
-        xif, input_parser=lambda *a: a, check_nan=False,
-        check_error=lambda cond, *a: get_error(cond)
-    ),
+    'function': wrap_func(_if),
     'solve_cycle': solve_cycle
 }
 

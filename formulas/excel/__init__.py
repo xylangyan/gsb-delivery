@@ -169,6 +169,17 @@ class ExcelModel:
     def calculate(self, *args, **kwargs):
         return self.dsp.dispatch(*args, **kwargs)
 
+    def incremental(self, outputs=None):
+        """
+        Returns an incremental calculator bound to this model.
+
+        :param outputs:
+            Cell/range references of the outputs of interest. If not given,
+            all model cells are tracked.
+        :rtype: IncrementalCalculator
+        """
+        return IncrementalCalculator(self, outputs=outputs)
+
     def compare(
             self, *fpaths, target=None, actual=None, solution=None,
             books=None, dirpath=None, tolerance=0, absolute_tolerance=.000001,
@@ -787,6 +798,85 @@ class ExcelModel:
                 dmap.add_edge(CIRCULAR, k)
 
         return self
+
+
+def _scalar_equal(x, y):
+    if x is sh.EMPTY or y is sh.EMPTY:
+        return x is y
+    if isinstance(x, XlError) or isinstance(y, XlError):
+        return x is y or (
+            isinstance(x, XlError) and isinstance(y, XlError)
+            and x.args == y.args
+        )
+    try:
+        return bool(x == y) or (x != x and y != y)
+    except (ValueError, TypeError):
+        return False
+
+
+def _values_equal(v1, v2):
+    a = v1.value if isinstance(v1, Ranges) else v1
+    b = v2.value if isinstance(v2, Ranges) else v2
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        a = np.asarray(a if np.ndim(a) else [[a]], object)
+        b = np.asarray(b if np.ndim(b) else [[b]], object)
+        if a.shape != b.shape:
+            return False
+        return all(map(_scalar_equal, a.ravel(), b.ravel()))
+    return _scalar_equal(a, b)
+
+
+class IncrementalCalculator:
+    """
+    Incremental calculator of an :class:`ExcelModel`.
+
+    Settlement-style corrections arrive in batches, each touching only a few
+    input cells. Every batch is evaluated with the model and returns just
+    the cells that really need to be refreshed, i.e. the ones whose value
+    changed with respect to the previous batch. The full state after each
+    batch (attribute :attr:`solution`) corresponds to a complete
+    recalculation of the model with the same inputs.
+
+    Cells no longer covered by a shrunk spilled array revert to their
+    underlying worksheet values, changes on dependencies of a branch that is
+    not taken do not invalidate the taken one, and circular references that
+    only exist in a branch not taken are handled according to the actual
+    evaluation of the batch (requires the model to be finished with
+    ``circular=True``).
+    """
+
+    def __init__(self, model, outputs=None):
+        self.model = model
+        self.outputs = outputs
+        self.inputs = {}
+        self.solution = {}
+
+    def calculate(self, inputs=None, outputs=None):
+        """
+        Applies a batch of input corrections and returns the changed cells.
+
+        :param inputs:
+            Dictionary of corrected input cells for this batch.
+        :param outputs:
+            Optionally restricts the tracked outputs for this batch.
+        :return:
+            The cells whose value changed since the previous batch.
+        :rtype: dict
+        """
+        if inputs:
+            self.inputs.update(inputs)
+        if outputs is not None:
+            self.outputs = outputs
+        sol = self.model.calculate(self.inputs or None, outputs=self.outputs)
+        new = {
+            k: v for k, v in sol.items() if not isinstance(k, sh.Token)
+        }
+        changed = {
+            k: v for k, v in new.items()
+            if k not in self.solution or not _values_equal(self.solution[k], v)
+        }
+        self.solution.update(new)
+        return changed
 
 
 def _check_range_all_cycles(nodes, active_nodes, j):

@@ -2,6 +2,22 @@ Changelog
 =========
 
 
+Unreleased
+----------
+
+Feat
+~~~~
+- (excel): Add `ExcelModel.incremental` calculator that applies batches of
+  input corrections and returns only the cells that really need to be
+  refreshed, while its state matches a complete recalculation with the same
+  inputs.
+
+- (functions): `IF` with a scalar condition returns the selected branch as
+  it is, so branches with different shapes are not broadcast together and
+  cells no longer covered by a shrunk spilled array revert to their
+  underlying (empty) values.
+
+
 v1.3.4 (2026-03-11)
 -------------------
 

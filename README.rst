@@ -221,6 +221,31 @@ some value to a specific cell:
                "'[excel.xlsx]DATA'!C4": <Ranges>('[excel.xlsx]DATA'!C4)=[[4.0]]})
 
 
+When corrections arrive in batches and each batch touches only a few input
+cells, the `incremental` method returns a calculator that applies one batch
+at a time and gives back just the cells that really need to be refreshed,
+i.e. the ones whose value changed with respect to the previous batch. Its
+`solution` attribute always corresponds to a complete recalculation of the
+model with the same inputs:
+
+    >>> inc_model = formulas.ExcelModel().from_dict({
+    ...     'A1': 1, 'A2': 2, 'F1': 1, 'B1': '=IF(F1=1, A1, A2)'
+    ... }).finish(complete=False)
+    >>> inc = inc_model.incremental()
+    >>> sorted(inc.calculate({'A1': 5}))  # First batch: all cells are new.
+    ['A1', 'A2', 'B1', 'F1']
+    >>> sorted(inc.calculate({'F1': 0}))  # The branch switch refreshes B1.
+    ['B1', 'F1']
+    >>> sorted(inc.calculate({'A1': 7}))  # Old branch: B1 is not invalidated.
+    ['A1']
+    >>> sorted(inc.calculate({'A2': 9}))  # Taken branch: B1 is refreshed.
+    ['A2', 'B1']
+
+Cells no longer covered by a shrunk spilled array revert to their underlying
+worksheet values, and circular references that only exist in a branch not
+taken are handled according to the actual evaluation of the batch (finish
+the model with `circular=True` in this case).
+
 To build a single function out of an excel model with fixed inputs and outputs,
 you can use the `compile` method of the `ExcelModel` that returns a
 DispatchPipe_. This is a function where the inputs and outputs are defined by
