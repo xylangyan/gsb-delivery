@@ -1,0 +1,36 @@
+[
+  {
+    "batch": "samples/batch_old",
+    "rule": "legacy",
+    "preserve": "legacy",
+    "files": [
+      {
+        "file": "samples/batch_old/conflict.yaml",
+        "divergent_scalars": 2,
+        "conflicts": 2,
+        "status": "conflict"
+      },
+      {
+        "file": "samples/batch_old/services.yaml",
+        "divergent_scalars": 4,
+        "conflicts": 0,
+        "status": "rewritten",
+        "output": "samples/rewritten/services.yaml"
+      }
+    ]
+  },
+  {
+    "batch": "samples/batch_new",
+    "rule": "modern",
+    "preserve": "modern",
+    "files": [
+      {
+        "file": "samples/batch_new/accounts.yaml",
+        "divergent_scalars": 4,
+        "conflicts": 0,
+        "status": "rewritten",
+        "output": "samples/rewritten/accounts.yaml"
+      }
+    ]
+  }
+]

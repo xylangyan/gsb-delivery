@@ -1,0 +1,12 @@
+service:
+  name: router-a
+  active: !!bool on
+  retries: 01
+  since: !!timestamp 2021-05-01T08:30:00+08:00
+base: &base
+  region: cn
+  retries: 01
+profile:
+  <<: *base
+  active: !!bool on
+  observed: !!timestamp 2021-05-02T10:00:00Z

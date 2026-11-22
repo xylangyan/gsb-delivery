@@ -1,0 +1,6 @@
+defaults: &defaults
+  on: 1
+  "on": 2
+profile:
+  <<: *defaults
+  on: 3
