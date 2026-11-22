@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added:
 - Dos: Default doctest in github workflows and `pytest` commands.
+- Workflow: Product hierarchy workflow to merge department observations into a daily warehouse-loadable tree, with manual decisions, frozen publications, and dispute evidence.
 ### Fixed:
 - Stubs: Signature for tree.query.
 

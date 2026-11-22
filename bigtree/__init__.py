@@ -133,6 +133,15 @@ from bigtree.utils.iterators import (
 )
 from bigtree.utils.plot import plot_tree, reingold_tilford
 from bigtree.workflows.app_calendar import Calendar
+from bigtree.workflows.app_product import (
+    DayResult,
+    Decision,
+    Dispute,
+    Observation,
+    ProductHierarchy,
+    Publication,
+    WarehouseRow,
+)
 from bigtree.workflows.app_todo import AppToDo
 
 __all__ = [
@@ -163,17 +172,24 @@ __all__ = [
     "ConstVPrintStyle",
     "DAG",
     "DAGNode",
+    "DayResult",
+    "Decision",
+    "Dispute",
     "DoubleBorderStyle",
     "DoubleHPrintStyle",
     "DoublePrintStyle",
     "DoubleVPrintStyle",
     "Globals",
     "Node",
+    "Observation",
+    "ProductHierarchy",
+    "Publication",
     "RoundedBorderStyle",
     "RoundedHPrintStyle",
     "RoundedPrintStyle",
     "RoundedVPrintStyle",
     "Tree",
+    "WarehouseRow",
     "add_dataframe_to_tree_by_name",
     "add_dataframe_to_tree_by_path",
     "add_dict_to_tree_by_name",

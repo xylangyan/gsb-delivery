@@ -62,6 +62,7 @@ nav:
     - 👷 Workflows:
         - bigtree/workflows/app_todo.md
         - bigtree/workflows/app_calendar.md
+        - bigtree/workflows/app_product.md
   - Others:
     - 💡 Tips and Tricks:
       - Optimise:

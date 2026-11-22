@@ -75,3 +75,51 @@ data_calendar
 # 0  /My Calendar/2023/01/01/Dinner  Dinner  2023-01-01  00:00:00    20.0
 # 1     /My Calendar/2023/01/02/Gym     Gym  2023-01-02  18:00:00     NaN
 ```
+
+## Product Hierarchy Application
+
+There are functions to:
+
+- Record department observations per business date, keyed by a stable product ID
+- Select the latest complete observation per department, and use a manual decision when departments disagree
+- Export a daily warehouse-loadable tree with one row per SKU
+- Retain conflicts and corrections as dispute evidence
+- Freeze an already-published value that loses all support, until a new decision selects a supported value
+
+```python
+from bigtree import ProductHierarchy
+
+hierarchy = ProductHierarchy()
+hierarchy.add_observation("North", "2026-03-01", "SKU7", "Outlet", "Old name")
+hierarchy.add_observation("South", "2026-03-01", "SKU7", "Flagship", "Old name")
+hierarchy.add_decision("SKU7", "Outlet", "2026-03-01", "2026-03-02")
+hierarchy.add_observation("North", "2026-03-02", "SKU7", "Flagship", "Day 2 name")
+hierarchy.add_observation("South", "2026-03-02", "SKU7", "Flagship", "Day 2 name")
+
+first = hierarchy.export_day("2026-03-01")
+first.row_by_sku("SKU7").parent
+# 'Outlet'
+first.tree.show()
+# Catalog
+# └── 2026-03-01
+#     └── Outlet
+#         └── SKU7
+
+# Late correction to day 1; the published value loses support and is frozen
+hierarchy.add_observation("North", "2026-03-01", "SKU7", "Flagship", "N7")
+corrected = hierarchy.export_day("2026-03-01")
+corrected.row_by_sku("SKU7").status
+# 'frozen'
+corrected.row_by_sku("SKU7").parent
+# 'Outlet'
+
+# A new decision can release the freeze
+hierarchy.add_decision("SKU7", "Flagship", "2026-03-01", "2026-03-02")
+released = hierarchy.export_day("2026-03-01")
+released.row_by_sku("SKU7").parent
+# 'Flagship'
+released.row_by_sku("SKU7").name
+# 'N7'
+released.verify()
+# []
+```
