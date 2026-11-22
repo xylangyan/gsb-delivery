@@ -31,6 +31,10 @@ require "bunny/exchange"
 require "bunny/queue"
 require "bunny/consumer"
 
+# Topology registry and routing migrations
+require "bunny/topology_registry"
+require "bunny/topology_migration"
+
 # Bunny is a RabbitMQ client that focuses on ease of use.
 # @see http://rubybunny.info
 module Bunny

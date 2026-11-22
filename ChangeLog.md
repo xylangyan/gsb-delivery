@@ -1,6 +1,32 @@
 ## Changes between Bunny 3.6.0 and 3.7.0 (in development)
 
-No changes yet.
+### Previewable Routing Migrations
+
+`Bunny::RoutingMigration` plans a binding change before anything is
+applied. It reports the operations in order, the business routes they
+affect and whether the change is safe. Plans are rejected when the swap
+would duplicate messages into two queues or make the broker delete an
+auto-delete exchange and its incoming bindings.
+
+Three cutover modes are available: `:live`, `:quiesced` (pause publishers
+across the swap) and `:generation` (separate generations by routing key or
+headers). A journal stored in `Bunny::TopologyRegistry` lets a migration
+resume after a reconnect from the last confirmed step.
+
+`Bunny::RoutingMigration::LocalAdapter` implements routing and auto-delete
+semantics in memory for tests.
+
+### Queue Unbinds Now Cascade to Auto-Delete Exchanges
+
+`Bunny::TopologyRegistry` now drops a recorded auto-delete exchange when its
+last queue binding is removed, mirroring what the broker does. Previously
+topology recovery could recreate an exchange the broker had already deleted.
+
+### Explicitly Removed Bindings Are Not Resurrected
+
+Queue and exchange bindings removed through the public API are remembered.
+Topology recovery and routing migrations no longer restore a binding the
+application explicitly deleted.
 
 
 ## Changes between Bunny 3.5.0 and 3.6.0 (Nov 9, 2026)

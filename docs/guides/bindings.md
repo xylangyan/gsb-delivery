@@ -136,8 +136,88 @@ guide provides more information on the subject, including full code
 examples.
 
 
-## What to Read Next
+## Previewing and Applying a Routing Migration
 
+Re-pointing a binding in place is not always safe. An auto-delete exchange
+is deleted by the broker as soon as its last outgoing binding is removed,
+and that deletion takes all of its incoming bindings with it. Swapping a
+binding while publishers are active can also deliver one message to both
+the old and the new destination.
+
+`Bunny::RoutingMigration` builds a preview of the change first and refuses
+to apply a plan that would lose a route or duplicate deliveries:
+
+``` ruby
+migration = connection.routing_migration(entry_exchanges: ["events"])
+migration.move_queue_binding(source: "router", from: "orders", to: "orders.v2")
+
+plan = migration.preview(cutover: :auto)
+puts plan
+# Routing migration router: orders => orders.v2 (mode: quiesced)
+# Feasible: yes
+# Affected business routes:
+#   - events -> router -> orders => events -> router -> orders.v2
+# Expected order:
+#   1. [prepare] pause publishers so no message is in flight across the swap
+#   2. [prepare] bind router -> orders.v2 (before removing the old binding)
+#   3. [cutover] unbind router -> orders
+#   4. [cleanup] resume publishers
+#   5. [verify] verify router still exists and routes to orders.v2
+
+migration.apply(plan, Bunny::RoutingMigration::ChannelAdapter.new(channel),
+                journal: "orders-repoint") do |barrier|
+  # pause or resume publishers, depending on barrier.options[:barrier]
+end
+```
+
+`#preview` never changes the registry and never talks to the broker.
+`#preview(cutover: ...)` accepts three modes:
+
+ * `:live` binds first and unbinds immediately. Suitable only when a
+   message cannot match both bindings
+ * `:quiesced` pauses publishers across the swap. This is the explicit
+   cutover for overlapping bindings
+ * `:generation` relies on a generation-specific routing key or headers so
+   each message matches exactly one binding
+
+When `:auto` is used, `:live` is chosen if the bindings are disjoint and
+`:quiesced` otherwise.
+
+### Safety Conditions
+
+A plan is feasible only when the final topology keeps every business route
+and the transition does not duplicate messages:
+
+ * the new destination queue exists (or is declared as part of the plan)
+ * the new binding is not one the application explicitly removed
+ * the destination exchange keeps an outgoing binding at all times
+ * an overlapping binding is only swapped under an explicit cutover or with
+   generation-specific routing
+
+If no feasible plan exists, the preview lists the incompatible paths and the
+allowed fallbacks, for example keeping the old route alongside the new one
+or changing the exchange type.
+
+### Resuming After a Reconnect
+
+When a journal name is passed to `#apply`, every confirmed step is recorded
+in the topology registry. If the connection is lost mid-migration, call
+`#resume` after reconnecting: steps confirmed before the failure are not
+replayed, and the step that was in flight is retried.
+
+``` ruby
+migration.resume("orders-repoint", adapter)
+```
+
+### Trying It Without a Broker
+
+`Bunny::RoutingMigration::LocalAdapter` implements RabbitMQ's routing and
+auto-delete behavior in memory. Together with
+`Bunny::RoutingMigration::Snapshot.new` it lets you preview, apply and assert
+on a migration in tests without a running node.
+
+
+## What to Read Next
 The documentation is organized as [a number of guides](/articles/guides.html), covering various topics.
 
 We recommend that you read the following guides first, if possible, in this order:

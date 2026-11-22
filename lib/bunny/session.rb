@@ -617,6 +617,13 @@ module Bunny
       end
     end
 
+    # @return [Bunny::RoutingMigration] a migration planner for this connection's topology
+    # @param entry_exchanges [Array<String>, nil] exchanges applications publish to
+    # @see Bunny::RoutingMigration
+    def routing_migration(entry_exchanges: nil)
+      RoutingMigration.new(@topology_registry, entry_exchanges: entry_exchanges)
+    end
+
     # Defines a callable (e.g. a block) that will be called
     # before every connection recovery attempt.
     def before_recovery_attempt_starts(&block)
@@ -1216,6 +1223,12 @@ module Bunny
     # @param [Bunny::RecordedQueueBinding] rb
     # @private
     def recover_queue_binding(rb)
+      if @topology_registry.respond_to?(:queue_binding_tombstoned?) &&
+         @topology_registry.queue_binding_tombstoned?(rb.source, rb.destination, rb.routing_key, rb.arguments)
+        @logger.debug { "Not recovering #{rb.source} -> #{rb.destination}: it was explicitly removed" }
+        return
+      end
+
       opts = {
         routing_key: rb.routing_key,
         arguments: rb.arguments
@@ -1227,6 +1240,12 @@ module Bunny
     # @param [Bunny::RecordedExchangeBindingBinding] rb
     # @private
     def recover_exchange_binding(rb)
+      if @topology_registry.respond_to?(:exchange_binding_tombstoned?) &&
+         @topology_registry.exchange_binding_tombstoned?(rb.source, rb.destination, rb.routing_key, rb.arguments)
+        @logger.debug { "Not recovering #{rb.source} -> #{rb.destination}: it was explicitly removed" }
+        return
+      end
+
       opts = {
         routing_key: rb.routing_key,
         arguments: rb.arguments

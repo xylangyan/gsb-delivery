@@ -43,11 +43,15 @@ module Bunny
       @queue_bindings = Set.new
       @exchange_bindings = Set.new
       @consumers = {}
+      @removed_queue_bindings = Set.new
+      @removed_exchange_bindings = Set.new
+      @migration_journal = {}
 
       @queue_mutex = Monitor.new
       @exchange_mutex = Monitor.new
       @binding_mutex = Monitor.new
       @consumer_mutex = Monitor.new
+      @migration_mutex = Monitor.new
     end
 
     #
@@ -246,8 +250,57 @@ module Bunny
       @filter.filter_queue_bindings(@queue_bindings)
     end
 
-    # @return [Set<Bunny::RecordedExchangeBinding>]
+    # Tells whether a queue binding was explicitly removed.
+    #
+    # Used by topology recovery to avoid restoring an edge the
+    # application deleted, even if a stale collection still holds it.
+    #
+    # @param exchange_name [String]
+    # @param queue_name [String]
+    # @param routing_key [String, nil]
+    # @param arguments [Hash, nil]
+    # @return [Boolean]
+    def queue_binding_tombstoned?(exchange_name, queue_name, routing_key, arguments)
+      b = RecordedQueueBinding.new(nil)
+        .with_source(exchange_name)
+        .with_destination(queue_name)
+        .with_routing_key(routing_key)
+        .with_arguments(arguments)
+
+      @binding_mutex.synchronize { @removed_queue_bindings.include?(b) }
+    end
+
+    # @param source_name [String]
+    # @param destination_name [String]
+    # @param routing_key [String, nil]
+    # @param arguments [Hash, nil]
+    # @return [Boolean]
+    def exchange_binding_tombstoned?(source_name, destination_name, routing_key, arguments)
+      b = RecordedExchangeBinding.new(nil)
+        .with_source(source_name)
+        .with_destination(destination_name)
+        .with_routing_key(routing_key)
+        .with_arguments(arguments)
+
+      @binding_mutex.synchronize { @removed_exchange_bindings.include?(b) }
+    end
+
+    # @param [Set<Bunny::RecordedExchangeBinding>]
     attr_reader :exchange_bindings
+
+    # Queue bindings explicitly removed by the application.
+    #
+    # Recovery must not resurrect these even when something else
+    # (a stale recovery attempt, for example) still holds a reference
+    # to them.
+    #
+    # @return [Set<Bunny::RecordedQueueBinding>]
+    attr_reader :removed_queue_bindings
+
+    # Exchange bindings explicitly removed by the application.
+    #
+    # @return [Set<Bunny::RecordedExchangeBinding>]
+    attr_reader :removed_exchange_bindings
 
     # @return [Array<Bunny::RecordedExchangeBinding>]
     # @see Bunny::TopologyRecoveryFilter
@@ -267,7 +320,11 @@ module Bunny
         .with_routing_key(routing_key)
         .with_arguments(arguments)
 
-      @binding_mutex.synchronize { @queue_bindings.add(b) }
+      @binding_mutex.synchronize do
+        # a re-established binding supersedes a tombstone recorded earlier
+        @removed_queue_bindings.delete(b)
+        @queue_bindings.add(b)
+      end
     end
 
     # @param [Bunny::Channel] ch
@@ -282,7 +339,16 @@ module Bunny
       .with_routing_key(routing_key)
       .with_arguments(arguments)
 
-      @binding_mutex.synchronize { @queue_bindings.delete(b) }
+      removed = @binding_mutex.synchronize do
+        if @queue_bindings.delete?(b)
+          @removed_queue_bindings.add(b)
+          true
+        else
+          false
+        end
+      end
+
+      self.maybe_delete_recorded_auto_delete_exchange(exchange_name) if removed
     end
 
     # @param [Bunny::Channel] ch
@@ -297,7 +363,10 @@ module Bunny
         .with_routing_key(routing_key)
         .with_arguments(arguments)
 
-      @binding_mutex.synchronize { @exchange_bindings.add(b) }
+      @binding_mutex.synchronize do
+        @removed_exchange_bindings.delete(b)
+        @exchange_bindings.add(b)
+      end
     end
 
     # @param [Bunny::Channel] ch
@@ -312,11 +381,16 @@ module Bunny
         .with_routing_key(routing_key)
         .with_arguments(arguments)
 
-      @binding_mutex.synchronize do
+      removed = @binding_mutex.synchronize do
         if @exchange_bindings.delete?(b)
-          self.maybe_delete_recorded_auto_delete_exchange(source_name)
+          @removed_exchange_bindings.add(b)
+          true
+        else
+          false
         end
       end
+
+      self.maybe_delete_recorded_auto_delete_exchange(source_name) if removed
     end
 
     # @param [String] old_name
@@ -348,6 +422,119 @@ module Bunny
         @queue_bindings.each do |rb|
           rb.update_destination_to(new_name) if rb.destination == old_name
         end
+      end
+    end
+
+    # @!endgroup
+
+    #
+    # Routing migration journal
+    #
+
+    # @!group Routing migration journal
+
+    # Journals of routing migrations that were started on this registry.
+    #
+    # Each entry records the plan fingerprint, the confirmed last step
+    # and the step that was in flight when a failure happened. It lets a
+    # migration continue after a reconnect from the last confirmed
+    # action instead of replaying work that already happened.
+    #
+    # @return [Hash<String, Hash<Symbol, Object>>]
+    attr_reader :migration_journal
+
+    # @param name [String]
+    # @param fingerprint [String]
+    # @param steps [Array<Hash>, nil] serialized plan steps, kept so a run can
+    #   resume after a reconnect even if the live topology moved on
+    # @param allow_restart [Boolean]
+    # @return [Set<String>] ids of steps already confirmed
+    def begin_migration!(name, fingerprint, steps: nil, allow_restart: false)
+      @migration_mutex.synchronize do
+        existing = @migration_journal[name]
+
+        if existing
+          if existing[:fingerprint] != fingerprint
+            unless allow_restart
+              raise TopologyMigrationConflict,
+                    "migration #{name.inspect} was already started with a different plan; " \
+                    "pass allow_restart: true to replace it"
+            end
+
+            @migration_journal[name] = {
+              fingerprint: fingerprint,
+              steps: steps,
+              confirmed: Set.new,
+              in_flight: nil
+            }
+          elsif steps
+            existing[:steps] ||= steps
+          end
+        else
+          @migration_journal[name] = {
+            fingerprint: fingerprint,
+            steps: steps,
+            confirmed: Set.new,
+            in_flight: nil
+          }
+        end
+
+        Set.new(@migration_journal[name][:confirmed])
+      end
+    end
+
+    # @param name [String]
+    # @return [Array<Hash>, nil]
+    def migration_journal_steps(name)
+      @migration_mutex.synchronize do
+        journal = @migration_journal[name]
+        journal && journal[:steps]
+      end
+    end
+
+    # @param name [String]
+    # @param step_id [String]
+    def mark_migration_step_in_flight!(name, step_id)
+      @migration_mutex.synchronize do
+        journal = @migration_journal[name]
+        journal[:in_flight] = step_id if journal
+      end
+    end
+
+    # @param name [String]
+    # @param step_id [String]
+    def confirm_migration_step!(name, step_id)
+      @migration_mutex.synchronize do
+        journal = @migration_journal[name]
+        if journal
+          journal[:confirmed].add(step_id)
+          journal[:in_flight] = nil
+        end
+      end
+    end
+
+    # @param name [String]
+    # @return [Array<String>]
+    def confirmed_migration_steps(name)
+      @migration_mutex.synchronize do
+        journal = @migration_journal[name]
+        journal ? journal[:confirmed].to_a : []
+      end
+    end
+
+    # @param name [String]
+    # @return [String, nil]
+    def in_flight_migration_step(name)
+      @migration_mutex.synchronize do
+        journal = @migration_journal[name]
+        journal && journal[:in_flight]
+      end
+    end
+
+    # @param name [String]
+    def clear_migration_journal!(name)
+      @migration_mutex.synchronize do
+        @migration_journal.delete(name)
       end
     end
 

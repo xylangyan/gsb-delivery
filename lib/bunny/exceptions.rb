@@ -6,6 +6,27 @@ module Bunny
   class Exception < ::StandardError
   end
 
+  # Base class for errors raised while planning or applying a topology
+  # migration.
+  class TopologyMigrationError < Exception
+  end
+
+  # Raised when a migration journal is resumed with a different plan.
+  class TopologyMigrationConflict < TopologyMigrationError
+  end
+
+  # Raised when a requested routing change cannot be applied without
+  # violating the migration's safety requirements.
+  class IncompatibleTopology < TopologyMigrationError
+    # @return [Array<Hash>] structured details about each incompatible path
+    attr_reader :details
+
+    def initialize(message, details = [])
+      super(message)
+      @details = details
+    end
+  end
+
   # Used when a list of endpoints (hostnames) to connect to
   # has been fully traversed, that is, there are no more endpoints (hostnames)
   # to try.

@@ -80,6 +80,7 @@ This guide covers:
 
  * How to bind exchanges to queues
  * How to unbind exchanges from queues
+ * How to preview and apply a routing migration
  * Other topics related to bindings
 
 
