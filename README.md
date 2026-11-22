@@ -158,6 +158,67 @@ split_url = urlsplit("https://example.com/path")
 result = extract.extract_urllib(split_url)
 ```
 
+### How to migrate archived site keys to canonical IDNA
+
+Legacy archives keyed sites with IDNA 2003 rules, where `straße.de` and
+`strasse.de` collapsed onto one key. Canonical keys use IDNA 2008, so the
+Unicode host and its ACE (A-label) form stay one site while `strasse.de` becomes
+distinct:
+
+```python
+>>> from tldextract import derive_site_key
+>>> derive_site_key("straße.de").old_key
+'strasse.de'
+>>> derive_site_key("straße.de").new_key
+'xn--strae-oqa.de'
+>>> derive_site_key("xn--strae-oqa.de").new_key
+'xn--strae-oqa.de'
+>>> derive_site_key("strasse.de").new_key
+'strasse.de'
+```
+
+`derive_site_key` also reports the canonical and legacy hosts, both suffixes,
+whether the suffix is private, and whether the host is only a suffix. A host
+that is itself a public suffix (for example a Unicode private suffix) has an
+empty `new_key` and is never counted as a site.
+
+The same canonical view is available on extraction results, while the existing
+fields keep their current behavior:
+
+```python
+>>> ext = tldextract.extract("straße.de")
+>>> ext.top_domain_under_public_suffix
+'straße.de'
+>>> ext.canonical_domain
+'xn--strae-oqa.de'
+>>> tldextract.extract("strasse.de").canonical_domain
+'strasse.de'
+```
+
+When some archived rows lost their original host, reconcile the retained
+details with the host-less rows and the independently saved totals:
+
+```python
+from tldextract import MigrationLedger, reconcile
+
+ledger = MigrationLedger()
+ledger.add_detail("archive", "event-1", "straße.de")
+ledger.add_uncertain("archive", "event-2", {"strasse.de"})
+ledger.add_total("xn--strae-oqa.de", 1)
+ledger.add_total("strasse.de", 1)
+
+report = reconcile(ledger)
+for row in report.confirmed:
+    print(row.source, row.event_id, row.old_key, row.new_key, row.evidence)
+```
+
+A row migrates only when every allocation consistent with the saved totals puts
+it on the same new site. `report.ambiguous` lists the remaining rows with their
+`possible_sites`; `report.conflicts` lists the rows and totals that cannot be
+reconciled. Rows are identified by `(source, event_id)`, so identical values
+under different events count twice and replays are idempotent. Allocation uses
+flow rather than enumeration, so large overlapping candidate groups stay cheap.
+
 ## Command Line
 
 ```zsh

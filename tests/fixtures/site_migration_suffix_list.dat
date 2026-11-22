@@ -1,0 +1,5 @@
+// A fixed, local suffix list for deterministic site-key migration tests.
+de
+com
+// ===BEGIN PRIVATE DOMAINS===
+例え.テスト

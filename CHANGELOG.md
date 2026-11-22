@@ -3,6 +3,18 @@
 After upgrading, update your cache file by deleting it or via `tldextract
 --update`.
 
+## Unreleased
+
+* Features
+  * Add canonical IDNA 2008 site keys and an access-log migration reconciler
+    * Add `ExtractResult.canonical_domain` and `ExtractResult.canonical_suffix`
+      while the existing fields keep their current spelling-preserving behavior
+    * `derive_site_key`, `canonical_host`, and `legacy_host` distinguish hosts
+      that legacy IDNA 2003 keys collapsed, such as `straße.de` and `strasse.de`
+    * `MigrationLedger` and `reconcile` combine retained details, host-less
+      candidate rows, and saved totals, migrating a row only when every
+      feasible allocation agrees and reporting ambiguous or conflicting rows
+
 ## 5.4.0 (2026-10-03)
 
 * Features

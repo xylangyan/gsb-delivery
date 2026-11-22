@@ -54,6 +54,7 @@ from .remote import (
     looks_like_ip,
     looks_like_ipv6,
 )
+from .site_key import canonical_host
 from .suffix_list import get_suffix_lists
 
 
@@ -313,6 +314,60 @@ class ExtractResult:
         if self.suffix and self.domain:
             return f"{self.domain}.{self.suffix}"
         return ""
+
+    @property
+    def canonical_suffix(self) -> str:
+        """The `suffix` in canonical IDNA 2008 A-label form.
+
+        The existing `suffix` field still preserves the input's Unicode or ACE
+        spelling. This property lets callers compare suffixes across those
+        spellings, where the Unicode host ``straße.de`` and its ACE label share
+        one canonical form but `strasse.de` does not.
+
+        >>> extract("straße.de").canonical_suffix
+        'de'
+        >>> extract("xn--strae-oqa.de").canonical_suffix
+        'de'
+
+        Returns the empty string if the suffix cannot be canonicalized.
+
+        .. versionadded:: 5.5.0
+        """
+        if not self.suffix:
+            return ""
+        try:
+            return canonical_host(self.suffix)
+        except (UnicodeError, ValueError):
+            return ""
+
+    @property
+    def canonical_domain(self) -> str:
+        """The canonical `suffix` with the domain label, joined by a dot.
+
+        This is the canonical form of `top_domain_under_public_suffix`.
+
+        >>> extract("straße.de").canonical_domain
+        'xn--strae-oqa.de'
+        >>> extract("xn--strae-oqa.de").canonical_domain
+        'xn--strae-oqa.de'
+        >>> extract("strasse.de").canonical_domain
+        'strasse.de'
+
+        Returns the empty string if the suffix has no domain label or cannot be
+        canonicalized.
+
+        .. versionadded:: 5.5.0
+        """
+        canonical_suffix = self.canonical_suffix
+        if not (canonical_suffix and self.domain):
+            return ""
+        try:
+            canonical_label = canonical_host(self.domain)
+        except (UnicodeError, ValueError):
+            return ""
+        if not canonical_label:
+            return ""
+        return f"{canonical_label}.{canonical_suffix}"
 
 
 class _UseEnvironmentUrls:
