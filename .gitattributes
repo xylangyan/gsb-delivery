@@ -1,0 +1,17 @@
+# Auto-detect text files and enforce LF line endings
+* text=auto eol=lf
+
+# Explicitly mark text files
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+MANIFEST.in text eol=lf
+LICENSE text eol=lf
+UNICODE-LICENSE text eol=lf
+
+# Ignore binary files from text conversions (if any are added later)
+*.png binary
+*.jpg binary
+*.tar.gz binary
+*.wheel binary

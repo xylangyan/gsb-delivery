@@ -1,0 +1,7 @@
+graft tests
+graft tools
+include CHANGELOG.md
+include UNICODE-LICENSE
+
+global-exclude __pycache__
+global-exclude *.py[cod]

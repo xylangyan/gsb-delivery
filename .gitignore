@@ -1,0 +1,18 @@
+# Byte-compiled and cache files
+*.py[cod]
+*$py.class
+__pycache__/
+
+# Distribution and packaging
+*.egg-info/
+build/
+dist/
+
+# Test runners and tools
+.nox/
+
+# Virtual environments
+.env/
+.venv/
+env/
+venv/
