@@ -1,0 +1,345 @@
+"""
+This file is part of pyDatalog, a datalog engine for python.
+
+Copyright (C) 2012 Pierre Carbonnelle
+
+This library is free software; you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as
+published by the Free Software Foundation; either version 2 of the
+License, or (at your option) any later version.
+
+This library is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public
+License along with this library; if not, write to the Free Software
+Foundation, Inc.  51 Franklin St, Fifth Floor, Boston, MA 02110-1301
+USA
+"""
+
+"""
+* Aggregate : represents calls to aggregation method, e.g. min(X)
+    * Sum
+    * Len
+    * Concat
+    * Min
+    * Max
+    * Rank
+    * Running_sum
+"""
+##################################### Aggregation #####################################
+
+from itertools import count
+import collections
+import concurrent.futures
+from typing import Any, Optional, List, Union, Tuple as TypingTuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .pyParser import Function
+
+try:
+    import statistics
+    mean = statistics.mean
+except ImportError:
+    def _fallback_mean(aList):
+        return sum(aList) / len(aList)
+    mean = _fallback_mean
+
+from . import util
+from . import pyEngine
+from .pyParser import Expression, Literal, Term, Operation, add_clause
+
+class Aggregate:
+    """
+    represents a generic aggregation_method(X, for_each=Y, order_by=Z, sep=sep)
+    e.g. 'sum(Y,key=Z)' in '(a[X]==sum(Y,key=Z))'
+    pyEngine calls sort_result(), key(), reset(), add() and fact() to compute the aggregate
+    """
+    counter = count(1)
+    required_kw = tuple()
+
+    def __init__(self, Y=None, group_by=tuple(), for_each=tuple(), order_by=tuple(), sep=None):
+        self._pyD_name: Any
+        # convert for_each=Z to for_each=(Z,)
+        self.Y = Y
+        self.group_by = (group_by,) if isinstance(group_by, Expression) else tuple(group_by)
+        self.for_each = (for_each,) if isinstance(for_each, Expression) else tuple(for_each)
+        self.order_by = (order_by,) if isinstance(order_by, Expression) else tuple(order_by)
+
+        # recover the negated variable in order_by
+        self.order_by = tuple([e.__dict__.get('_pyD_variable', e) for e in self.order_by])
+
+        if not all([isinstance(e, Term) and e.is_variable() for e in self.group_by + self.for_each + self.order_by]):
+            raise util.DatalogError("Arguments of aggregate must be variable(s).", None, None)
+
+        if sep and not isinstance(sep, util.string_types):
+            raise util.DatalogError("Separator in aggregation must be a string", None, None)
+        self.sep = sep
+
+        # verify presence of keyword arguments
+        for kw in self.required_kw:
+            arg = getattr(self, kw)
+            if arg is None or (isinstance(arg, tuple) and arg == tuple()):
+                raise util.DatalogError("Error: argument missing in aggregate", None, None)
+
+        # used to create literal.
+        self.args = ((Y,) if Y is not None else tuple()) + self.group_by + self.for_each + self.order_by + ((sep,) if sep is not None else tuple())
+        self.Y_arity = 1 if Y is not None else 0
+        self.sep_arity = 1 if sep is not None else 0
+
+    @property
+    def arity(self) -> int:
+        """returns the arity of the aggregate function, not of the full predicate """
+        return len(self.args)
+
+    def make_literal_for(self, function: "Function", operator: str):
+        if operator != '==':
+            raise util.DatalogError("Aggregate operator can only be used with equality.", None, None)
+
+        name = function._pyD_name + operator
+        result = function._pyD_symbol
+        #TODO perf : do not add pre-term for non prefixed #prefixed
+        terms = [Term.make_for_prefix(function._pyD_name)] + list(function._pyD_keys) + [result]  #prefixed
+        self.index_first_arg = len(terms)-1 # position of the value to add
+
+        # 1 create literal that can be queried
+        head = Literal.make(name, terms, {}, prearity=len(terms)-1)
+
+        # 2 create clause to resolve it
+
+        terms[-1:-1] = self.args  # type: ignore # insert the aggregate arguments before the result
+
+        # determine list of variables, without duplication
+        variables, new_terms = {}, []
+        for variable in terms:
+            if isinstance(variable, Term) and variable._pyD_name not in variables:
+                variables[variable._pyD_name] = len(new_terms)
+                new_terms.append(variable)
+
+        new_name = name + '!' + str(next(Aggregate.counter))
+        body = Literal.make(new_name, new_terms, {}, aggregate=self) #pred
+        add_clause(head, body)
+
+        self.index_value = variables[self.Y._pyD_name] if self.Y is not None else None
+        self.slice_for_each = [variables[variable._pyD_name] for variable in self.for_each]
+        self.reversed_order_by = [variables[variable._pyD_name] for variable in self.order_by][::-1]
+        self.reverse_order = [variable._pyD_negated for variable in new_terms[:-1]]
+        if isinstance(self, Rank): # can't use required_kw because rank does not require group_by
+            self.slice_group_by = [variables[variable._pyD_name] for variable in self.group_by]
+        else:
+            self.slice_group_by = [variables[Expression._pyD_for(variable)._pyD_name]
+                                   for variable in function._pyD_keys if isinstance(variable, Term)]
+        self.slice_to_variabilize = [variables[variable._pyD_name] for variable in function._pyD_keys
+                                     if isinstance(variable, Term)
+                                     and variables[variable._pyD_name] not in self.slice_group_by]
+
+        # return a literal without the result
+        new_literal = Literal.make(new_name, new_terms[:-1], {})
+        return new_literal
+
+    def fact_candidate(self, subgoal, row):
+        if row is not None:
+            class0 = subgoal.literal.pred._class()
+            row[self.index_first_arg:-1] = [""] * (len(row)-self.index_first_arg-1)
+            subgoal.fact_candidate(class0, row)
+
+    def add(self, row: Any) -> Optional[List[Any]]:
+        """ Subclasses should override this to process a row.
+        
+        - Standard Aggregates (e.g. Sum, Min): Accumulate state internally and return None.
+        - Running Aggregates (e.g. Rank, Running_sum): Calculate a value per row and return the modified row immediately.
+        """
+        pass
+
+    def _evaluate_group(self, v):
+        """ Evaluates a group on this specific instance, modifying its state. """
+        if not v:
+            return []
+        # sort group according to the aggregate argument's order_by, allowing for _pyD_negated
+        for i in self.reversed_order_by:
+            v.sort(key=lambda literal, i=i, self=self: literal[i].id,
+                reverse = self.reverse_order[i])
+
+        self.reset()
+        generated_rows = []
+        r = None
+        for r in v:
+            row = self.add(r)
+            if row is not None:
+                generated_rows.append(row)
+        if r is not None:
+            row = self.fact(r)
+            if row is not None:
+                generated_rows.append(row)
+        return generated_rows
+
+    def _process_group_concurrently(self, v):
+        """ Creates a thread-local instance and evaluates the group concurrently. """
+        # Cannot use copy.copy because pyDatalog Terms override __getattr__
+        # to return logical Operations, which causes infinite recursion.
+        local_agg = self.__class__.__new__(self.__class__)
+        local_agg.__dict__.update(self.__dict__)
+        return local_agg._evaluate_group(v)
+
+    def complete(self, base_subgoal, subgoal):
+        """ calculate the aggregate after base facts have been found """
+        groups = collections.defaultdict(list)
+        # Group facts in O(N) using a hash map
+        for l in base_subgoal.facts.values():
+            r = tuple(l.terms)
+            groups[self.key(r)].append(r)
+
+        if len(groups) == 1:
+            # Fast path: avoid ThreadPoolExecutor and instantiation overhead when there is only one group
+            for v in groups.values():
+                for row in self._evaluate_group(v):
+                    self.fact_candidate(subgoal, row)
+
+        elif groups:
+            # Evaluate groups concurrently. This takes advantage of Python 3.13+ no-GIL
+            # free-threading, while gracefully falling back to interleaved execution
+            # on older standard CPython builds.
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                for generated_rows in executor.map(self._process_group_concurrently, groups.values()):
+                    for row in generated_rows:
+                        self.fact_candidate(subgoal, row)
+
+
+    def key(self, result):
+        """ return the grouping key of a result """
+        return tuple(result[i].id for i in self.slice_group_by)
+
+    def reset(self):
+        """ by default, _value is 0 """
+        self._value = 0
+
+    @property
+    def value(self) -> Union[int, float, str, TypingTuple[Any, ...], None]:
+        """ by default, value is _value"""
+        return self._value
+
+    def fact(self, row: TypingTuple[Any, ...]) -> Optional[List[Any]]:
+        """ Returns the final aggregated fact terms at the end of group execution.
+        
+        For standard aggregates, this appends the accumulated value to the last row and returns it.
+        For running aggregates (which emit rows during add()), this should be overridden to return None
+        to prevent duplicate final rows.
+        """
+        return list(row) + [self.value]
+
+class Sum(Aggregate):
+    """ represents sum_(Y, for_each=(Z,T))"""
+    required_kw = ('Y', 'for_each')
+
+    def add(self, row):
+        self._value += row[self.index_value].id
+
+class Len(Aggregate, Operation):  # type: ignore
+    """ represents len_(X) : a simple or aggregate operation"""
+    required_kw = ('Y',)
+
+    def __init__(self, Y):
+        Aggregate.__init__(self, Y)
+        Operation.__init__(self, None, '#', Y)
+
+    def add(self, row):
+        self._value += 1
+
+class Tuple(Aggregate):
+    """ represents tuple_(X, order_by=(Y,)"""
+    required_kw = ('Y', 'order_by')
+
+    def reset(self):
+        self._value = []
+
+    def add(self, row):
+        self._value.append(row[self.index_value].id)
+
+    @property
+    def value(self) -> Union[TypingTuple[Any, ...], float, str]:
+        return tuple(self._value)
+
+class Mean(Tuple):
+    """ represents mean_(X, for_each=(Y,)"""
+    required_kw = ('Y', 'for_each')
+
+    @property
+    def value(self) -> float:
+        return mean(self._value)
+
+class Linear_regression(Aggregate):
+    """ represents mean_(Y, for_each=(X,)"""
+    required_kw = ('Y', 'for_each')
+
+    def reset(self):
+        self.X_values = []
+        self.Y_values = []
+
+    def add(self, row):
+        self.X_values.append(row[self.slice_for_each[0]].id)
+        self.Y_values.append(row[self.index_value].id)
+
+    @property
+    def value(self) -> TypingTuple[float, float]:
+        length = len(self.X_values)
+        sum_x = sum(self.X_values)
+        sum_y = sum(self.Y_values)
+
+        sum_x_squared = sum(map(lambda a: a * a, self.X_values))
+        covariance = sum(self.X_values[i] * self.Y_values[i] for i in range(length))
+
+        a = (covariance - (sum_x * sum_y) / length) / (sum_x_squared - ((sum_x ** 2) / length))
+        b = (sum_y - a * sum_x) / length
+        return (a, b)
+
+class Concat(Tuple):
+    """ represents concat_(Y, order_by=(Z1,Z2), sep=sep)"""
+    required_kw = ('Y', 'order_by', 'sep')
+
+    @property
+    def value(self) -> str:
+        if self.sep is None:
+            return ""
+        return self.sep.join(self._value)
+
+class Min(Aggregate):
+    """ represents min_(Y, order_by=(Z,T))"""
+    required_kw = ('Y', 'order_by')
+
+    def reset(self):
+        self._value = None
+
+    def add(self, row):
+        # take the value of the first row
+        self._value = row[self.index_value].id if self._value is None else self._value
+
+class Max(Min):
+    """ represents max_(Y, order_by=(Z,T))"""
+
+    def add(self, row):
+        # take the value of the last row
+        self._value = row[self.index_value].id
+
+class Rank(Aggregate):
+    """ represents rank_(group_by=Z, order_by=T)"""
+    required_kw = ('order_by',)
+
+    def add(self, row):
+        self._value += 1
+        return list(row) + [self._value-1]
+
+    def fact(self, row: TypingTuple[Any, ...]) -> Optional[List[Any]]:
+        """ Returns None to prevent emitting a duplicate final row, since
+        Rank (a running aggregate) already emitted all rows during add().
+        """
+        return None
+
+class Running_sum(Rank):
+    """ represents running_sum(Y, group_by=Z, order_by=T"""
+    required_kw = ('Y', 'group_by', 'order_by')
+
+    def add(self, row):
+        self._value += row[self.index_value].id
+        return list(row) + [self._value]

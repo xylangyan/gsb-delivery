@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel>=0.40.0", "Cython>=3.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyDatalog"
+version = "0.22.5"
+description = "A pure-python implementation of Datalog, a truly declarative language derived from Prolog."
+readme = "README.md"
+authors = [
+    { name = "Pierre Carbonnelle", email = "pierre.carbonnelle@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = []
+
+keywords = ["prolog", "logic programming", "database", "SQL", "data integration", "expert system", "AI"]
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Prolog",
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Other Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+    "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+sqlalchemy = [
+    "sqlalchemy>=2.0",
+]
+mongo = [
+    "pymongo>=4.18.3",
+]
+
+[project.urls]
+Homepage = "https://pydatalog.readthedocs.io/en/latest/"
+Download = "http://pypi.python.org/pypi?name=pyDatalog&:action=display"
+
+[tool.setuptools.packages.find]
+include = ["pyDatalog"]
+
+[tool.setuptools]
+license-files = []
+
+[tool.cibuildwheel]
+skip = ["pp*", "cp38-*", "cp39-*", "*-win32"]
+build-verbosity = 1
+before-build = "python -m pip install --upgrade setuptools wheel Cython"
