@@ -109,6 +109,71 @@ end
 puts rss
 ```
 
+## Blending RSS 1.0 feeds
+
+`RSS::Blend` reorders items from several RSS 1.0 feeds into one feed. It reads
+the original order from each feed's `rdf:Seq` occurrences rather than from the
+order of `item` elements, and never merges occurrences merely because they
+share a URL.
+
+```ruby
+require "rss"
+
+blend = RSS::Blend.new(reference: "morning")
+blend.add_source("morning", "morning.rdf", slots: %w[x y a b])
+blend.add_source("evening", "evening.rdf", slots: %w[a b])
+
+blend.add_hard("a", "x")
+blend.add_hard("b", "x")
+blend.add_preference("x", "y", 7, source: "morning")
+blend.add_preference("y", "a", 4, source: "morning")
+blend.add_preference("y", "b", 5, source: "morning")
+
+result = blend.solve
+result.order  # => ["y", "a", "b", "x"]
+result.score  # => 9
+
+puts result.to_rss
+puts result.report
+result.verify_readback!
+```
+
+Hard rules are mandatory and are checked for cycles before anything is
+emitted (`RSS::Blend::HardCycleError`). Preferences are soft; Blend finds the
+maximum-weight set of preferences that can all hold together. `result.report`
+lists every dropped preference and the conflicting path that explains it.
+When several maximum-weight orders exist, `reference:` (a source name or an
+explicit slot array) supplies the original Seq order used to break the tie.
+
+A `slots:` array has one entry per `rdf:Seq` position. `nil` entries become
+per-occurrence slots named `source:position`. You can also pass a Hash keyed by
+position (`{1 => "x", 2 => "y"}`) or by resource (`{"url" => "x"}`; use an
+array such as `{"url" => ["x1", "x2"]}` when the same URL occurs twice).
+
+If a source's Seq has a position whose `item` body was not returned, that slot
+is kept in place and marked pending; Blend does not substitute another slot
+with the same URL. Pending slots are reported in `result.pending_slots` and in
+`result.report`.
+
+```ruby
+result.source_order_checks.each do |check|
+  puts check.to_s unless check.satisfied?
+end
+```
+
+`source_order_checks` compares every pair of distinct slots in each source's
+Seq and explains why an unsatisfied pair was dropped. `result.diagnostics`
+returns the same information as a Hash for machine-readable reports.
+
+For a daily run, `sample/blend_daily.rb` reads a JSON manifest that lists the
+feeds, their occurrence mappings, hard rules, and preferences:
+
+```console
+$ ruby sample/blend_daily.rb manifest.json \
+    --rss blended.rdf --report report.txt \
+    --json-report diagnostics.json --verify
+```
+
 ## Development
 
 After checking out the repo, run `rake test` to run the tests.

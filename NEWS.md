@@ -1,5 +1,22 @@
 # News
 
+## 0.3.5 - 2026-11-23
+
+### Improvements
+
+  * Added `RSS::Blend` for blending several RSS 1.0 feeds into one while
+    preserving `rdf:Seq` occurrence order.
+    * Occurrences are mapped to slots explicitly; equal `rdf:resource` values
+      are not merged by URL.
+    * Hard ordering rules are checked for cycles before output.
+    * Weighted preferences are solved exactly for small components and fall
+      back to a beam search for larger ones.
+    * Pending slots (Seq entries without a returned item body) stay in place
+      and are reported instead of borrowing another slot.
+    * Generated feeds can be re-read with `RSS::Parser` and verified with
+      `Result#verify_readback!`.
+    * Added `sample/blend_daily.rb`, a JSON-manifest driven daily driver.
+
 ## 0.3.3 - 2026-06-10
 
 ### Improvements

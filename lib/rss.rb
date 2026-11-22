@@ -87,3 +87,4 @@ require "rss/taxonomy"
 require "rss/trackback"
 
 require "rss/maker"
+require "rss/blend"
