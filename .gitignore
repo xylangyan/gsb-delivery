@@ -1,0 +1,13 @@
+MANIFEST
+build
+dist
+*.pyc
+.tox
+.coverage
+coverage.xml
+htmlcov/*
+ve
+.idea
+*.iml
+*.swp
+whisper.egg-info/
