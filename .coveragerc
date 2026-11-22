@@ -1,0 +1,51 @@
+[html]
+show_contexts = true
+skip_covered = false
+
+[paths]
+_site-packages-to-src-mapping =
+  .
+  */lib/pypy*/site-packages
+  */lib/python*/site-packages
+  *\Lib\site-packages
+
+[report]
+# Per-job floor, pinned to the lowest job: macOS on 3.14, where the
+# platform-specific tests are skipped.
+fail_under = 98.29
+# The total is rounded to this many decimals before the comparison.
+precision = 2
+skip_covered = true
+skip_empty = true
+show_missing = true
+exclude_also =
+  ^\s*@pytest\.mark\.xfail
+  if TYPE_CHECKING
+  assert False
+  : \.\.\.(\s*#.*)?$
+  ^ +\.\.\.$
+omit =
+  benchmark.py
+  url_benchmark.py
+  tests/*_benchmarks.py
+  # The in-tree build backend is exercised by tests but is not library
+  # code held to the coverage gate.
+  packaging/*
+
+[run]
+branch = true
+# Cython.Coverage plugin is not supported on sysmon core which is default on
+# Python 3.14+ so always use ctrace core
+core = ctrace
+cover_pylib = false
+# https://coverage.rtfd.io/en/latest/contexts.html#dynamic-contexts
+# dynamic_context = test_function  # conflicts with `pytest-cov` if set here
+parallel = true
+plugins =
+  covdefaults
+  Cython.Coverage
+relative_files = true
+source =
+  .
+source_pkgs =
+  yarl

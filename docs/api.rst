@@ -1,0 +1,1930 @@
+.. _yarl-api:
+
+Public API
+==========
+
+.. module:: yarl
+.. currentmodule:: yarl
+
+
+The only public *yarl* class is :class:`URL`:
+
+.. doctest::
+
+   >>> from yarl import URL
+
+
+.. class:: URL(arg, *, encoded=False, mode="whatwg")
+
+Represents URL as ::
+
+   [scheme:]//[user[:password]@]host[:port][/path][?query][#fragment]
+
+for absolute URLs and ::
+
+   [/path][?query][#fragment]
+
+for relative
+ones (:ref:`yarl-api-relative-urls`).
+
+The URL structure is::
+
+    http://user:pass@example.com:8042/over/there?name=ferret#nose
+    \__/   \__/ \__/ \_________/ \__/\_________/ \_________/ \__/
+     |      |    |        |       |      |           |        |
+   scheme  user password host    port   path       query   fragment
+
+
+Internally all data are stored as *percent-encoded* strings for
+*user*, *path*, *query* and *fragment* URL parts and
+*IDNA-encoded* (:rfc:`5891`) for *host*.
+
+Constructor and modification operators perform *encoding* for all
+parts automatically.
+The library assumes all data uses *UTF-8* for *percent-encoded* tokens.
+
+.. doctest::
+
+   >>> URL('http://example.com/path/to/?arg1=a&arg2=b#fragment')
+   URL('http://example.com/path/to/?arg1=a&arg2=b#fragment')
+
+Unless URL contain the only *ascii* characters there is no differences.
+
+But for *non-ascii* case *encoding* is applied.
+
+.. doctest::
+
+   >>> str(URL('http://εμπορικόσήμα.eu/шлях/這裡'))
+   'http://xn--jxagkqfkduily1i.eu/%D1%88%D0%BB%D1%8F%D1%85/%E9%80%99%E8%A3%A1'
+
+The same is true for *user*, *password*, *query* and *fragment* parts of URL.
+
+Parsing a *path* decodes percent-encoded *unreserved* characters, but a
+percent-encoded *reserved* character (``%3A``, ``%40``, ``%3D`` and so on)
+is kept encoded, since :rfc:`3986#section-2.2` treats it as different
+from the literal character. The decoded :attr:`URL.path` shows both the
+same way:
+
+.. doctest::
+
+   >>> url = URL('http://example.com/%7Euser/a%3Ab')
+   >>> str(url)
+   'http://example.com/~user/a%3Ab'
+   >>> url.path
+   '/~user/a:b'
+
+An empty *authority*, *query* or *fragment* is kept apart from a missing
+one, as :rfc:`3986#section-5.3` requires: ``http://example.com/p?`` and
+``http://example.com/p`` are different URLs, and so are ``sc:///p`` and
+``sc:/p``. The ``raw_``/decoded properties return ``''`` for both an empty
+and a missing component; ``str()`` and comparisons tell them apart.
+In the default WHATWG mode, ``file`` URLs always have an authority and
+print ``//``; in RFC 3986 mode ``//`` is only printed when the URL has one,
+so ``URL('file:/p', mode='rfc')`` stays ``file:/p``. Whether an empty authority, query or
+fragment makes two URLs different follows the same rule, so ``file:/p``
+and ``file:///p`` are equal in WHATWG mode but not in RFC 3986 mode.
+
+.. doctest::
+
+   >>> str(URL('http://example.com/p?'))
+   'http://example.com/p?'
+   >>> URL('http://example.com/p?') == URL('http://example.com/p')
+   False
+   >>> str(URL('data:///test'))
+   'data:///test'
+   >>> str(URL('gopher:/example.com/'))
+   'gopher:/example.com/'
+   >>> str(URL('file:/p')), str(URL('file:/p', mode='rfc'))
+   ('file:///p', 'file:/p')
+
+.. versionchanged:: 1.26
+
+   Empty components are kept; previously they were dropped, and ``//`` was
+   added for every scheme listed in ``urllib.parse.uses_netloc``.
+
+RFC 3986 mode removes the dot segments of a URL with a scheme also when it has
+no authority, as :rfc:`3986#section-5.2.2` does, so ``file:..`` is ``file:``
+and ``file:.//p`` is ``file:/p``. That follows :rfc:`3986#section-5.2.4`
+step by step: a ``..`` above the first segment of a path without a leading
+``/`` leaves one, so ``urn:a/../b`` is ``urn:/b``. :meth:`URL.build`,
+:meth:`URL.with_path`, :meth:`URL.joinpath` and ``/`` do the same. WHATWG
+mode keeps the path of such a URL with a non-special scheme as is.
+
+.. doctest::
+
+   >>> URL('file:.//p', mode='rfc')
+   URL('file:/p', mode='rfc')
+   >>> URL('urn:a/./b', mode='rfc'), URL('urn:a/./b')
+   (URL('urn:a/b', mode='rfc'), URL('urn:a/./b'))
+
+.. versionchanged:: 1.26
+
+   RFC 3986 mode removes dot segments from a path without an authority.
+
+For the special schemes other than ``file``, the default WHATWG mode reads
+the text after the scheme as the authority even without ``//``, skipping any
+number of leading slashes, as the WHATWG URL Standard does:
+``http:example.com/``, ``http:/example.com/`` and ``http:///example.com/`` are
+all ``http://example.com/``. Such a URL with userinfo or a port but no host,
+like ``http:@/example.com``, is rejected. RFC 3986 mode keeps the text as the
+path of a URL without a host. In WHATWG mode :meth:`URL.join` still resolves
+a URL written without ``//`` as a relative reference against a base with the
+same scheme, see there.
+
+.. doctest::
+
+   >>> URL('http:example.com/path')
+   URL('http://example.com/path')
+   >>> URL('http:example.com/path', mode='rfc')
+   URL('http:example.com/path', mode='rfc')
+
+.. versionchanged:: 1.26
+
+   ``http:example.com/`` and ``http:///example.com/`` were URLs without a
+   host in WHATWG mode, printed as ``http:///example.com/``.
+
+The other special schemes of the WHATWG URL Standard (``http``, ``https``,
+``ws``, ``wss`` and ``ftp``) need a host, so an empty authority is rejected
+in both modes: ``http://``, ``http:///`` and ``http://?q`` are invalid, as
+they are for the WHATWG URL Standard and, for ``http`` and ``https``, for
+:rfc:`9110#section-4.2.1`. RFC 3986 mode rejects ``http:///path`` for the
+same reason, where WHATWG mode reads ``path`` as the host, see above. A URL
+without an authority, such as ``http:`` or ``http:?q``, is kept as a
+reference to a base for :meth:`URL.join` and is printed without ``//``.
+``encoded=True`` keeps all of them, as it does not check the host.
+
+.. doctest::
+
+   >>> URL('http://?q')
+   Traceback (most recent call last):
+     ...
+   ValueError: Invalid URL: host is required for absolute urls with the http scheme
+   >>> URL('http:?q')
+   URL('http:?q')
+   >>> URL('http://example.com/path').join(URL('http:?q'))
+   URL('http://example.com/path?q')
+   >>> URL('http:///path', mode='rfc')
+   Traceback (most recent call last):
+     ...
+   ValueError: Invalid URL: host is required for absolute urls with the http scheme
+
+.. versionchanged:: 1.26
+
+   WHATWG mode rejects an empty authority for ``http``, ``https``, ``ws``,
+   ``wss`` and ``ftp``, and prints a URL of these schemes without an
+   authority without ``//``; previously ``http://?q`` was accepted, and
+   ``http:?q`` was printed as ``http://?q``. RFC 3986 mode rejects an empty
+   authority for these schemes too; previously it rejected an empty host
+   only next to userinfo or a port.
+
+The same applies to :meth:`URL.join`. A reference with an empty authority,
+such as ``///a/b``, against a base with one of these schemes takes the host
+after the slashes in WHATWG mode, as the WHATWG URL Standard does, and is
+rejected in RFC 3986 mode, where the result would have an empty host. A
+reference without an authority, such as ``http:``, is rejected in WHATWG mode
+against a base with another scheme.
+
+.. doctest::
+
+   >>> URL('http://example.com/x').join(URL('///a/b'))
+   URL('http://a/b')
+   >>> URL('http://example.com/x', mode='rfc').join(URL('///a/b', mode='rfc'))
+   Traceback (most recent call last):
+     ...
+   ValueError: Invalid URL: joining '///a/b' gives an empty host, which the http scheme does not allow
+
+.. versionchanged:: 1.26
+
+   ``URL('http://example.com/x').join(URL('///a/b'))`` kept the host of the
+   base in both modes, giving ``http://example.com/a/b``, and
+   ``URL('https://example.com/').join(URL('http:'))`` gave ``http:``.
+
+In WHATWG mode, leading and trailing C0 control characters and spaces are
+stripped, and tabs and newlines are removed, as the WHATWG URL Standard does
+and as :rfc:`3986#appendix-C` recommends for user-typed URIs; RFC 3986 mode
+rejects them, see below:
+
+.. doctest::
+
+   >>> URL(' http://example.com/path \n')
+   URL('http://example.com/path')
+
+.. versionchanged:: 1.26
+
+   Trailing C0 control characters and spaces are stripped; previously they
+   were kept and percent-encoded.
+
+In WHATWG mode a backslash (``\``) before the query is read as a slash in
+URLs of the ``http``, ``https``, ``ws``, ``wss``, ``ftp`` and ``file``
+schemes, as the WHATWG URL Standard does for special URLs. A relative URL
+keeps it until :meth:`URL.join` joins it with such a URL, so that ``\/a``
+cannot replace the host of another base. Other schemes, the query and the
+fragment keep it, percent-encoded.
+RFC 3986 has no backslash in its grammar, so RFC 3986 mode rejects a URL
+string that contains one:
+
+.. doctest::
+
+   >>> URL('http://example.com\\path\\file')
+   URL('http://example.com/path/file')
+   >>> URL('http://example.com\\path', mode='rfc')
+   Traceback (most recent call last):
+     ...
+   ValueError: Invalid URL: RFC 3986 does not allow '\' in 'http://example.com\\path'
+
+.. versionchanged:: 1.26
+
+   A backslash is read as a slash in WHATWG mode; previously it was rejected
+   in the authority and percent-encoded elsewhere.
+
+In WHATWG mode a ``%`` that does not start a percent-encoded octet is kept
+as written in the path, the query and the fragment of a parsed URL string,
+as the WHATWG URL Standard does; :attr:`URL.path` and the other decoded
+attributes keep it too. :meth:`URL.build`, :meth:`URL.with_path` and the
+other methods that take decoded components still encode a ``%`` as ``%25``
+in both modes, since there it is a percent sign. RFC 3986 mode rejects such
+a URL string:
+
+.. doctest::
+
+   >>> URL('http://example.com/100%?a=%zz')
+   URL('http://example.com/100%?a=%zz')
+   >>> URL('http://example.com/100%?a=%zz').path
+   '/100%'
+   >>> URL('http://example.com/').with_path('/100%')
+   URL('http://example.com/100%25')
+
+.. versionchanged:: 1.26
+
+   A ``%`` that does not start a percent-encoded octet is kept in WHATWG
+   mode; previously it was encoded as ``%25``.
+
+In WHATWG mode the host of a URL whose scheme is not special is an *opaque
+host*, as the WHATWG URL Standard parses it: it is neither lowercased nor
+encoded with IDNA, its control and non-ASCII characters are percent-encoded
+as UTF-8, and only NUL, tab, line feed, carriage return, space and
+``#/:<>?@[\]^|`` are rejected, so ``"``, ``{`` and a ``%`` that does not
+start a percent-encoded octet are allowed.
+:attr:`URL.host` decodes the non-ASCII characters. An IPv6 address in
+brackets is parsed as usual. RFC 3986 mode, the special schemes and a
+relative URL encode the host as a domain, and so does
+:meth:`URL.with_scheme` when it moves an opaque host to a special scheme,
+which raises :exc:`ValueError` for a host that is not a valid domain.
+
+.. doctest::
+
+   >>> URL('sc://Ñ.Example/')
+   URL('sc://%C3%91.Example/')
+   >>> URL('sc://Ñ.Example/').host
+   'Ñ.Example'
+   >>> URL('sc://Ñ.Example/', mode='rfc')
+   URL('sc://xn--ida.example/', mode='rfc')
+   >>> URL('sc://Ñ.Example/').with_scheme('http')
+   URL('http://xn--ida.example/')
+
+A URL whose scheme is not special keeps an empty path in both modes, also
+before a query or a fragment, as both standards write it: ``sc://h?q`` is
+not ``sc://h/?q``. A special URL and a relative URL get the path ``/``.
+:attr:`URL.path` is ``/`` for all of them, and an empty path still compares
+equal to ``/``.
+
+.. doctest::
+
+   >>> URL('sc://h?q'), URL('http://h?q')
+   (URL('sc://h?q'), URL('http://h/?q'))
+
+.. versionchanged:: 1.26
+
+   The host of a URL whose scheme is not special is an opaque host in WHATWG
+   mode; previously it was lowercased and encoded with IDNA, and ``"`` or a
+   lone ``%`` in it were rejected. An empty path before a query or a fragment
+   was written as ``/`` for every scheme.
+
+RFC 3986 mode takes IRIs (:rfc:`3987`): non-ASCII characters are
+percent-encoded as UTF-8, and a non-ASCII host is encoded with IDNA2008.
+Any other character outside the grammar of the two RFCs makes the URL
+string invalid, where WHATWG mode percent-encodes or removes it: a space,
+``"``, ``<``, ``>``, ``^``, a backtick, ``{``, ``|``, ``}``, a control
+character, ``[`` or ``]`` outside an IP-literal host, a second ``#``, a
+``%`` that does not start a percent-encoded octet (WHATWG mode keeps it as
+written, see above), a code point that
+:rfc:`3987` excludes (such as ``U+FFFF``, a C1 control, a bidi formatting
+character, or a private-use character outside the query), an invalid scheme,
+and a ``:`` in the first segment of a relative path. Only parsing a string is
+checked: :meth:`URL.build`, :meth:`URL.with_path` and the other methods that
+take decoded components percent-encode them, and ``encoded=True`` keeps the
+string as it is.
+
+.. doctest::
+
+   >>> URL('http://example.com/a b')
+   URL('http://example.com/a%20b')
+   >>> URL('http://example.com/a b', mode='rfc')
+   Traceback (most recent call last):
+     ...
+   ValueError: Invalid URL: RFC 3986 and RFC 3987 do not allow ' ' in the path of 'http://example.com/a b'
+   >>> URL('http://example.com/шлях', mode='rfc')
+   URL('http://example.com/%D1%88%D0%BB%D1%8F%D1%85', mode='rfc')
+
+.. versionchanged:: 1.26
+
+   RFC 3986 mode rejects characters outside the grammar of :rfc:`3986` and
+   :rfc:`3987`; previously it percent-encoded them, and stripped or removed
+   control characters, spaces, tabs and newlines.
+
+Already encoded URL is not changed:
+
+.. doctest::
+
+   >>> URL('http://xn--jxagkqfkduily1i.eu')
+   URL('http://xn--jxagkqfkduily1i.eu')
+
+Use :meth:`~URL.human_repr` for getting human readable representation:
+
+.. doctest::
+
+   >>> url = URL('http://εμπορικόσήμα.eu/шлях/這裡')
+   >>> str(url)
+   'http://xn--jxagkqfkduily1i.eu/%D1%88%D0%BB%D1%8F%D1%85/%E9%80%99%E8%A3%A1'
+   >>> url.human_repr()
+   'http://εμπορικόσήμα.eu/шлях/這裡'
+
+The *host* is validated the same way as by :meth:`URL.build` and
+:meth:`URL.with_host`: a :exc:`ValueError` is raised for a host that is
+neither a valid IP address nor a valid *reg-name* (:rfc:`3986#section-3.2.2`),
+for example one containing a space, a control character or a character that
+turns into a URL delimiter after IDNA normalization. The default WHATWG mode
+also accepts ``"``, a backtick, ``{`` and ``}``, which the WHATWG URL Standard
+allows in a domain, so ``http://A{b}/`` is ``http://a{b}/``. An IPv6 zone
+identifier is accepted in both modes only in the :rfc:`6874` form,
+``%25`` followed by the percent-encoded zone identifier, as in
+``http://[fe80::1%25eth0]/``; an empty one (``http://[fe80::1%25]/``) is
+still accepted when parsing. A bare ``%`` (``http://[fe80::1%eth0]/``) or
+any other percent-encoded octet after the address (``http://[::%31]/``)
+raises :exc:`ValueError`, also with ``encoded=True``. :meth:`URL.build`
+and :meth:`URL.with_host` take a *host* with the zone identifier after a
+bare ``%``, as :mod:`socket` and :mod:`ipaddress` write it, and
+percent-encode it, keeping octets that are already percent-encoded, so
+``URL.build(scheme="http", host="fe80::1%eth0")`` is
+``http://[fe80::1%25eth0]``.
+An authority with userinfo or a port but no host, such as
+``sc://user@/`` or ``//:8080``, is rejected for every scheme in the default
+WHATWG mode, as in the WHATWG URL Standard; RFC 3986 mode accepts it, with
+``host`` set to ``None``, unless the scheme needs a host, such as ``http``.
+For the ``http``, ``https``, ``ws``, ``wss``, ``ftp`` and ``file``
+schemes, a host that ends in a number is an IPv4 address in the default
+WHATWG mode, as in the WHATWG URL Standard: it is written as four decimal
+numbers (``0x7f.1`` becomes ``127.0.0.1`` and ``256`` becomes
+``0.0.1.0``), or rejected when a label is not a number (``foo.123``) or a
+number is out of range (``256.0.0.1``). RFC 3986 mode keeps such a host
+as written, as a reg-name.
+For the same schemes, WHATWG mode percent-decodes the host first, as the
+WHATWG URL Standard does, and encodes the result like any other host:
+``ex%41mple.com`` becomes ``example.com`` and ``%e2%98%83`` becomes
+``xn--n3h``. A host that decodes to something that is not a valid host,
+such as ``ho%00st`` or ``a%2Fb``, is rejected. RFC 3986 mode keeps the
+percent-encoded host.
+Only in WHATWG mode, a ``file`` URL's ``localhost`` host (in any case,
+also once percent-decoded) becomes the empty host, so
+``file://localhost/p`` is ``file:///p``, and userinfo or a port, as in
+``file://host:1/``, is rejected. RFC 3986 mode keeps both. The same
+applies when :meth:`URL.build`, :meth:`URL.with_host`,
+:meth:`URL.with_scheme` or :meth:`URL.join` makes a ``file`` URL.
+Since a ``file`` URL always has an authority in WHATWG mode, the dot
+segments of its path are removed also when the host is empty:
+``file:///a/../b`` is ``file:///b``. Its path is never empty either, so
+``file:`` is ``file:///`` and ``file://host`` is ``file://host/``, also when
+:meth:`URL.build`, :meth:`URL.with_path`, :attr:`URL.parent` or another
+method makes the URL; as a reference ``file:`` and ``file:?q`` still keep
+the path of a ``file`` base in :meth:`URL.join`. A URL parsed or built with
+``encoded=True`` is kept as it is, so ``URL('file:', encoded=True)`` stays
+``file://``.
+WHATWG mode also keeps a Windows drive letter in a ``file`` URL, as the
+WHATWG URL Standard does: ``C|`` as the first path segment is ``C:``, a
+drive letter in the authority starts the path (``file://C:/x`` is
+``file:///C:/x``), ``..`` does not remove it, and :meth:`URL.join` keeps the
+drive letter of the base for an absolute path (``/x`` against
+``file:///C:/a`` is ``file:///C:/x``) while a reference that starts with a
+drive letter replaces the path. :meth:`URL.build`, :meth:`URL.with_path`,
+:meth:`URL.joinpath` and ``/`` do the same. RFC 3986 mode treats ``C:`` as
+an ordinary segment and rejects ``|``.
+RFC 3986 mode also rejects an authority with more than one ``@``, since
+userinfo cannot contain ``@`` (WHATWG mode percent-encodes all but the last
+one, see :attr:`URL.raw_user`), and a non-ASCII host that IDNA2008 (:rfc:`5891`) cannot encode, such
+as one with an emoji, which WHATWG mode accepts as UTS #46 does.
+An IPvFuture address (:rfc:`3986#section-3.2.2`), such as ``[v1.x]``, is
+accepted in RFC 3986 mode and keeps its brackets, which are part of the
+host; the WHATWG URL Standard has no IPvFuture, so WHATWG mode rejects it.
+
+.. doctest::
+
+   >>> URL('http://exa mple.com/')
+   Traceback (most recent call last):
+     ...
+   ValueError: Host 'exa mple.com' cannot contain ' ' (at position 3)
+   >>> URL('http://0x7f.1/')
+   URL('http://127.0.0.1/')
+   >>> URL('http://0x7f.1/', mode='rfc')
+   URL('http://0x7f.1/', mode='rfc')
+   >>> URL('http://ex%41mple.com/')
+   URL('http://example.com/')
+   >>> URL('file://localhost/etc/hosts')
+   URL('file:///etc/hosts')
+   >>> URL('file://localhost/etc/hosts', mode='rfc')
+   URL('file://localhost/etc/hosts', mode='rfc')
+   >>> URL('file:?q')
+   URL('file:///?q')
+   >>> URL('file:?q', mode='rfc')
+   URL('file:?q', mode='rfc')
+   >>> URL('file:///C|/a/../..')
+   URL('file:///C:/')
+   >>> URL('file:///C:/a').join(URL('/x'))
+   URL('file:///C:/x')
+   >>> URL('http://[v1.x]:8080/', mode='rfc')
+   URL('http://[v1.x]:8080/', mode='rfc')
+
+.. versionchanged:: 1.25.2
+
+   The host of a parsed URL is validated; previously invalid hosts were
+   accepted and produced a URL that could not be parsed back.
+
+.. versionchanged:: 1.26
+
+   Hosts made only of numbers, such as ``0x7f.1`` or ``256``, are parsed as
+   IPv4 addresses in WHATWG mode; previously they were kept as written.
+   Percent-encoded hosts of these schemes are decoded in WHATWG mode.
+   An IPvFuture address keeps its brackets in RFC 3986 mode and is
+   rejected in WHATWG mode; previously the brackets were dropped.
+   In WHATWG mode the ``localhost`` host of a ``file`` URL is dropped and
+   a ``file`` URL with userinfo or a port is rejected.
+   An empty path of a ``file`` URL is ``/`` in WHATWG mode.
+
+
+.. note::
+
+   Sometimes encoding performed by *yarl* is not acceptable for
+   certain WEB server.
+
+   Passing ``encoded=True`` parameter prevents URL auto-encoding, user is
+   responsible about URL correctness.
+
+   Don't use this option unless there is no other way for keeping URL
+   attributes not touched.
+
+   Any URL manipulations don't guarantee correct encoding, URL parts
+   could be re-quoted even if *encoded* parameter was explicitly set.
+
+.. _yarl-api-mode:
+
+Compatibility mode
+------------------
+
+Every URL carries the standard it follows, set by the *mode* argument:
+``"whatwg"`` (the default) for the WHATWG URL Standard or ``"rfc"`` for
+:rfc:`3986`, which takes IRIs as :rfc:`3987` defines them. A :class:`Mode` member is accepted as well; any other
+value raises :exc:`ValueError`.
+
+.. doctest::
+
+   >>> url = URL('http://example.com/path', mode='rfc')
+   >>> url
+   URL('http://example.com/path', mode='rfc')
+   >>> url.mode
+   <Mode.RFC: 'rfc'>
+
+URLs derived from a URL (by :meth:`URL.with_path`, the ``/`` operator,
+:meth:`URL.join` and the rest of the modification methods) keep its mode. For
+:meth:`URL.join` that is the mode of the base URL, whatever the mode of the
+reference.
+
+The mode is changed by passing the URL to the constructor again. Since
+*mode* defaults to ``"whatwg"``, ``URL(url)`` without the argument returns a
+URL in WHATWG mode:
+
+.. doctest::
+
+   >>> URL(url, mode='whatwg')
+   URL('http://example.com/path')
+   >>> URL(url).mode
+   <Mode.WHATWG: 'whatwg'>
+
+The mode is not part of the URL value: URLs that differ only in their mode
+compare equal and have the same hash.
+
+Where the two standards differ, each mode aims to follow its own; the
+sections above describe the differences. Some cases still deviate from the
+selected standard; the `conformance report
+<https://github.com/aio-libs/yarl/blob/master/tools/conformance/REPORT.md>`_
+lists them.
+
+.. versionadded:: 1.26
+
+.. class:: Mode
+
+   A :class:`enum.StrEnum` naming the standard a :class:`URL` follows.
+
+   .. attribute:: RFC
+
+      ``"rfc"``, :rfc:`3986` with IRIs as :rfc:`3987` defines them.
+
+   .. attribute:: WHATWG
+
+      ``"whatwg"``, the `WHATWG URL Standard <https://url.spec.whatwg.org/>`_.
+
+   .. versionadded:: 1.26
+
+.. attribute:: URL.mode
+
+   The :class:`Mode` of the URL, ``Mode.WHATWG``
+   unless another mode was requested.
+
+   .. versionadded:: 1.26
+
+URL properties
+--------------
+
+There are two kinds of properties: *decoded* and *encoded* (with
+``raw_`` prefix):
+
+
+.. attribute:: URL.scheme
+
+   Scheme for absolute URLs, empty string for relative URLs or URLs
+   starting with ``'//'`` (:ref:`yarl-api-relative-urls`).
+
+   .. doctest::
+
+      >>> URL('http://example.com').scheme
+      'http'
+      >>> URL('//example.com').scheme
+      ''
+      >>> URL('page.html').scheme
+      ''
+
+.. attribute:: URL.user
+
+   Decoded *user* part of URL, ``None`` if *user* is missing.
+
+   .. doctest::
+
+      >>> URL('http://john@example.com').user
+      'john'
+      >>> URL('http://бажан@example.com').user
+      'бажан'
+      >>> URL('http://example.com').user is None
+      True
+
+   An empty *user* is ``None`` in WHATWG mode, which drops an empty
+   userinfo with its ``"@"`` as the WHATWG URL Standard does. RFC 3986
+   mode keeps it (sections 3.2 and 6.2.3), so there *user* is ``''``
+   whenever the URL has a userinfo, and ``None`` only when it has none;
+   ``http://@example.com`` and ``http://example.com`` are different URLs
+   there:
+
+   .. doctest::
+
+      >>> URL('http://@example.com')
+      URL('http://example.com')
+      >>> URL('http://@example.com').user is None
+      True
+      >>> URL('http://@example.com', mode='rfc')
+      URL('http://@example.com', mode='rfc')
+      >>> URL('http://@example.com', mode='rfc').user
+      ''
+      >>> URL('http://:pass@example.com', mode='rfc').user
+      ''
+      >>> URL('http://@example.com', mode='rfc') == URL(
+      ...     'http://example.com', mode='rfc'
+      ... )
+      False
+
+   :meth:`URL.build`, :meth:`URL.with_user` and the other ``with_*()``
+   methods, :meth:`URL.join` and a change of mode follow the same rule;
+   a URL moved into WHATWG mode loses its empty userinfo. A URL parsed
+   with ``encoded=True`` keeps its ``"@"`` in both modes.
+
+   .. versionchanged:: 1.26
+
+      An empty *user* is ``''`` in RFC 3986 mode, which keeps an empty
+      userinfo.
+
+
+.. attribute:: URL.raw_user
+
+   Encoded *user* part of URL, ``None`` if *user* is missing.
+
+
+   .. doctest::
+
+      >>> URL('http://довбуш@example.com').raw_user
+      '%D0%B4%D0%BE%D0%B2%D0%B1%D1%83%D1%88'
+      >>> URL('http://example.com').raw_user is None
+      True
+
+   As for :attr:`URL.user`, an empty *user* is ``''`` in RFC 3986 mode
+   and ``None`` in WHATWG mode.
+
+   WHATWG mode encodes the *user* and the *password* with the userinfo
+   percent-encode set of the WHATWG URL Standard: the userinfo goes up to
+   the last ``"@"``, and ``[``, ``]``, ``;``, ``=`` and, for a scheme that
+   is not special, ``\`` in it are percent-encoded, while ``%`` and
+   percent-encoded octets are kept as written. RFC 3986 mode rejects the
+   characters its userinfo cannot have, and keeps ``;`` and ``=``:
+
+   .. doctest::
+
+      >>> URL('http://a;b@example.com').raw_user
+      'a%3Bb'
+      >>> URL('http://a;b@example.com', mode='rfc').raw_user
+      'a;b'
+      >>> URL('http://a[b]:p%c@example.com')
+      URL('http://a%5Bb%5D:p%c@example.com')
+
+   .. versionchanged:: 1.26
+
+      An empty *user* is ``''`` in RFC 3986 mode, which keeps an empty
+      userinfo.
+
+      WHATWG mode encodes the userinfo as the WHATWG URL Standard does.
+
+
+.. attribute:: URL.password
+
+   Decoded *password* part of URL, ``None`` if *user* is missing.
+
+   .. doctest::
+
+      >>> URL('http://john:pass@example.com').password
+      'pass'
+      >>> URL('http://степан:пароль@example.com').password
+      'пароль'
+      >>> URL('http://example.com').password is None
+      True
+
+   An empty password is ``None`` in WHATWG mode, which drops it as the
+   WHATWG URL Standard does, together with an empty *user*; RFC 3986
+   mode keeps it:
+
+   .. doctest::
+
+      >>> URL('http://john:@example.com')
+      URL('http://john@example.com')
+      >>> URL('http://john:@example.com').password is None
+      True
+      >>> URL('http://:@example.com')
+      URL('http://example.com')
+      >>> URL('http://john:@example.com', mode='rfc').password
+      ''
+
+   :meth:`URL.build`, :meth:`URL.with_password`, :meth:`URL.join` and a
+   change of mode follow the same rule. A URL parsed or built with
+   ``encoded=True`` keeps its empty password.
+
+   .. versionchanged:: 1.26
+
+      An empty password is dropped in WHATWG mode.
+
+
+.. attribute:: URL.raw_password
+
+   Encoded *password* part of URL, ``None`` if *user* is missing.
+
+   As for :attr:`URL.password`, an empty password is ``None`` in WHATWG
+   mode.
+
+   .. doctest::
+
+      >>> URL('http://user:пароль@example.com').raw_password
+      '%D0%BF%D0%B0%D1%80%D0%BE%D0%BB%D1%8C'
+
+   .. versionchanged:: 1.26
+
+      An empty password is dropped in WHATWG mode.
+
+
+.. attribute:: URL.host
+
+   Encoded *host* part of URL, ``None`` for relative URLs
+   (:ref:`yarl-api-relative-urls`).
+
+   Brackets are stripped for IPv6. Host is converted to lowercase and an
+   IPv6 address is validated. WHATWG mode converts the address to the
+   compressed form; RFC 3986 mode keeps it as written, as
+   :rfc:`3986#section-6.2.2` does not compress it, so ``[1:0::]`` and ``[1::]`` are different hosts
+   there.
+
+   .. doctest::
+
+      >>> URL('http://[1:0::]/').host
+      '1::'
+      >>> URL('http://[1:0::]/', mode='rfc').host
+      '1:0::'
+
+   .. versionchanged:: 1.26
+
+      RFC 3986 mode keeps an IPv6 address as written.
+
+   An IPvFuture address (RFC 3986 mode only) keeps its brackets.
+   The opaque host of a URL whose scheme is not special keeps its case in
+   WHATWG mode, and only its non-ASCII characters are percent-decoded.
+
+   For IPv6 addresses that carry an :rfc:`6874` zone identifier, the
+   ``%25`` zone separator is decoded to ``%`` and the zone identifier is
+   percent-decoded, so the value matches the
+   scoped address format understood by :mod:`socket` and
+   :mod:`ipaddress`. A ``%``, a delimiter such as ``/`` or an octet that
+   is not UTF-8 stays percent-encoded in the zone identifier, so the value
+   can be passed back to :meth:`URL.with_host` or :meth:`URL.build`.
+
+   .. doctest::
+
+      >>> URL('http://example.com').host
+      'example.com'
+      >>> URL('http://хост.домен').host
+      'хост.домен'
+      >>> URL('page.html').host is None
+      True
+      >>> URL('http://[::1]').host
+      '::1'
+      >>> URL('http://[fe80::1%25eth0]/').host
+      'fe80::1%eth0'
+
+.. attribute:: URL.raw_host
+
+   IDNA decoded *host* part of URL, ``None`` for relative URLs
+   (:ref:`yarl-api-relative-urls`).
+
+   An :rfc:`6874` ``%25`` zone identifier separator is kept as-is.
+
+   .. doctest::
+
+      >>> URL('http://хост.домен').raw_host
+      'xn--n1agdj.xn--d1acufc'
+      >>> URL('http://[::1]').raw_host
+      '::1'
+      >>> URL('http://[fe80::1%25eth0]/').raw_host
+      'fe80::1%25eth0'
+      >>> URL('http://[v1.x]/', mode='rfc').raw_host
+      '[v1.x]'
+
+.. attribute:: URL.host_subcomponent
+
+   :rfc:`3986#section-3.2.2` host subcomponent part of URL, ``None`` for relative URLs
+   (:ref:`yarl-api-relative-urls`).
+
+   An :rfc:`6874` IPv6 zone identifier, if any, is included verbatim.
+
+   .. doctest::
+
+      >>> URL('http://хост.домен').host_subcomponent
+      'xn--n1agdj.xn--d1acufc'
+      >>> URL('http://[::1]').host_subcomponent
+      '[::1]'
+      >>> URL('http://[fe80::1%25eth0]/').host_subcomponent
+      '[fe80::1%25eth0]'
+
+   .. versionadded:: 1.13
+
+.. attribute:: URL.host_port_subcomponent
+
+   :rfc:`3986#section-3.2.2` host and :rfc:`3986#section-3.2.3` port subcomponent part of URL, ``None`` for relative URLs
+   (:ref:`yarl-api-relative-urls`).
+
+   Trailing dots are stripped from the host to ensure
+   this value can be used for an HTTP Host header.
+
+   The port is omitted if it is the default port for the scheme.
+
+   .. doctest::
+
+      >>> URL('http://хост.домен:81').host_port_subcomponent
+      'xn--n1agdj.xn--d1acufc:81'
+      >>> URL('https://[::1]:8443').host_port_subcomponent
+      '[::1]:8443'
+      >>> URL('http://example.com./').host_port_subcomponent
+      'example.com'
+      >>> URL('http://[::1]').host_port_subcomponent
+      '[::1]'
+
+   .. note::
+
+      An :rfc:`6874` IPv6 zone identifier is included verbatim. Zone
+      identifiers have local significance only
+      (:rfc:`6874#section-4`), so callers that use this value to build
+      outgoing protocol elements such as the HTTP Host header need to
+      strip it first.
+
+   .. versionadded:: 1.17
+
+.. attribute:: URL.port
+
+   *port* part of URL, with scheme-based fallback.
+
+   ``None`` for relative URLs (:ref:`yarl-api-relative-urls`) or for
+   URLs without explicit port and :attr:`URL.scheme` without
+   :ref:`default port substitution <yarl-api-default-ports>`.
+
+   .. doctest::
+
+      >>> URL('http://example.com:8080').port
+      8080
+      >>> URL('http://example.com').port
+      80
+      >>> URL('page.html').port is None
+      True
+
+
+.. attribute:: URL.explicit_port
+
+   *explicit_port* part of URL, without scheme-based fallback.
+
+   ``None`` for relative URLs (:ref:`yarl-api-relative-urls`) or for
+   URLs without explicit port.
+
+   .. doctest::
+
+      >>> URL('http://example.com:8080').explicit_port
+      8080
+      >>> URL('http://example.com').explicit_port is None
+      True
+      >>> URL('page.html').explicit_port is None
+      True
+
+   .. versionadded:: 1.3
+
+.. attribute:: URL.authority
+
+   Decoded *authority* part of URL, a combination of *user*, *password*, *host*, and
+   *port*.
+
+   ``authority = [ user [ ":" password ] "@" ] host [ ":" port ]``.
+
+   *authority* is empty string if all parts are missing.
+
+   .. doctest::
+
+      >>> URL('http://john:pass@example.com:8000').authority
+      'john:pass@example.com:8000'
+
+   An empty port is dropped with its ``":"`` (:rfc:`3986#section-6.2.3`).
+   In RFC 3986 mode an authority that is only an empty port, with no host,
+   becomes an empty authority, which is still written out as ``"//"``;
+   WHATWG mode rejects it, as it rejects any port without a host:
+
+   .. doctest::
+
+      >>> URL('sc://:/path', mode='rfc')
+      URL('sc:///path', mode='rfc')
+      >>> URL('sc://:/path', mode='rfc').authority
+      ''
+      >>> URL('sc://:/path')
+      Traceback (most recent call last):
+        ...
+      ValueError: Invalid URL: host is required with userinfo or a port
+
+   :meth:`URL.build` with ``authority=':'`` and :meth:`URL.join` follow the
+   same rule.
+
+   .. versionadded:: 1.5
+
+   .. versionchanged:: 1.26
+
+      An authority that is only an empty port is kept as an empty
+      authority in RFC 3986 mode; previously the authority was dropped,
+      and ``sc://:/path`` became ``sc:/path``.
+
+.. attribute:: URL.raw_authority
+
+   Encoded *authority* part of URL, a combination of *user*, *password*, *host*, and
+   *port*.  empty string if all parts are missing.
+
+   .. doctest::
+
+      >>> URL('http://john:pass@хост.домен:8000').raw_authority
+      'john:pass@xn--n1agdj.xn--d1acufc:8000'
+
+   .. versionadded:: 1.5
+
+.. attribute:: URL.path
+
+   Decoded *path* part of URL, ``'/'`` for absolute URLs without *path* part.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to').path
+      '/path/to'
+      >>> URL('http://example.com/шлях/сюди').path
+      '/шлях/сюди'
+      >>> URL('http://example.com').path
+      '/'
+
+   .. warning::
+
+      In many situations it is important to distinguish between path separators
+      (a literal ``/``) and other forward slashes (a literal ``%2F``). Use
+      :attr:`URL.path_safe` for these cases.
+
+.. attribute:: URL.path_safe
+
+   Similar to :attr:`URL.path` except it doesn't decode ``%2F`` or ``%25``.
+   This allows to distinguish between path separators (``/``) and encoded
+   slashes (``%2F``).
+
+   Note that ``%25`` is also not decoded to avoid issues with double unquoting
+   of values. e.g. You can unquote the value with
+   ``URL.path_safe.replace("%2F", "/").replace("%25", %")`` to get the same
+   result as :meth:`URL.path`. If the ``%25`` was unquoted, it would be
+   impossible to tell the difference between ``%2F`` and ``%252F``.
+
+   .. versionadded:: 1.12
+
+.. attribute:: URL.path_qs
+
+   Decoded *path* part of URL and query string, ``'/'`` for absolute URLs without *path* part.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to?a1=a&a2=b').path_qs
+      '/path/to?a1=a&a2=b'
+
+
+.. attribute:: URL.raw_path_qs
+
+   Encoded *path* part of URL and query string, ``'/'`` for absolute URLs without *path* part.
+
+   .. doctest::
+
+      >>> URL('http://example.com/шлях/сюди?ключ=знач').raw_path_qs
+      '/%D1%88%D0%BB%D1%8F%D1%85/%D1%81%D1%8E%D0%B4%D0%B8?%D0%BA%D0%BB%D1%8E%D1%87=%D0%B7%D0%BD%D0%B0%D1%87'
+
+   .. versionadded:: 0.15
+
+.. attribute:: URL.raw_path
+
+   Encoded *path* part of URL, ``'/'`` for absolute URLs without *path* part.
+
+   .. doctest::
+
+      >>> URL('http://example.com/шлях/сюди').raw_path
+      '/%D1%88%D0%BB%D1%8F%D1%85/%D1%81%D1%8E%D0%B4%D0%B8'
+
+
+.. attribute:: URL.query_string
+
+   Decoded *query* part of URL, empty string if *query* is missing.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?a1=a&a2=b').query_string
+      'a1=a&a2=b'
+      >>> URL('http://example.com/path?ключ=знач').query_string
+      'ключ=знач'
+      >>> URL('http://example.com/path').query_string
+      ''
+
+.. attribute:: URL.raw_query_string
+
+   Encoded *query* part of URL, empty string if *query* is missing.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?ключ=знач').raw_query_string
+      '%D0%BA%D0%BB%D1%8E%D1%87=%D0%B7%D0%BD%D0%B0%D1%87'
+
+
+.. attribute:: URL.fragment
+
+   Encoded *fragment* part of URL, empty string if *fragment* is missing.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path#fragment').fragment
+      'fragment'
+      >>> URL('http://example.com/path#якір').fragment
+      'якір'
+      >>> URL('http://example.com/path').fragment
+      ''
+
+.. attribute:: URL.raw_fragment
+
+   Decoded *fragment* part of URL, empty string if *fragment* is missing.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path#якір').raw_fragment
+      '%D1%8F%D0%BA%D1%96%D1%80'
+
+
+
+For *path* and *query* *yarl* supports additional helpers:
+
+
+.. attribute:: URL.parts
+
+   A :class:`tuple` containing decoded *path* parts, ``('/',)`` for
+   absolute URLs if *path* is missing.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to').parts
+      ('/', 'path', 'to')
+      >>> URL('http://example.com/шлях/сюди').parts
+      ('/', 'шлях', 'сюди')
+      >>> URL('http://example.com').parts
+      ('/',)
+
+.. attribute:: URL.raw_parts
+
+   A :class:`tuple` containing encoded *path* parts, ``('/',)`` for
+   absolute URLs if *path* is missing.
+
+   .. doctest::
+
+      >>> URL('http://example.com/шлях/сюди').raw_parts
+      ('/', '%D1%88%D0%BB%D1%8F%D1%85', '%D1%81%D1%8E%D0%B4%D0%B8')
+
+.. attribute:: URL.name
+
+   The last part of :attr:`parts`.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to').name
+      'to'
+      >>> URL('http://example.com/шлях/сюди').name
+      'сюди'
+      >>> URL('http://example.com/path/').name
+      ''
+
+.. attribute:: URL.raw_name
+
+   The last part of :attr:`raw_parts`.
+
+   .. doctest::
+
+      >>> URL('http://example.com/шлях/сюди').raw_name
+      '%D1%81%D1%8E%D0%B4%D0%B8'
+
+.. attribute:: URL.suffix
+
+   The file extension of :attr:`name`.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to.txt').suffix
+      '.txt'
+      >>> URL('http://example.com/шлях.сюди').suffix
+      '.сюди'
+      >>> URL('http://example.com/path').suffix
+      ''
+
+.. attribute:: URL.raw_suffix
+
+   The file extension of :attr:`raw_name`.
+
+   .. doctest::
+
+      >>> URL('http://example.com/шлях.сюди').raw_suffix
+      '.%D1%81%D1%8E%D0%B4%D0%B8'
+
+.. attribute:: URL.suffixes
+
+   A list of :attr:`name`'s file extensions.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to.tar.gz').suffixes
+      ('.tar', '.gz')
+      >>> URL('http://example.com/шлях.тут.ось').suffixes
+      ('.тут', '.ось')
+      >>> URL('http://example.com/path').suffixes
+      ()
+
+.. attribute:: URL.raw_suffixes
+
+   A list of :attr:`raw_name`'s file extensions.
+
+   .. doctest::
+
+      >>> URL('http://example.com/шлях.тут.ось').raw_suffixes
+      ('.%D1%82%D1%83%D1%82', '.%D0%BE%D1%81%D1%8C')
+
+
+.. attribute:: URL.query
+
+   A :class:`multidict.MultiDictProxy` representing parsed *query*
+   parameters in decoded representation.  Empty value if URL has no
+   *query* part.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?a1=a&a2=b').query
+      <MultiDictProxy('a1': 'a', 'a2': 'b')>
+      >>> URL('http://example.com/path?ключ=знач').query
+      <MultiDictProxy('ключ': 'знач')>
+      >>> URL('http://example.com/path').query
+      <MultiDictProxy()>
+
+
+
+.. _yarl-api-relative-urls:
+
+Absolute and relative URLs
+--------------------------
+
+The module supports both absolute and relative URLs.
+
+Absolute URL should start from either *scheme* or ``'//'``.
+
+
+.. attribute:: URL.absolute
+
+    A check for absolute URLs.
+
+    Return ``True`` for absolute ones (having *scheme* or starting
+    with ``'//'``), ``False`` otherwise.
+
+   .. doctest::
+
+      >>> URL('http://example.com').absolute
+      True
+      >>> URL('//example.com').absolute
+      True
+      >>> URL('/path/to').absolute
+      False
+      >>> URL('path').absolute
+      False
+
+   .. versionchanged:: 1.9.10
+
+      The :attr:`~yarl.URL.absolute` property is preferred over the ``is_absolute()`` method.
+
+
+New URL generation
+------------------
+
+URL is an immutable object, every operation described in the
+section generates a new :class:`URL` instance.
+
+.. method:: URL.build(*, scheme=..., authority=..., user=..., password=..., \
+                      host=..., port=..., path=..., query=..., \
+                      query_string=..., fragment=..., encoded=False, \
+                      mode="whatwg")
+   :classmethod:
+
+   Creates and returns a new URL:
+
+   .. doctest::
+
+      >>> URL.build(scheme="http", host="example.com")
+      URL('http://example.com')
+
+      >>> URL.build(scheme="http", host="example.com", query={"a": "b"})
+      URL('http://example.com/?a=b')
+
+      >>> URL.build(scheme="http", host="example.com", query_string="a=b")
+      URL('http://example.com/?a=b')
+
+      >>> URL.build()
+      URL('')
+
+   Calling ``build`` method without arguments is equal to calling
+   ``__init__`` without arguments.
+
+   *mode* selects the :ref:`compatibility mode <yarl-api-mode>` of the new
+   URL.
+
+   .. versionchanged:: 1.26
+
+      Added the *mode* parameter.
+
+   .. note::
+
+      Only one of ``query`` or ``query_string`` should be passed then ValueError
+      will be raised.
+
+.. method:: URL.with_scheme(scheme)
+
+   Return a new URL with *scheme* replaced:
+
+   .. doctest::
+
+      >>> URL('http://example.com').with_scheme('https')
+      URL('https://example.com')
+
+   Returned URL may have a *different* ``port``
+   (:ref:`default port substitution <yarl-api-default-ports>`).
+
+.. method:: URL.with_user(user)
+
+   Return a new URL with *user* replaced, auto-encode *user* if needed.
+
+   Clear user/password if *user* is ``None``.
+
+   .. doctest::
+
+      >>> URL('http://user:pass@example.com').with_user('new_user')
+      URL('http://new_user:pass@example.com')
+      >>> URL('http://user:pass@example.com').with_user('олекса')
+      URL('http://%D0%BE%D0%BB%D0%B5%D0%BA%D1%81%D0%B0:pass@example.com')
+      >>> URL('http://user:pass@example.com').with_user(None)
+      URL('http://example.com')
+
+   An empty *user* keeps the userinfo in RFC 3986 mode, and drops it in
+   WHATWG mode unless there is a password, see :attr:`URL.user`:
+
+   .. doctest::
+
+      >>> URL('http://example.com').with_user('')
+      URL('http://example.com')
+      >>> URL('http://example.com', mode='rfc').with_user('')
+      URL('http://@example.com', mode='rfc')
+
+   .. versionchanged:: 1.26
+
+      An empty *user* keeps an empty userinfo in RFC 3986 mode.
+
+.. method:: URL.with_password(password)
+
+   Return a new URL with *password* replaced, auto-encode *password* if needed.
+
+   Clear password if ``None`` is passed.
+
+   .. doctest::
+
+      >>> URL('http://user:pass@example.com').with_password('пароль')
+      URL('http://user:%D0%BF%D0%B0%D1%80%D0%BE%D0%BB%D1%8C@example.com')
+      >>> URL('http://user:pass@example.com').with_password(None)
+      URL('http://user@example.com')
+
+   In WHATWG mode an empty *password* clears the password too, see
+   :attr:`URL.password`:
+
+   .. doctest::
+
+      >>> URL('http://user:pass@example.com').with_password('')
+      URL('http://user@example.com')
+      >>> URL('http://user:pass@example.com', mode='rfc').with_password('')
+      URL('http://user:@example.com', mode='rfc')
+
+   .. versionchanged:: 1.26
+
+      An empty *password* clears the password in WHATWG mode.
+
+.. method:: URL.with_host(host)
+
+   Return a new URL with *host* replaced, auto-encode *host* if needed.
+
+   Changing *host* for relative URLs is not allowed, use
+   :meth:`URL.join` instead.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to').with_host('python.org')
+      URL('http://python.org/path/to')
+      >>> URL('http://example.com/path').with_host('хост.домен')
+      URL('http://xn--n1agdj.xn--d1acufc/path')
+
+.. method:: URL.with_port(port)
+
+   Return a new URL with *port* replaced.
+
+   Clear port to default if ``None`` is passed.
+
+   .. doctest::
+
+      >>> URL('http://example.com:8888').with_port(9999)
+      URL('http://example.com:9999')
+      >>> URL('http://example.com:8888').with_port(None)
+      URL('http://example.com')
+
+.. method:: URL.with_path(path, *, keep_query=False, keep_fragment=False)
+
+   Return a new URL with *path* replaced, encode *path* if needed.
+
+   If ``keep_query=True`` or ``keep_fragment=True`` it retains the existing query or fragment in the URL.
+
+   .. versionchanged:: 1.18
+
+      Added *keep_query* and *keep_fragment* parameters.
+
+   .. doctest::
+
+      >>> URL('http://example.com/').with_path('/path/to')
+      URL('http://example.com/path/to')
+
+
+.. method:: URL.with_query(query)
+            URL.with_query(**kwargs)
+
+   Return a new URL with *query* part replaced.
+
+   Unlike :meth:`update_query` the method replaces all query parameters.
+
+   Accepts any :class:`~collections.abc.Mapping` (e.g. :class:`dict`,
+   :class:`~multidict.MultiDict` instances) or :class:`str`,
+   auto-encode the argument if needed.
+
+   A sequence of ``(key, value)`` pairs is supported as well.
+
+   Also it can take an arbitrary number of keyword arguments.
+
+   Clear *query* if ``None`` is passed.
+
+   .. note::
+
+      The library accepts :class:`str`, :class:`float`, :class:`int` and their
+      subclasses except :class:`bool` as query argument values.
+
+      If a mapping such as :class:`dict` is used, the values may also be
+      :class:`list` or :class:`tuple` to represent a key has many values.
+
+      Please see :ref:`yarl-bools-support` for the reason why :class:`bool` is not
+      supported out-of-the-box.
+
+      .. tip::
+
+         Types that implement :meth:`~object.__int__` (e.g. :class:`~uuid.UUID`)
+         are converted to integers because :class:`int` is preferred over
+         :class:`str` for numeric coercion.  If you need the human-readable
+         representation, cast the value to :class:`str` before passing it:
+
+         .. doctest::
+
+            >>> import uuid
+            >>> uid = uuid.UUID('3199712f-1b78-4420-852b-a73ee09e6a8f')
+            >>> URL('http://example.com/').with_query({'id': str(uid)})
+            URL('http://example.com/?id=3199712f-1b78-4420-852b-a73ee09e6a8f')
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?a=b').with_query('c=d')
+      URL('http://example.com/path?c=d')
+      >>> URL('http://example.com/path?a=b').with_query({'c': 'd'})
+      URL('http://example.com/path?c=d')
+      >>> URL('http://example.com/path?a=b').with_query({'c': [1, 2]})
+      URL('http://example.com/path?c=1&c=2')
+      >>> URL('http://example.com/path?a=b').with_query({'кл': 'зн'})
+      URL('http://example.com/path?%D0%BA%D0%BB=%D0%B7%D0%BD')
+      >>> URL('http://example.com/path?a=b').with_query(None)
+      URL('http://example.com/path')
+      >>> URL('http://example.com/path?a=b&b=1').with_query(b='2')
+      URL('http://example.com/path?b=2')
+      >>> URL('http://example.com/path?a=b&b=1').with_query([('b', '2')])
+      URL('http://example.com/path?b=2')
+
+   .. versionchanged:: 1.5
+
+      Support :class:`list` and :class:`tuple` as a query parameter value.
+
+   .. versionchanged:: 1.6
+
+      Support subclasses of :class:`int` (except :class:`bool`) and :class:`float`
+      as a query parameter value.
+
+.. method:: URL.extend_query(query)
+            URL.extend_query(**kwargs)
+
+   Returns a new URL with *query* part extended.
+
+   Unlike :meth:`update_query`, this method keeps duplicate keys.
+
+   Returned :class:`URL` object will contain query string which extends
+   parts from passed query parts (or parts of parsed query string).
+
+   Accepts any :class:`~collections.abc.Mapping` (e.g. :class:`dict`,
+   :class:`~multidict.MultiDict` instances) or :class:`str`,
+   auto-encode the argument if needed.
+
+   A sequence of ``(key, value)`` pairs is supported as well.
+
+   Also it can take an arbitrary number of keyword arguments.
+
+   Returns the same :class:`URL` if *query* of ``None`` is passed.
+
+   .. note::
+
+      The library accepts :class:`str`, :class:`float`, :class:`int` and their
+      subclasses except :class:`bool` as query argument values.
+
+      If a mapping such as :class:`dict` is used, the values may also be
+      :class:`list` or :class:`tuple` to represent a key has many values.
+
+      Please see :ref:`yarl-bools-support` for the reason why :class:`bool` is not
+      supported out-of-the-box.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?a=b&b=1').extend_query(b='2')
+      URL('http://example.com/path?a=b&b=1&b=2')
+      >>> URL('http://example.com/path?a=b&b=1').extend_query([('b', '2')])
+      URL('http://example.com/path?a=b&b=1&b=2')
+      >>> URL('http://example.com/path?a=b&c=e&c=f').extend_query(c='d')
+      URL('http://example.com/path?a=b&c=e&c=f&c=d')
+
+   .. versionadded:: 1.11.0
+
+.. method:: URL.update_query(query)
+            URL.update_query(**kwargs)
+
+   Returns a new URL with *query* part updated.
+
+   Unlike :meth:`with_query` the method does not replace query
+   completely.
+
+
+   Returned :class:`URL` object will contain query string which updated
+   parts from passed query parts (or parts of parsed query string).
+
+   Accepts any :class:`~collections.abc.Mapping` (e.g. :class:`dict`,
+   :class:`~multidict.MultiDict` instances) or :class:`str`,
+   auto-encode the argument if needed.
+
+   A sequence of ``(key, value)`` pairs is supported as well.
+
+   Also it can take an arbitrary number of keyword arguments.
+
+   Clear *query* if ``None`` is passed.
+
+   Mod operator (``%``) can be used as alternative to the direct call of
+   :meth:`URL.update_query`.
+
+   .. note::
+
+      The library accepts :class:`str`, :class:`float`, :class:`int` and their
+      subclasses except :class:`bool` as query argument values.
+
+      If a mapping such as :class:`dict` is used, the values may also be
+      :class:`list` or :class:`tuple` to represent a key has many values.
+
+      Please see :ref:`yarl-bools-support` for the reason why :class:`bool` is not
+      supported out-of-the-box.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?a=b').update_query('c=d')
+      URL('http://example.com/path?a=b&c=d')
+      >>> URL('http://example.com/path?a=b').update_query({'c': 'd'})
+      URL('http://example.com/path?a=b&c=d')
+      >>> URL('http://example.com/path?a=b').update_query({'c': [1, 2]})
+      URL('http://example.com/path?a=b&c=1&c=2')
+      >>> URL('http://example.com/path?a=b').update_query({'кл': 'зн'})
+      URL('http://example.com/path?a=b&%D0%BA%D0%BB=%D0%B7%D0%BD')
+      >>> URL('http://example.com/path?a=b&b=1').update_query(b='2')
+      URL('http://example.com/path?a=b&b=2')
+      >>> URL('http://example.com/path?a=b&b=1').update_query([('b', '2')])
+      URL('http://example.com/path?a=b&b=2')
+      >>> URL('http://example.com/path?a=b&c=e&c=f').update_query(c='d')
+      URL('http://example.com/path?a=b&c=d')
+      >>> URL('http://example.com/path?a=b').update_query('c=d&c=f')
+      URL('http://example.com/path?a=b&c=d&c=f')
+      >>> URL('http://example.com/path?a=b') % {'c': 'd'}
+      URL('http://example.com/path?a=b&c=d')
+
+   .. versionchanged:: 1.0
+
+      All multiple key/value pairs are applied to the multi-dictionary.
+
+   .. versionadded:: 1.5
+
+      Support for mod operator (``%``) to update the URL's query part.
+
+   .. versionchanged:: 1.5
+
+      Support :class:`list` and :class:`tuple` as a query parameter value.
+
+   .. versionchanged:: 1.6
+
+      Support subclasses of :class:`int` (except :class:`bool`) and :class:`float`
+      as a query parameter value.
+
+.. method:: URL.without_query_params(*query_params)
+
+   Return a new URL whose *query* part does not contain specified ``query_params``.
+
+   Accepts :class:`str` for ``query_params``.
+
+   It does nothing if none of specified ``query_params`` are present in the query.
+
+   .. versionadded:: 1.10.0
+
+.. method:: URL.with_fragment(fragment)
+
+   Return a new URL with *fragment* replaced, auto-encode *fragment* if needed.
+
+   Clear *fragment* to default if ``None`` is passed.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path#frag').with_fragment('anchor')
+      URL('http://example.com/path#anchor')
+      >>> URL('http://example.com/path#frag').with_fragment('якір')
+      URL('http://example.com/path#%D1%8F%D0%BA%D1%96%D1%80')
+      >>> URL('http://example.com/path#frag').with_fragment(None)
+      URL('http://example.com/path')
+
+.. method:: URL.with_name(name, *, keep_query=False, keep_fragment=False)
+
+   Return a new URL with *name* (last part of *path*) replaced and
+   cleaned up *query* and *fragment* parts.
+
+   Name is encoded if needed.
+
+   If ``keep_query=True`` or ``keep_fragment=True`` it retains the existing query or fragment in the URL.
+
+   .. versionchanged:: 1.18
+
+      Added *keep_query* and *keep_fragment* parameters.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to?arg#frag').with_name('new')
+      URL('http://example.com/path/new')
+      >>> URL('http://example.com/path/to').with_name("ім'я")
+      URL('http://example.com/path/%D1%96%D0%BC'%D1%8F')
+
+.. method:: URL.with_suffix(suffix, *, keep_query=False, keep_fragment=False)
+
+   Return a new URL with *suffix* (file extension of *name*) replaced and
+   cleaned up *query* and *fragment* parts.
+
+   Name is encoded if needed.
+
+   If ``keep_query=True`` or ``keep_fragment=True`` it retains the existing query or fragment in the URL.
+
+   .. versionchanged:: 1.18
+
+      Added *keep_query* and *keep_fragment* parameters.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to?arg#frag').with_suffix('.doc')
+      URL('http://example.com/path/to.doc')
+      >>> URL('http://example.com/path/to').with_suffix('.cуфікс')
+      URL('http://example.com/path/to.c%D1%83%D1%84%D1%96%D0%BA%D1%81')
+
+.. attribute:: URL.parent
+
+   A new URL with last part of *path* removed and
+   cleaned up *query* and *fragment* parts.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to?arg#frag').parent
+      URL('http://example.com/path')
+
+.. method:: URL.origin()
+
+   A new URL with *scheme*, *host* and *port* parts only.
+   *user*, *password*, *path*, *query* and *fragment* are removed.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to?arg#frag').origin()
+      URL('http://example.com')
+      >>> URL('http://user:pass@example.com/path').origin()
+      URL('http://example.com')
+
+.. method:: URL.relative()
+
+   A new *relative* URL with  *path*, *query* and *fragment* parts only.
+   *scheme*, *user*, *password*, *host* and *port* are removed.
+
+   .. doctest::
+
+      >>> URL('http://example.com/path/to?arg#frag').relative()
+      URL('/path/to?arg#frag')
+
+Division (``/``) operator creates a new URL with appended *path* parts
+and cleaned up *query* and *fragment* parts.
+
+The path is encoded if needed.
+
+   .. doctest::
+
+      >>> url = URL('http://example.com/path?arg#frag') / 'to/subpath'
+      >>> url
+      URL('http://example.com/path/to/subpath')
+      >>> url.parts
+      ('/', 'path', 'to', 'subpath')
+      >>> url = URL('http://example.com/path?arg#frag') / 'сюди'
+      >>> url
+      URL('http://example.com/path/%D1%81%D1%8E%D0%B4%D0%B8')
+
+.. method:: URL.joinpath(*other, encoded=False)
+
+   Construct a new URL by with all ``other`` elements appended to
+   *path*, and cleaned up *query* and *fragment* parts.
+
+   Passing ``encoded=True`` parameter prevents path element auto-encoding, the caller is
+   responsible for taking care of URL correctness.
+
+   .. doctest::
+
+      >>> url = URL('http://example.com/path?arg#frag').joinpath('to', 'subpath')
+      >>> url
+      URL('http://example.com/path/to/subpath')
+      >>> url.parts
+      ('/', 'path', 'to', 'subpath')
+      >>> url = URL('http://example.com/path?arg#frag').joinpath('сюди')
+      >>> url
+      URL('http://example.com/path/%D1%81%D1%8E%D0%B4%D0%B8')
+      >>> url = URL('http://example.com/path').joinpath('%D1%81%D1%8E%D0%B4%D0%B8', encoded=True)
+      >>> url
+      URL('http://example.com/path/%D1%81%D1%8E%D0%B4%D0%B8')
+
+   .. versionadded:: 1.9
+
+.. method:: URL.__truediv__(url)
+
+   Shortcut for :meth:`URL.joinpath` with a single element and ``encoded=False``.
+
+   .. doctest::
+
+      >>> url = URL('http://example.com/path?arg#frag') / 'to'
+      >>> url
+      URL('http://example.com/path/to')
+      >>> url.parts
+      ('/', 'path', 'to')
+
+   .. versionadded:: 0.9
+
+.. method:: URL.join(url)
+
+   Construct a full (“absolute”) URL by combining a “base URL”
+   (``self``) with another URL (``url``). Informally, this uses
+   components of the base URL, in particular the addressing scheme,
+   the network location and (part of) the path, to provide missing
+   components in the relative URL, e.g.:
+
+   .. doctest::
+
+      >>> base = URL('http://example.com/path/index.html')
+      >>> base.join(URL('page.html'))
+      URL('http://example.com/path/page.html')
+
+   The fragment of the result always comes from ``url``, as required by
+   :rfc:`3986#section-5.2.2`; the fragment of the base URL is never kept:
+
+   .. doctest::
+
+      >>> URL('http://example.com/path?arg#frag').join(URL('?other'))
+      URL('http://example.com/path?other')
+
+   Resolution follows :rfc:`3986#section-5.2` and does not depend on the
+   scheme, so bases such as ``mailto:``, ``urn:`` or a custom scheme work
+   too:
+
+   .. doctest::
+
+      >>> URL('urn:example:animal').join(URL('#ferret'))
+      URL('urn:example:animal#ferret')
+
+   The WHATWG URL Standard resolves nothing but a fragment against a base
+   with an opaque path, that is a URL with a scheme other than ``http``,
+   ``https``, ``ws``, ``wss``, ``ftp`` and ``file``, no authority and a
+   path that does not start with ``/``, such as ``urn:example:animal``.
+   In WHATWG mode any other ``url`` without a scheme raises
+   :exc:`ValueError` against such a base, while RFC 3986 mode merges the
+   paths:
+
+   .. doctest::
+
+      >>> URL('urn:example:animal').join(URL('ferret'))
+      Traceback (most recent call last):
+        ...
+      ValueError: Invalid URL: cannot resolve 'ferret' against 'urn:example:animal', which has an opaque path
+      >>> URL('urn:example:animal', mode='rfc').join(URL('ferret', mode='rfc'))
+      URL('urn:ferret', mode='rfc')
+
+   .. versionchanged:: 1.26
+
+      In WHATWG mode, resolving a ``url`` other than a fragment against a
+      base with an opaque path raises :exc:`ValueError`.
+
+   In WHATWG mode, a ``url`` with the same scheme as the base but without
+   ``//``, like ``http:page.html``, is resolved as a relative reference,
+   which :rfc:`3986#section-5.4.2` permits and the WHATWG URL Standard
+   requires. That holds for a URL parsed in WHATWG mode too, although it has
+   an authority on its own (see :class:`URL`). A base in RFC 3986 mode is a
+   strict parser in the terms of :rfc:`3986#section-5.2.2` and uses a ``url``
+   with a scheme as is:
+
+   .. doctest::
+
+      >>> base = URL('http://example.com/path/index.html')
+      >>> base.join(URL('http:page.html'))
+      URL('http://example.com/path/page.html')
+      >>> URL('http:page.html')
+      URL('http://page.html')
+      >>> base = URL('file:///tmp/index.html', mode='rfc')
+      >>> base.join(URL('file:page.html', mode='rfc'))
+      URL('file:page.html', mode='rfc')
+
+   .. versionchanged:: 1.26
+
+      A base in RFC 3986 mode no longer resolves a ``url`` with the same
+      scheme as a relative reference.
+
+   .. note::
+
+      If ``url`` is an absolute URL (that is, starting with ``//`` or
+      ``scheme://``), the URL‘s host name and/or scheme will be
+      present in the result, e.g.:
+
+      .. doctest::
+
+         >>> base = URL('http://example.com/path/index.html')
+         >>> base.join(URL('//python.org/page.html'))
+         URL('http://python.org/page.html')
+
+Human readable representation
+-----------------------------
+
+All URL data is stored in encoded form internally. It's pretty good
+for passing ``str(url)`` everywhere URL string is accepted but quite
+bad for memorizing by humans.
+
+.. method:: URL.human_repr()
+
+   Return decoded human readable string for URL representation.
+
+   .. doctest::
+
+      >>> url = URL('http://εμπορικόσήμα.eu/這裡')
+      >>> str(url)
+      'http://xn--jxagkqfkduily1i.eu/%E9%80%99%E8%A3%A1'
+      >>> url.human_repr()
+      'http://εμπορικόσήμα.eu/這裡'
+
+   An IPv6 zone identifier is written percent-encoded, as in
+   ``str(url)``, since parsing does not accept a bare ``%`` zone
+   separator.
+
+.. _yarl-api-default-ports:
+
+Default port substitution
+-------------------------
+
+:mod:`yarl` is aware about the following *scheme* -> *port* translations:
+
++------------------+-------+
+| scheme           | port  |
++==================+=======+
+| ``'http'``       | 80    |
++------------------+-------+
+| ``'https'``      | 443   |
++------------------+-------+
+| ``'ws'``         | 80    |
++------------------+-------+
+| ``'wss'``        | 443   |
++------------------+-------+
+
+
+.. method:: URL.is_default_port()
+
+    A check for default port.
+
+    Return ``True`` if URL's :attr:`~URL.port` is *default* for used
+    :attr:`~URL.scheme`, ``False`` otherwise.
+
+    Relative URLs have no default port.
+
+   .. doctest::
+
+      >>> URL('http://example.com').is_default_port()
+      True
+      >>> URL('http://example.com:80').is_default_port()
+      True
+      >>> URL('http://example.com:8080').is_default_port()
+      False
+      >>> URL('/path/to').is_default_port()
+      False
+
+
+Query parsing
+-------------
+
+.. function:: query_to_pairs(query_string, *, max_fields=None, encoding="utf-8")
+
+   Parse a percent-encoded query string, for example the body of an
+   ``application/x-www-form-urlencoded`` request, into a :class:`list` of
+   decoded ``(name, value)`` pairs.
+
+   The result is the same as :func:`urllib.parse.parse_qsl` called with
+   ``keep_blank_values=True``: empty fields are skipped, ``+`` is decoded as a
+   space, percent-encoded bytes that are not valid in *encoding* are replaced
+   with ``U+FFFD`` and malformed escapes such as ``%zz`` are kept as is.
+
+   :param str query_string: the query string to parse.
+
+   :param max_fields: the maximum number of fields to accept, or ``None``
+                      for no limit. Fields are counted the same way as
+                      the *max_num_fields* argument of
+                      :func:`urllib.parse.parse_qsl`.
+
+   :param str encoding: the encoding used to decode percent-encoded
+                        sequences.
+
+   :raises ValueError: if the query string has more than *max_fields*
+                       fields.
+
+   .. doctest::
+
+      >>> from yarl import query_to_pairs
+      >>> query_to_pairs("name=Jane+Doe&tag=a&tag=b%26c&empty=")
+      [('name', 'Jane Doe'), ('tag', 'a'), ('tag', 'b&c'), ('empty', '')]
+      >>> query_to_pairs("a=1&b=2&c=3", max_fields=2)
+      Traceback (most recent call last):
+        ...
+      ValueError: Max number of fields exceeded
+
+   .. versionadded:: 1.25
+
+
+Cache control
+-------------
+
+IDNA conversion and host encoding are quite expensive operations,
+that's why the ``yarl`` library caches these calls by storing results in the
+global LRU cache.
+
+.. function:: cache_clear()
+
+   Clear IDNA and host encoding cache.
+
+
+.. function:: cache_info()
+
+   Return a dictionary with ``"idna_encode"``, ``"idna_decode"``, and
+   ``"encode_host"`` keys, each value points to corresponding ``CacheInfo``
+   structure (see :func:`functools.lru_cache` for details):
+
+   .. doctest::
+      :options: +SKIP
+
+      >>> yarl.cache_info()
+      {'idna_encode': CacheInfo(hits=5, misses=5, maxsize=256, currsize=5),
+       'idna_decode': CacheInfo(hits=24, misses=15, maxsize=256, currsize=15),
+       'encode_host': CacheInfo(hits=0, misses=0, maxsize=512, currsize=0)}
+
+   .. versionchanged:: 1.16
+
+      ``ip_address``, and ``host_validate`` are deprecated
+      in favor of a single ``encode_host`` cache.
+
+.. function:: cache_configure(*, idna_encode_size=256, idna_decode_size=256, encode_host_size=512)
+
+   Set the IDNA encode, IDNA decode, and host encode
+   cache sizes.
+
+   Pass ``None`` to make the corresponding cache unbounded (may speed up host encoding
+   operation a little but the memory footprint can be very high,
+   please use with caution).
+
+   .. versionchanged:: 1.16
+
+      ``ip_address_size`` and ``host_validate_size``
+      are deprecated in favor of a single ``encode_host`` cache.
+
+References
+----------
+
+:mod:`yarl` stays on shoulders of giants: several RFC documents and
+low-level :mod:`urllib.parse` which performs almost all gory work.
+
+The module borrowed design from :mod:`pathlib` in any place where it was
+possible.
+
+.. seealso::
+
+   :rfc:`5891` - Internationalized Domain Names in Applications (IDNA): Protocol
+      Document describing non-ASCII domain name encoding.
+
+   :rfc:`3987` - Internationalized Resource Identifiers
+      This specifies conversion rules for non-ASCII characters in URL.
+
+   :rfc:`3986` - Uniform Resource Identifiers
+      This is the current standard (STD66). Any changes to :mod:`yarl` module
+      should conform to this. Certain deviations could be observed, which are
+      mostly for backward compatibility purposes and for certain de-facto
+      parsing requirements as commonly observed in major browsers.
+
+   :rfc:`2732` - Format for Literal IPv6 Addresses in URL's.
+      This specifies the parsing requirements of IPv6 URLs.
+
+   :rfc:`2396` - Uniform Resource Identifiers (URI): Generic Syntax
+      Document describing the generic syntactic requirements for both
+      Uniform Resource Names (URNs) and Uniform Resource Locators
+      (URLs).
+
+   :rfc:`2368` - The mailto URL scheme.
+      Parsing requirements for mailto URL schemes.
+
+   :rfc:`1808` - Relative Uniform Resource Locators This Request For
+      Comments includes the rules for joining an absolute and a
+      relative URL, including a fair number of "Abnormal Examples"
+      which govern the treatment of border cases.
+
+   :rfc:`1738` - Uniform Resource Locators (URL)
+      This specifies the formal syntax and semantics of absolute URLs.
