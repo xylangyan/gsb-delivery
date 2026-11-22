@@ -1,0 +1,35 @@
+[run]
+branch = True
+omit =
+    /home/vinay/.virtualenvs/*
+    /home/vsajip/.virtualenvs/*
+    /home/travis/virtualenv/*
+    /opt/python/*
+    /Users/administrator/projects/venv*
+    distlib/_backport/*
+    distlib/pypi/*
+    setup*
+    tests/compat*
+    tests/support*
+    tests/unittest2/*
+    tests/foo.zip/*
+    tests/bar.zip/*
+    tests/foofoo/*
+    tests/test_pypi_*
+    tests/pypi_server*
+    tests/test_sysconfig*
+    tests/test_shutil*
+    tests/test_all*
+    tests/distlib_tests*
+
+[paths]
+source =
+    /home/vsajip/projects/distlib/
+    /home/vinay/projects/distlib
+    /Users/administrator/projects/distlib
+    c:\Users\Vinay\Projects\distlib
+
+[report]
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
