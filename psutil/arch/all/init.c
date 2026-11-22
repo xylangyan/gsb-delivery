@@ -1,0 +1,139 @@
+/*
+ * Copyright (c) 2009, Giampaolo Rodola'. All rights reserved.
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file.
+ */
+
+// Global names shared by all platforms.
+
+#include <Python.h>
+
+#include "init.h"
+
+int PSUTIL_DEBUG = 0;
+int PSUTIL_TESTING = 0;
+int PSUTIL_CONN_NONE = 128;
+
+#if defined(Py_GIL_DISABLED) && !defined(Py_TARGET_ABI3T)
+PyMutex utxent_lock = {0};
+#elif defined(Py_TARGET_ABI3T) && defined(PSUTIL_POSIX)
+pthread_mutex_t utxent_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+
+// Enable or disable PSUTIL_DEBUG messages.
+PyObject *
+psutil_set_debug(PyObject *self, PyObject *args) {
+    int value;
+
+    if (!PyArg_ParseTuple(args, "p", &value))
+        return NULL;
+    PSUTIL_DEBUG = value;
+    Py_RETURN_NONE;
+}
+
+
+// Called on module import on all platforms.
+int
+psutil_setup(void) {
+    if (getenv("PSUTIL_DEBUG") != NULL)
+        PSUTIL_DEBUG = 1;
+    if (getenv("PSUTIL_TESTING") != NULL)
+        PSUTIL_TESTING = 1;
+    return 0;
+}
+
+
+// Create a custom exception once (cached in *dst) and add it to the
+// module. PyModule_AddObject() steals a ref on success only, so INCREF
+// first and drop it again on failure.
+static int
+_add_exception(
+    PyObject *mod, const char *name, const char *qualname, PyObject **dst
+) {
+    if (*dst == NULL) {
+        *dst = PyErr_NewException(qualname, NULL, NULL);
+        if (*dst == NULL)
+            return -1;
+    }
+    Py_INCREF(*dst);
+    if (PyModule_AddObject(mod, name, *dst)) {
+        Py_DECREF(*dst);
+        return -1;
+    }
+    return 0;
+}
+
+
+// Add exceptions to the C extension module.
+int
+psutil_add_exceptions(PyObject *mod) {
+#ifdef PSUTIL_WINDOWS
+    if (_add_exception(
+            mod, "TimeoutExpired", "_psutil.TimeoutExpired", &TimeoutExpired
+        ))
+        return -1;
+    if (_add_exception(
+            mod,
+            "TimeoutAbandoned",
+            "_psutil.TimeoutAbandoned",
+            &TimeoutAbandoned
+        ))
+        return -1;
+#elif defined(PSUTIL_POSIX)
+    if (_add_exception(
+            mod,
+            "ZombieProcessError",
+            "_psutil.ZombieProcessError",
+            &ZombieProcessError
+        ))
+        return -1;
+#endif
+    return 0;
+}
+
+
+#ifdef Py_TARGET_ABI3T
+PyABIInfo_VAR(abi_info);
+
+// PyModuleDef can't be used with abi3t. The module is described by
+// a slots array instead.
+PySlot *
+psutil_mod_export(
+    const char *name, PyMethodDef *methods, int (*exec)(PyObject *)
+) {
+    static PySlot slots[6];
+
+    slots[0] = (PySlot)PySlot_STATIC_DATA(Py_mod_abi, &abi_info);
+    slots[1] = (PySlot)PySlot_STATIC_DATA(Py_mod_name, (void *)name);
+    slots[2] = (PySlot)PySlot_STATIC_DATA(Py_mod_methods, methods);
+    slots[3] = (PySlot)PySlot_FUNC(Py_mod_exec, exec);
+    slots[4] = (PySlot)PySlot_DATA(Py_mod_gil, Py_MOD_GIL_NOT_USED);
+    slots[5] = (PySlot)PySlot_END;
+    return slots;
+}
+#else
+// Initialize the Python C extension module.
+PyObject *
+psutil_mod_init(
+    const char *name, PyMethodDef *methods, int (*exec)(PyObject *)
+) {
+    static PyModuleDef_Slot slots[] = {
+        {Py_mod_exec, NULL},  // platform exec, filled below
+#ifdef Py_MOD_GIL_NOT_USED
+        {Py_mod_gil, Py_MOD_GIL_NOT_USED},
+#endif
+        {0, NULL}
+    };
+    static struct PyModuleDef def = {
+        .m_base = PyModuleDef_HEAD_INIT,
+        .m_size = 0,
+        .m_slots = slots,
+    };
+
+    slots[0].value = (void *)exec;
+    def.m_name = name;
+    def.m_methods = methods;
+    return PyModuleDef_Init(&def);
+}
+#endif
