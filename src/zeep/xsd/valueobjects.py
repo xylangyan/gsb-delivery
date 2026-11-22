@@ -237,6 +237,14 @@ def _process_signature(xsd_type, args, kwargs):
         result["_raw_elements"] = kwargs["_raw_elements"]
         available_kwargs.remove("_raw_elements")
 
+    # _ambiguous_choices holds the distinct parses which still match the
+    # complete element sequence when an xsd:choice cannot be disambiguated.
+    from zeep.xsd.elements.ambiguity import AMBIGUOUS_KEY
+
+    if AMBIGUOUS_KEY in available_kwargs and kwargs[AMBIGUOUS_KEY]:
+        result[AMBIGUOUS_KEY] = kwargs[AMBIGUOUS_KEY]
+        available_kwargs.remove(AMBIGUOUS_KEY)
+
     if available_kwargs:
         raise TypeError(
             ("%s() got an unexpected keyword argument %r. " + "Signature: `%s`")

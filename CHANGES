@@ -1,3 +1,15 @@
+unreleased
+----------
+ - Disambiguate ``xsd:choice`` branches which share an element prefix by
+   parsing the complete element sequence instead of greedily committing to
+   the first matching branch. A single (``maxOccurs="1"``) choice nested in
+   a sequence is now resolved with backtracking, so a required sibling after
+   the choice (including a same-named field) determines which declaration
+   actually applies. When the whole message still matches several distinct
+   parses they are returned under ``_ambiguous_choices``; an unambiguous
+   message keeps its single result. Unbounded choices and choice-free
+   sequences keep their existing parser.
+
 4.3.3 (2026-06-18)
 ------------------
  - Wire up the ``forbid_external`` setting (previously defined but unused

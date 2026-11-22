@@ -20,6 +20,11 @@ from functools import cached_property as threaded_cached_property
 from zeep.exceptions import UnexpectedElementError, ValidationError
 from zeep.xsd.const import NotSet, SkipValue
 from zeep.xsd.elements import Any, Element
+from zeep.xsd.elements.ambiguity import (
+    AMBIGUOUS_KEY,
+    SequenceResolver,
+    contains_single_choice,
+)
 from zeep.xsd.elements.base import Base
 from zeep.xsd.utils import (
     NamePrefixGenerator,
@@ -604,29 +609,53 @@ class Sequence(OrderIndicator):
         if self.accepts_multiple:
             assert name
 
+        # A single (maxOccurs=1) choice nested in this sequence is flattened
+        # away in self.elements, which hides the branch boundaries.  Use the
+        # backtracking resolver so the trailing part of the sequence can
+        # disambiguate branches sharing an element prefix.
+        use_resolver = contains_single_choice(self)
+
         for _unused in max_occurs_iter(self.max_occurs):
             if not xmlelements:
                 break
 
-            item_result = OrderedDict()
-            for elm_name, element in self.elements:
-                try:
-                    item_subresult = element.parse_xmlelements(
-                        xmlelements, schema, name, context=context
-                    )
-                except UnexpectedElementError:
-                    if schema.settings.strict:
-                        raise
-                    item_subresult = None
-
-                # Unwrap if allowed
-                if isinstance(element, OrderIndicator):
-                    item_result.update(item_subresult)
-                else:
-                    item_result[elm_name] = item_subresult
-
-                if not xmlelements:
+            if use_resolver:
+                consumed, item_result, candidates, leftover = SequenceResolver(
+                    self, schema, context, self
+                ).resolve(xmlelements)
+                if not item_result:
                     break
+
+                # Only record candidates when the complete element sequence
+                # still allows more than one distinct parse; a single winner
+                # is treated as an unambiguous result.
+                if len(candidates) > 1 and not leftover:
+                    item_result[AMBIGUOUS_KEY] = candidates
+
+                # Mutate the shared deque in place (the caller keeps its own
+                # reference) instead of replacing it.
+                for _unused in range(consumed):
+                    xmlelements.popleft()
+            else:
+                item_result = OrderedDict()
+                for elm_name, element in self.elements:
+                    try:
+                        item_subresult = element.parse_xmlelements(
+                            xmlelements, schema, name, context=context
+                        )
+                    except UnexpectedElementError:
+                        if schema.settings.strict:
+                            raise
+                        item_subresult = None
+
+                    # Unwrap if allowed
+                    if isinstance(element, OrderIndicator):
+                        item_result.update(item_subresult)
+                    else:
+                        item_result[elm_name] = item_subresult
+
+                    if not xmlelements:
+                        break
             if item_result:
                 result.append(item_result)
 
