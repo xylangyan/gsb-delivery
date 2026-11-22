@@ -1,0 +1,488 @@
+#  holidays
+#  --------
+#  A fast, efficient Python library for generating country, province and state
+#  specific sets of holidays on the fly. It aims to make determining whether a
+#  specific date is a holiday as fast and flexible as possible.
+#
+#  Authors: Vacanza Team and individual contributors (see CONTRIBUTORS file)
+#           dr-prodigy <dr.prodigy.github@gmail.com> (c) 2017-2023
+#           ryanss <ryanssdev@icloud.com> (c) 2014-2017
+#  Website: https://github.com/vacanza/holidays
+#  License: MIT (see LICENSE file)
+
+from datetime import date
+
+from holidays.calendars.gregorian import (
+    JAN,
+    FEB,
+    APR,
+    MAY,
+    JUL,
+    SEP,
+    NOV,
+    DEC,
+    MON,
+    SAT,
+    SUN,
+    _timedelta,
+    _get_nth_weekday_from,
+)
+from holidays.constants import PUBLIC, SCHOOL
+from holidays.groups import ChristianHolidays, InternationalHolidays
+from holidays.helpers import tr
+from holidays.holiday_base import HolidayBase
+
+
+class France(HolidayBase, ChristianHolidays, InternationalHolidays):
+    """France holidays.
+
+    References:
+        * <https://fr.wikipedia.org/wiki/Fêtes_et_jours_fériés_en_France>
+        * <https://web.archive.org/web/20250424031328/https://www.service-public.fr/particuliers/vosdroits/F2405>
+        * [Arrêté du 29 germinal an X](https://web.archive.org/web/20250327095254/https://journals.openedition.org/rdr/439)
+        * [Loi du 6 juillet 1880](https://archive.org/details/jorf-18800707-185)
+        * [Loi du 8 mars 1886](https://archive.org/details/jorf-18860309-67)
+        * [Loi du 9 décembre 1905](https://web.archive.org/web/20250617084843/https://mjp.univ-perp.fr/france/1905laicite.htm)
+        * [Loi du 24 octobre 1922](https://web.archive.org/web/20250618030815/https://archives.defense.gouv.fr/content/download/102094/992430/Loi%20du%2024%20octobre%201922%20fixant%20la%20journée%20commémorative%20du%2011%20novembre.pdf)
+        * [Loi n°46-828 du 26 avril 1946](https://archive.org/details/jorf-19460428-100)
+        * [Loi n°46-934 du 7 mai 1946](https://archive.org/details/jorf-19460508-107)
+        * [Loi n°47-778 du 30 avril 1947 ](https://archive.org/details/jorf-19470501-104)
+        * [Loi n°48-746 du 29 avril 1948](https://archive.org/details/jorf-19480430-104)
+        * [Loi n°53-225 du 20 mars 1953](https://archive.org/details/jorf-19530321-69)
+        * [Décret n°59-533 du 11 avril 1959](https://archive.org/details/jorf-19590415-88)
+        * [Loi n° 61-814 du 29 juillet 1961](https://web.archive.org/web/20240715174837/https://www.legifrance.gouv.fr/loda/id/JORFTEXT000000684031)
+        * [Loi n°81-893 du 2 octobre 1981](https://archive.org/details/jorf-19811003-232)
+        * [Loi n° 83-550 du 30 juin 1983](https://archive.org/details/jorf-19830701-151)
+        * [Décret n°83-1003 du 23 novembre 1983](https://archive.org/details/jorf-19831124-272_202506)
+        * [Loi n° 2004-626 du 30 juin 2004](https://web.archive.org/web/20220830045136/https://www.legifrance.gouv.fr/loda/id/JORFTEXT000000622485/)
+        * [Loi n° 2008-351 du 16 avril 2008](https://web.archive.org/web/20220602124233/https://www.legifrance.gouv.fr/loda/id/JORFTEXT000018656009/)
+        * [Décret n° 2012-553 du 23 avril 2012](https://web.archive.org/web/20231104120733/https://www.legifrance.gouv.fr/jorf/id/JORFTEXT000025743756)
+        * <https://web.archive.org/web/20240719134144/https://www.moselle.gouv.fr/contenu/telechargement/5830/42693/file/fiche+commerce+MAJ.pdf>
+        * <https://web.archive.org/web/20190812110746/http://histoire.assemblee.pf/articles.php?id=567>
+        * <https://web.archive.org/web/20190812043635/http://histoire.assemblee.pf/articles.php?id=568>
+        * <https://web.archive.org/web/20250618073111/https://www.tahitipresse.pf/2025/05/polynesie-29-juin-ou-20-novembre/>
+        * <https://web.archive.org/web/20250618061809/https://la1ere.franceinfo.fr/nouvellecaledonie/commemorations-differentes-24-septembre-752087.html>
+        * School holidays:
+            * [Calendrier scolaire](https://web.archive.org/web/20260206165036/https://www.education.gouv.fr/calendrier-scolaire-100148)
+            * [Le calendrier scolaire (open data)](https://web.archive.org/web/20260202011841/https://data.education.gouv.fr/explore/dataset/fr-en-calendrier-scolaire/)
+            * [Arrêté du 7 décembre 2022 (2023-2024 to 2025-2026)](https://web.archive.org/web/20250326034935/https://www.legifrance.gouv.fr/jorf/id/JORFTEXT000046704476/)
+            * [Arrêté du 22 octobre 2025 (2026-2027)](https://www.legifrance.gouv.fr/jorf/id/JORFTEXT000052416058)
+            * [Arrêté du 21 juillet 2026 (2027-2028)](https://www.legifrance.gouv.fr/jorf/id/JORFTEXT000054457294)
+
+    Wallis and Futuna:
+        * [Accord interprofessionnel territorial](https://www.wallis-et-futuna.gouv.fr/contenu/telechargement/14506/119308/file/AIT%20avec%20signature%20-%20MAJ%20DU%2020%20-03-2025.pdf)
+        * [2025](https://www.wallis-et-futuna.gouv.fr/index.php/contenu/telechargement/14313/117620/file/Arrêté%20jours%20fériés%202025.pdf)
+
+    Some provinces have specific holidays, only those are included in the
+    PROVINCES, because these provinces have different administrative status,
+    which makes it difficult to enumerate.
+
+    !!! note "School holidays"
+        School holidays are available for the mainland school zones A, B and C
+        (by académie) since the 2017-2018 school year.
+    """
+
+    country = "FR"
+    default_language = "fr"
+    # Arrêté du 29 germinal an X (April 19th, 1802),
+    # Reaffirmed by Article 42 de la loi du 9 décembre 1905.
+    start_year = 1803
+    # fmt: off
+    subdivisions: tuple[str, ...] = (
+        "57",   # Moselle.
+        "6AE",  # Alsace.
+        "971",  # Guadeloupe.
+        "972",  # Martinique.
+        "973",  # Guyane.
+        "974",  # La Réunion.
+        "976",  # Mayotte.
+        "BL",   # Saint-Barthélemy.
+        "MF",   # Saint-Martin.
+        "NC",   # Nouvelle-Calédonie,
+        "PF",   # Polynésie Française.
+        "PM",   # Saint-Pierre-et-Miquelon.
+        "TF",   # Terres australes françaises.
+        "WF",   # Wallis-et-Futuna.
+        # School zones.
+        "Zone A",
+        "Zone B",
+        "Zone C",
+    )
+    # fmt: on
+    subdivisions_aliases = {
+        "Moselle": "57",
+        "Alsace": "6AE",
+        "GP": "971",
+        "GUA": "971",
+        "Guadeloupe": "971",
+        "MQ": "972",
+        "Martinique": "972",
+        "GY": "973",
+        "Guyane": "973",
+        "RE": "974",
+        "LRE": "974",
+        "La Réunion": "974",
+        "YT": "976",
+        "MAY": "976",
+        "Mayotte": "976",
+        "Saint-Barthélemy": "BL",
+        "Saint-Martin": "MF",
+        "Nouvelle-Calédonie": "NC",
+        "Polynésie Française": "PF",
+        "Saint-Pierre-et-Miquelon": "PM",
+        "Terres australes françaises": "TF",
+        "Wallis-et-Futuna": "WF",
+    }
+    supported_categories: tuple[str, ...] = (PUBLIC, SCHOOL)
+    supported_languages = ("en_US", "fr", "th", "uk")
+    _deprecated_subdivisions = (
+        "Alsace-Moselle",
+        "GES",
+        "Métropole",
+        "Saint-Barthélémy",
+    )
+
+    def __init__(self, *args, **kwargs):
+        ChristianHolidays.__init__(self)
+        InternationalHolidays.__init__(self)
+        super().__init__(*args, **kwargs)
+
+    def _add_multiday_holiday(
+        self, start_date: date, duration_days: int, *, name: str | None = None
+    ) -> set[date]:
+        """Add a multi-day holiday starting from `start_date` (inclusive)."""
+        return super()._add_multiday_holiday(
+            _timedelta(start_date, -1), duration_days=duration_days, name=name
+        )
+
+    def _populate_public_holidays(self):
+        # Established on March 28th, 1810.
+        if self._year >= 1811:
+            # New Year's Day.
+            self._add_new_years_day(tr("Jour de l'an"))
+
+        # Established on March 8th, 1886.
+        if self._year >= 1886:
+            # Easter Monday.
+            self._add_easter_monday(tr("Lundi de Pâques"))
+
+            # Removed on June 30th, 2004.
+            # Readded on April 16th, 2008.
+            if self._year not in {2005, 2006, 2007}:
+                # Pentecost Monday.
+                self._add_pentecost_monday(tr("Lundi de Pentecôte"))
+
+        # Made unofficial public holiday with no name on April 23rd, 1919.
+        # Included in official list by Vichy France with new name on April 24th, 1941.
+        # Confirmed for 1946 with no name on April 26th, 1946.
+        # Added annually from 1947 onwards with no name on April 30th, 1947.
+        # Got its current name on April 29th, 1948.
+        if self._year >= 1919:
+            if self._year >= 1948:
+                # Labor Day.
+                name = tr("Fête du Travail")
+            elif 1941 <= self._year <= 1945:
+                # Labor and Social Concord Day.
+                name = tr("Fête du Travail et de la Concorde sociale")
+            else:
+                # May Day.
+                name = tr("1er mai")
+            self._add_labor_day(name)
+
+        # Commemorated on May 7th, 1946 as 1st Sunday after May 7th.
+        # Upgraded to Public Holiday on May 8th directly on March 20th, 1953.
+        # Removed from 1960 onwards per April 11th, 1959 decree.
+        # Readded on October 2nd, 1981.
+        if 1953 <= self._year <= 1959 or self._year >= 1982:
+            # Victory Day.
+            self._add_world_war_two_victory_day(tr("Fête de la Victoire"))
+
+        # Ascension Day.
+        self._add_ascension_thursday(tr("Ascension"))
+
+        # Established on July 6th, 1880.
+        if self._year >= 1880:
+            # National Day.
+            self._add_holiday_jul_14(tr("Fête nationale"))
+
+        # Assumption Day.
+        self._add_assumption_of_mary_day(tr("Assomption"))
+
+        # All Saints' Day.
+        self._add_all_saints_day(tr("Toussaint"))
+
+        # Established on October 24th, 1922.
+        if self._year >= 1922:
+            # Armistice Day.
+            self._add_remembrance_day(tr("Armistice"))
+
+        # Christmas Day.
+        self._add_christmas_day(tr("Noël"))
+
+        match self.subdiv:
+            case "Alsace-Moselle":
+                self._populate_subdiv_6ae_public_holidays()
+            case "Saint-Barthélémy":
+                self._populate_subdiv_bl_public_holidays()
+
+    def _populate_school_zone_holidays(self, zone: int):
+        if self._year <= 2016:
+            return None
+
+        # Christmas Break.
+        name = tr("Vacances de Noël")
+
+        # Saturday on or before Dec 23 → 16 days (17 if Jan 1 is on Sunday).
+        for year in (self._year - 1, self._year):
+            if year >= 2017:
+                self._add_multiday_holiday(
+                    _get_nth_weekday_from(-1, SAT, date(year, DEC, 23)),
+                    17 if self._is_sunday(date(year + 1, JAN, 1)) else 16,
+                    name=name,
+                )
+
+        if self._year >= 2018:
+            # Zones take these breaks in consecutive weeks, each one week later every year (the
+            # third week wraps to the first); the order was A, C, B in 2018 and A, B, C in 2023.
+            week = (
+                (self._year - 2018 - zone) % 3
+                if self._year <= 2022
+                else (self._year - 2023 + zone) % 3
+            )
+
+            # Saturday on or after Feb 4 → 16 days.
+            self._add_multiday_holiday(
+                _get_nth_weekday_from(week + 1, SAT, date(self._year, FEB, 4)),
+                16,
+                # Winter Break.
+                name=tr("Vacances d'hiver"),
+            )
+
+            # Saturday on or after Apr 3 → 16 days (17 if the next Monday is a public holiday).
+            # All zones had the same spring break in 2021 because of COVID-19.
+            spring_start = (
+                date(self._year, APR, 10)
+                if self._year == 2021
+                else _get_nth_weekday_from(week + 1, SAT, date(self._year, APR, 3))
+            )
+            next_monday = _timedelta(spring_start, +16)
+            self._add_multiday_holiday(
+                spring_start,
+                17
+                if next_monday
+                in {
+                    _timedelta(self._easter_sunday, +1),
+                    date(self._year, MAY, 1),
+                    date(self._year, MAY, 8),
+                }
+                else 16,
+                # Spring Break.
+                name=tr("Vacances de printemps"),
+            )
+
+            if self._year >= 2019:
+                # Ascension Thursday → 4 days.
+                self._add_multiday_holiday(
+                    _timedelta(self._easter_sunday, +39),
+                    4,
+                    # Ascension Break.
+                    name=tr("Pont de l'Ascension"),
+                )
+
+            # Saturday on or after Jul 2, unless classes end on a weekday.
+            summer_starts = {2021: 7, 2022: 8, 2028: 5}
+            summer_start = (
+                date(self._year, JUL, summer_starts[self._year])
+                if self._year in summer_starts
+                else _get_nth_weekday_from(1, SAT, date(self._year, JUL, 2))
+            )
+
+            # Classes resume on Sep 1, on Thursday instead of Wednesday and on Monday instead of
+            # Friday to Sunday.
+            school_start = date(self._year, SEP, 1)
+            if self._is_wednesday(school_start):
+                school_start = _timedelta(school_start, +1)
+            elif self._is_friday(school_start) or self._is_weekend(school_start):
+                school_start = _get_nth_weekday_from(1, MON, school_start)
+
+            self._add_multiday_holiday(
+                summer_start,
+                (school_start - summer_start).days,
+                # Summer Break.
+                name=tr("Vacances d'été"),
+            )
+
+        # Saturday → 16 days, until the 1st Sunday on or after Nov 1.
+        self._add_multiday_holiday(
+            _timedelta(_get_nth_weekday_from(1, SUN, date(self._year, NOV, 1)), -15),
+            16,
+            # All Saints' Break.
+            name=tr("Vacances de la Toussaint"),
+        )
+
+    def _populate_subdiv_zone_a_school_holidays(self):
+        self._populate_school_zone_holidays(zone=0)
+
+    def _populate_subdiv_zone_b_school_holidays(self):
+        self._populate_school_zone_holidays(zone=1)
+
+    def _populate_subdiv_zone_c_school_holidays(self):
+        self._populate_school_zone_holidays(zone=2)
+
+    # Moselle.
+    def _populate_subdiv_57_public_holidays(self):
+        # Established on August 16th, 1892.
+        if self._year >= 1893:
+            # Good Friday.
+            self._add_good_friday(tr("Vendredi saint"))
+
+        # Established on August 16th, 1892.
+        if self._year >= 1892:
+            # Saint Stephen's Day.
+            self._add_christmas_day_two(tr("Saint-Étienne"))
+
+    # Alsace.
+    def _populate_subdiv_6ae_public_holidays(self):
+        # Established on August 16th, 1892.
+        if self._year >= 1893:
+            # Good Friday.
+            self._add_good_friday(tr("Vendredi saint"))
+
+        # Established on August 16th, 1892.
+        if self._year >= 1892:
+            # Saint Stephen's Day.
+            self._add_christmas_day_two(tr("Saint-Étienne"))
+
+    # Guadeloupe.
+    def _populate_subdiv_971_public_holidays(self):
+        # Good Friday.
+        self._add_good_friday(tr("Vendredi saint"))
+
+        # Mi-Careme.
+        self._add_holiday_24_days_prior_easter(tr("Mi-Carême"))
+
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        # Victor Schoelcher Day is based on June 30th, 1983 provision.
+        if self._year >= 1984:
+            # Abolition of Slavery.
+            self._add_holiday_may_27(tr("Abolition de l'esclavage"))
+
+            # Victor Schoelcher Day.
+            self._add_holiday_jul_21(tr("Fête de Victor Schoelcher"))
+
+    # Martinique.
+    def _populate_subdiv_972_public_holidays(self):
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        # Victor Schoelcher Day is based on June 30th, 1983 provision.
+        if self._year >= 1984:
+            # Abolition of Slavery.
+            self._add_holiday_may_22(tr("Abolition de l'esclavage"))
+
+            # Victor Schoelcher Day.
+            self._add_holiday_jul_21(tr("Fête de Victor Schoelcher"))
+
+    # Guyane.
+    def _populate_subdiv_973_public_holidays(self):
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        if self._year >= 1984:
+            # Abolition of Slavery.
+            self._add_holiday_jun_10(tr("Abolition de l'esclavage"))
+
+    # Reunion.
+    def _populate_subdiv_974_public_holidays(self):
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        if self._year >= 1983:
+            # Abolition of Slavery.
+            self._add_holiday_dec_20(tr("Abolition de l'esclavage"))
+
+    # Mayotte.
+    def _populate_subdiv_976_public_holidays(self):
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        if self._year >= 1984:
+            # Abolition of Slavery.
+            self._add_holiday_apr_27(tr("Abolition de l'esclavage"))
+
+    # Saint Barthelemy.
+    def _populate_subdiv_bl_public_holidays(self):
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        # Amended to include Saint-Barthélemy and Saint-Martin subdivision on April 23rd, 2012.
+        if self._year >= 2012:
+            # Abolition of Slavery.
+            self._add_holiday_oct_9(tr("Abolition de l'esclavage"))
+
+    # Saint Martin.
+    def _populate_subdiv_mf_public_holidays(self):
+        # Provision for Public Holidays decreed on June 30th, 1983.
+        # Date for each DOM declared on November 23rd, 1983.
+        # Amended to include Saint-Barthélemy and Saint-Martin subdivision on April 23rd, 2012.
+        # Victor Schoelcher Day is based on June 30th, 1983 provision.
+        if self._year >= 2012:
+            # Abolition of Slavery.
+            self._add_holiday_may_28(tr("Abolition de l'esclavage"))
+
+            # Victor Schoelcher Day.
+            self._add_holiday_jul_21(tr("Fête de Victor Schoelcher"))
+
+    # New Caledonia.
+    def _populate_subdiv_nc_public_holidays(self):
+        # First observed in 1953.
+        # Renamed in 2004.
+        if self._year >= 1953:
+            self._add_holiday_sep_24(
+                # Citizenship Day.
+                tr("Fête de la Citoyenneté")
+                if self._year >= 2004
+                # Annexation Day.
+                else tr("Fête de la prise de possession")
+            )
+
+    # French Polynesia.
+    def _populate_subdiv_pf_public_holidays(self):
+        # Good Friday.
+        self._add_good_friday(tr("Vendredi saint"))
+
+        # Established on February 1st, 1978.
+        if self._year >= 1978:
+            # Missionary Day.
+            self._add_holiday_mar_5(tr("Arrivée de l'Évangile"))
+
+        # Established on May 30th, 1985.
+        # Replaced by Matāri'i on April 30th, 2024.
+        if 1985 <= self._year <= 2024:
+            # Internal Autonomy Day.
+            self._add_holiday_jun_29(tr("Fête de l'autonomie"))
+
+        # Established on April 30th, 2024.
+        if self._year >= 2025:
+            # Matāri'i.
+            self._add_holiday_nov_20(tr("Matāri'i"))
+
+    #  Wallis and Futuna.
+    def _populate_subdiv_wf_public_holidays(self):
+        # While it's not clear when these holidays were added,
+        # they're likely added after local autonomy was granted on July 29th, 1961.
+        if self._year >= 1962:
+            # Feast of Saint Peter Chanel.
+            self._add_holiday_apr_28(tr("Saint Pierre Chanel"))
+
+            # Saints Peter and Paul Day.
+            self._add_saints_peter_and_paul_day(tr("Saints Pierre et Paul"))
+
+            # Territory Day.
+            self._add_holiday_jul_29(tr("Fête du Territoire"))
+
+
+class FR(France):
+    """FR is also used by dateutil (Friday), so be careful with this one."""
+
+    pass
+
+
+class FRA(France):
+    pass

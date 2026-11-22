@@ -1,0 +1,146 @@
+#  holidays
+#  --------
+#  A fast, efficient Python library for generating country, province and state
+#  specific sets of holidays on the fly. It aims to make determining whether a
+#  specific date is a holiday as fast and flexible as possible.
+#
+#  Authors: Vacanza Team and individual contributors (see CONTRIBUTORS file)
+#           dr-prodigy <dr.prodigy.github@gmail.com> (c) 2017-2023
+#           ryanss <ryanssdev@icloud.com> (c) 2014-2017
+#  Website: https://github.com/vacanza/holidays
+#  License: MIT (see LICENSE file)
+
+from unittest import TestCase
+
+from holidays.countries.mexico import Mexico
+from tests.common import CommonCountryTests
+
+
+class TestMexico(CommonCountryTests, TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.full_range = range(1901, 2050)
+        super().setUpClass(Mexico)
+
+    def test_new_years_day(self):
+        self.assertHolidayName("Año Nuevo", (f"{year}-01-01" for year in self.full_range))
+
+    def test_constitution_day(self):
+        name = "Día de la Constitución"
+        self.assertHolidayName(name, (f"{year}-02-05" for year in range(1917, 2006)))
+        self.assertNoHolidayName(name, range(self.start_year, 1917))
+        self.assertHolidayName(
+            name,
+            "2020-02-03",
+            "2021-02-01",
+            "2022-02-07",
+            "2023-02-06",
+            "2024-02-05",
+            "2025-02-03",
+        )
+        self.assertHolidayName(name, range(2006, self.end_year))
+
+    def test_benito_juarezs_birthday(self):
+        name = "Natalicio de Benito Juárez"
+        self.assertHolidayName(name, (f"{year}-03-21" for year in range(1917, 2007)))
+        self.assertNoHolidayName(name, range(self.start_year, 1917))
+        self.assertHolidayName(
+            name,
+            "2020-03-16",
+            "2021-03-15",
+            "2022-03-21",
+            "2023-03-20",
+            "2024-03-18",
+            "2025-03-17",
+        )
+        self.assertHolidayName(name, range(2007, self.end_year))
+
+    def test_labor_day(self):
+        name = "Día del Trabajo"
+        self.assertHolidayName(name, (f"{year}-05-01" for year in range(1923, self.end_year)))
+        self.assertNoHolidayName(name, range(self.start_year, 1923))
+
+    def test_independence_day(self):
+        self.assertHolidayName(
+            "Día de la Independencia", (f"{year}-09-16" for year in self.full_range)
+        )
+
+    def test_revolution_day(self):
+        name = "Día de la Revolución"
+        self.assertHolidayName(name, (f"{year}-11-20" for year in range(1917, 2006)))
+        self.assertNoHolidayName(name, range(self.start_year, 1917))
+        self.assertHolidayName(
+            name,
+            "2020-11-16",
+            "2021-11-15",
+            "2022-11-21",
+            "2023-11-20",
+            "2024-11-18",
+            "2025-11-17",
+        )
+        self.assertHolidayName(name, range(2006, self.end_year))
+
+    def test_change_of_government(self):
+        name = "Transmisión del Poder Ejecutivo Federal"
+        self.assertHolidayName(
+            name,
+            "1970-12-01",
+            "1976-12-01",
+            "1982-12-01",
+            "1988-12-01",
+            "1994-12-01",
+            "2000-12-01",
+            "2006-12-01",
+            "2012-12-01",
+            "2018-12-01",
+            "2024-10-01",
+            "2030-10-01",
+            "2036-10-01",
+            "2042-10-01",
+            "2048-10-01",
+        )
+        self.assertNoHolidayName(name, range(self.start_year, 1970))
+        self.assertNoHoliday(
+            (f"{year}-12-01" for year in range(1970, 2024) if (year - 1970) % 6 > 0),
+            (f"{year}-12-01" for year in range(2024, self.end_year)),
+            (f"{year}-10-01" for year in range(2024, self.end_year) if (year - 1970) % 6 > 0),
+            (f"{year}-10-01" for year in range(1970, 2024)),
+        )
+
+    def test_christmas_day(self):
+        self.assertHolidayName("Navidad", (f"{year}-12-25" for year in self.full_range))
+
+    def test_l10n_default(self):
+        self.assertLocalizedHolidays(
+            ("2022-01-01", "Año Nuevo"),
+            ("2022-02-07", "Día de la Constitución"),
+            ("2022-03-21", "Natalicio de Benito Juárez"),
+            ("2022-05-01", "Día del Trabajo"),
+            ("2022-09-16", "Día de la Independencia"),
+            ("2022-11-21", "Día de la Revolución"),
+            ("2022-12-25", "Navidad"),
+        )
+
+    def test_l10n_en_us(self):
+        self.assertLocalizedHolidays(
+            "en_US",
+            ("2022-01-01", "New Year's Day"),
+            ("2022-02-07", "Constitution Day"),
+            ("2022-03-21", "Benito Juárez's birthday"),
+            ("2022-05-01", "Labor Day"),
+            ("2022-09-16", "Independence Day"),
+            ("2022-11-21", "Revolution Day"),
+            ("2022-12-25", "Christmas Day"),
+        )
+
+    def test_l10n_uk(self):
+        self.assertLocalizedHolidays(
+            "uk",
+            ("2022-01-01", "Новий рік"),
+            ("2022-02-07", "День Конституції"),
+            ("2022-03-21", "Річниця Беніто Хуареса"),
+            ("2022-05-01", "День праці"),
+            ("2022-09-16", "День незалежності"),
+            ("2022-11-21", "День революції"),
+            ("2022-12-25", "Різдво Христове"),
+        )

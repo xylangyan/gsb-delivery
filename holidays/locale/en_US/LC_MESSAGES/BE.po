@@ -1,0 +1,129 @@
+#  holidays
+#  --------
+#  A fast, efficient Python library for generating country, province and state
+#  specific sets of holidays on the fly. It aims to make determining whether a
+#  specific date is a holiday as fast and flexible as possible.
+#
+#  Authors: Vacanza Team and individual contributors (see CONTRIBUTORS file)
+#           dr-prodigy <dr.prodigy.github@gmail.com> (c) 2017-2023
+#           ryanss <ryanssdev@icloud.com> (c) 2014-2017
+#  Website: https://github.com/vacanza/holidays
+#  License: MIT (see LICENSE file)
+#
+# Belgium holidays en_US localization.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Holidays 0.108\n"
+"Report-Msgid-Bugs-To: l10n@vacanza.dev\n"
+"POT-Creation-Date: 2023-06-27 13:17+0300\n"
+"PO-Revision-Date: 2026-10-21 22:46+0530\n"
+"Last-Translator: Yash Goyal <yg364550@gmail.com>\n"
+"Language-Team: Holidays Localization Team\n"
+"Language: en_US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Lingua 4.15.0\n"
+"X-Generator: Poedit 3.4\n"
+"X-Source-Language: nl\n"
+
+#. Autumn Break.
+msgid "Herfstvakantie"
+msgstr "Autumn Break"
+
+#. Christmas Break.
+msgid "Kerstvakantie"
+msgstr "Christmas Break"
+
+#. Carnival Break.
+msgid "Krokusvakantie"
+msgstr "Carnival Break"
+
+#. Mardi Gras.
+msgid "Vastenavond"
+msgstr "Mardi Gras"
+
+#. Easter Break.
+msgid "Paasvakantie"
+msgstr "Easter Break"
+
+#. Summer Break.
+msgid "Zomervakantie"
+msgstr "Summer Break"
+
+#. New Year's Day.
+msgid "Nieuwjaar"
+msgstr "New Year's Day"
+
+#. Easter Sunday.
+msgid "Pasen"
+msgstr "Easter Sunday"
+
+#. Easter Monday.
+msgid "Paasmaandag"
+msgstr "Easter Monday"
+
+#. Labor Day.
+msgid "Dag van de Arbeid"
+msgstr "Labor Day"
+
+#. Ascension Day.
+msgid "O. L. H. Hemelvaart"
+msgstr "Ascension Day"
+
+#. Pentecost.
+msgid "Pinksteren"
+msgstr "Pentecost"
+
+#. Pentecost Monday.
+msgid "Pinkstermaandag"
+msgstr "Pentecost Monday"
+
+#. National Day.
+msgid "Nationale feestdag"
+msgstr "National Day"
+
+#. Assumption Day.
+msgid "O. L. V. Hemelvaart"
+msgstr "Assumption Day"
+
+#. All Saints' Day.
+msgid "Allerheiligen"
+msgstr "All Saints' Day"
+
+#. Armistice Day.
+msgid "Wapenstilstand"
+msgstr "Armistice Day"
+
+#. Christmas Day.
+msgid "Kerstmis"
+msgstr "Christmas Day"
+
+#. Good Friday.
+msgid "Goede vrijdag"
+msgstr "Good Friday"
+
+#. Friday after Ascension Day.
+msgid "Vrijdag na O. L. H. Hemelvaart"
+msgstr "Friday after Ascension Day"
+
+#. Bank Holiday.
+msgid "Banksluitingsdag"
+msgstr "Bank Holiday"
+
+#. French Community Day.
+msgid "Feestdag van de Franse Gemeenschap"
+msgstr "French Community Day"
+
+#. All Souls' Day.
+msgid "Allerzielen"
+msgstr "All Souls' Day"
+
+#. German-speaking Community Day.
+msgid "Feestdag van de Duitstalige Gemeenschap"
+msgstr "German-speaking Community Day"
+
+#. Bridge Holiday.
+msgid "Brugdag"
+msgstr "Bridge Holiday"

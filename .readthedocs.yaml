@@ -1,0 +1,23 @@
+# Read the Docs configuration file.
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details.
+
+build:
+  # https://docs.readthedocs.com/platform/stable/config-file/v2.html#build-os
+  os: ubuntu-26.04
+  tools:
+    # https://docs.readthedocs.com/platform/stable/config-file/v2.html#build-tools-python
+    python: '3.15'
+  jobs:
+    install:
+      - uv sync --frozen --no-dev --group docs
+
+python:
+  install:
+    # https://docs.readthedocs.com/platform/stable/config-file/v2.html#uv
+    - method: uv
+      command: sync
+
+mkdocs:
+  configuration: .properdocs.yml
+
+version: 2

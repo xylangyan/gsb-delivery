@@ -1,0 +1,83 @@
+#  holidays
+#  --------
+#  A fast, efficient Python library for generating country, province and state
+#  specific sets of holidays on the fly. It aims to make determining whether a
+#  specific date is a holiday as fast and flexible as possible.
+#
+#  Authors: Vacanza Team and individual contributors (see CONTRIBUTORS file)
+#           dr-prodigy <dr.prodigy.github@gmail.com> (c) 2017-2023
+#           ryanss <ryanssdev@icloud.com> (c) 2014-2017
+#  Website: https://github.com/vacanza/holidays
+#  License: MIT (see LICENSE file)
+
+from unittest import TestCase
+
+from holidays.financial.ice_futures_europe import IceFuturesEurope
+from tests.common import CommonFinancialTests
+
+
+class TestIceFuturesEurope(CommonFinancialTests, TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass(IceFuturesEurope)
+
+    def test_2021(self):
+        self.assertHolidays(
+            IceFuturesEurope(years=2021),
+            ("2021-01-01", "New Year's Day"),
+            ("2021-04-02", "Good Friday"),
+        )
+
+    def test_2022(self):
+        self.assertHolidays(
+            IceFuturesEurope(years=2022),
+            ("2022-04-15", "Good Friday"),
+            ("2022-12-26", "Christmas Day"),
+        )
+
+    def test_2023(self):
+        self.assertHolidays(
+            IceFuturesEurope(years=2023),
+            ("2023-01-02", "New Year's Day"),
+            ("2023-04-07", "Good Friday"),
+            ("2023-12-25", "Christmas Day"),
+        )
+
+    def test_2024(self):
+        self.assertHolidays(
+            IceFuturesEurope(years=2024),
+            ("2024-01-01", "New Year's Day"),
+            ("2024-03-29", "Good Friday"),
+            ("2024-12-25", "Christmas Day"),
+        )
+
+    def test_l10n_default(self):
+        self.assertLocalizedHolidays(
+            ("2023-01-02", "New Year's Day"),
+            ("2023-04-07", "Good Friday"),
+            ("2023-12-25", "Christmas Day"),
+        )
+
+    def test_l10n_en_us(self):
+        self.assertLocalizedHolidays(
+            "en_US",
+            ("2023-01-02", "New Year's Day"),
+            ("2023-04-07", "Good Friday"),
+            ("2023-12-25", "Christmas Day"),
+        )
+
+    def test_l10n_th(self):
+        self.assertLocalizedHolidays(
+            "th",
+            ("2023-01-02", "วันขึ้นปีใหม่"),
+            ("2023-04-07", "วันศุกร์ประเสริฐ"),
+            ("2023-12-25", "วันคริสต์มาส"),
+        )
+
+    def test_l10n_ur_pk(self):
+        self.assertLocalizedHolidays(
+            "ur_PK",
+            ("2023-01-02", "نئے سال کا دن"),
+            ("2023-04-07", "گڈ فرائیڈے"),
+            ("2023-12-25", "کرسمس کا دن"),
+        )

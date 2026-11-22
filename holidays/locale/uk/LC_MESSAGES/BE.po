@@ -1,0 +1,129 @@
+#  holidays
+#  --------
+#  A fast, efficient Python library for generating country, province and state
+#  specific sets of holidays on the fly. It aims to make determining whether a
+#  specific date is a holiday as fast and flexible as possible.
+#
+#  Authors: Vacanza Team and individual contributors (see CONTRIBUTORS file)
+#           dr-prodigy <dr.prodigy.github@gmail.com> (c) 2017-2023
+#           ryanss <ryanssdev@icloud.com> (c) 2014-2017
+#  Website: https://github.com/vacanza/holidays
+#  License: MIT (see LICENSE file)
+#
+# Belgium holidays uk localization.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Holidays 0.108\n"
+"Report-Msgid-Bugs-To: l10n@vacanza.dev\n"
+"POT-Creation-Date: 2023-06-27 13:17+0300\n"
+"PO-Revision-Date: 2026-10-21 22:46+0530\n"
+"Last-Translator: Yash Goyal <yg364550@gmail.com>\n"
+"Language-Team: Holidays Localization Team\n"
+"Language: uk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Lingua 4.15.0\n"
+"X-Generator: Poedit 3.2.2\n"
+"X-Source-Language: nl\n"
+
+#. Autumn Break.
+msgid "Herfstvakantie"
+msgstr "Осінні канікули"
+
+#. Christmas Break.
+msgid "Kerstvakantie"
+msgstr "Різдвяні канікули"
+
+#. Carnival Break.
+msgid "Krokusvakantie"
+msgstr "Карнавальні канікули"
+
+#. Mardi Gras.
+msgid "Vastenavond"
+msgstr "Масний вівторок"
+
+#. Easter Break.
+msgid "Paasvakantie"
+msgstr "Великодні канікули"
+
+#. Summer Break.
+msgid "Zomervakantie"
+msgstr "Літні канікули"
+
+#. New Year's Day.
+msgid "Nieuwjaar"
+msgstr "Новий рік"
+
+#. Easter Sunday.
+msgid "Pasen"
+msgstr "Великдень"
+
+#. Easter Monday.
+msgid "Paasmaandag"
+msgstr "Великодній понеділок"
+
+#. Labor Day.
+msgid "Dag van de Arbeid"
+msgstr "День праці"
+
+#. Ascension Day.
+msgid "O. L. H. Hemelvaart"
+msgstr "Вознесіння Господнє"
+
+#. Pentecost.
+msgid "Pinksteren"
+msgstr "Пʼятидесятниця"
+
+#. Pentecost Monday.
+msgid "Pinkstermaandag"
+msgstr "Другий день Пʼятидесятниці"
+
+#. National Day.
+msgid "Nationale feestdag"
+msgstr "Національне свято"
+
+#. Assumption Day.
+msgid "O. L. V. Hemelvaart"
+msgstr "Внебовзяття Пресвятої Діви Марії"
+
+#. All Saints' Day.
+msgid "Allerheiligen"
+msgstr "День усіх святих"
+
+#. Armistice Day.
+msgid "Wapenstilstand"
+msgstr "День перемирʼя"
+
+#. Christmas Day.
+msgid "Kerstmis"
+msgstr "Різдво Христове"
+
+#. Good Friday.
+msgid "Goede vrijdag"
+msgstr "Страсна пʼятниця"
+
+#. Friday after Ascension Day.
+msgid "Vrijdag na O. L. H. Hemelvaart"
+msgstr "Пʼятниця після Вознесіння Господнього"
+
+#. Bank Holiday.
+msgid "Banksluitingsdag"
+msgstr "Банківський вихідний"
+
+#. French Community Day.
+msgid "Feestdag van de Franse Gemeenschap"
+msgstr "День Французької спільноти"
+
+#. All Souls' Day.
+msgid "Allerzielen"
+msgstr "День усіх померлих"
+
+#. German-speaking Community Day.
+msgid "Feestdag van de Duitstalige Gemeenschap"
+msgstr "День Німецькомовної спільноти"
+
+#. Bridge Holiday.
+msgid "Brugdag"
+msgstr "Проміжний вихідний"
