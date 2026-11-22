@@ -6,6 +6,13 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- :class:`LRU` (and therefore :class:`Buffer` and :class:`AsyncBuffer`) supports
+  pinning groups of keys against eviction via :meth:`LRU.retain`, which returns a
+  :class:`Retention` handle. Retained keys still occupy space according to their real
+  weight, an insertion that can't fit without evicting retained data raises
+  :class:`RetentionError`, and a retention acquired while an eviction callback is still
+  running cancels that eviction and cleans up any stale copy via
+  ``on_cancel_evict``.
 
 
 3.0.0 - 2023-04-17

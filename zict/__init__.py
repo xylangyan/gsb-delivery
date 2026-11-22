@@ -7,6 +7,8 @@ from zict.func import Func as Func
 from zict.keymap import KeyMap as KeyMap
 from zict.lmdb import LMDB as LMDB
 from zict.lru import LRU as LRU
+from zict.lru import Retention as Retention
+from zict.lru import RetentionError as RetentionError
 from zict.sieve import Sieve as Sieve
 from zict.utils import InsertionSortedSet as InsertionSortedSet
 from zict.zip import Zip as Zip

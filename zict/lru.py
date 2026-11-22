@@ -9,9 +9,58 @@ from collections.abc import (
     MutableMapping,
     ValuesView,
 )
+from typing import Any, Generic
 
 from zict.common import KT, VT, NoDefault, ZictBase, close, flush, locked, nodefault
 from zict.utils import InsertionSortedSet
+
+
+class RetentionError(KeyError):
+    """Raised when a retention cannot be granted or honoured.
+
+    Subclasses :class:`KeyError`, so code treating a missing or unloadable key as a
+    ``KeyError`` keeps working.
+    """
+
+
+class Retention(Generic[KT]):
+    """Handle returned by :meth:`LRU.retain`.
+
+    Every call to :meth:`LRU.retain` must be paired with exactly one :meth:`release`.
+    Retentions are reentrant: the same key may be protected by several handles at the
+    same time, and it stays protected until all of them have been released. Releasing a
+    handle whose keys were deleted (and possibly re-inserted and re-retained) in the
+    meantime is a no-op and can never undo another job's retention.
+
+    This class can also be used as a context manager, in which case :meth:`release` is
+    called automatically on exit, including if the enclosed code raises.
+    """
+
+    __slots__ = ("_lru", "_rid", "keys", "_released")
+
+    _lru: LRU[KT, Any]
+    _rid: int
+    keys: frozenset[KT]
+    _released: bool
+
+    def __init__(self, lru: LRU[KT, Any], rid: int, keys: Collection[KT]):
+        self._lru = lru
+        self._rid = rid
+        self.keys = frozenset(keys)
+        self._released = False
+
+    def release(self) -> None:
+        """Release the retention. Idempotent: calling it more than once is a no-op."""
+        if self._released:
+            return
+        self._released = True
+        self._lru._release(self._rid, self.keys)
+
+    def __enter__(self) -> Retention[KT]:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
 
 
 class LRU(ZictBase[KT, VT]):
@@ -47,6 +96,22 @@ class LRU(ZictBase[KT, VT]):
     as all methods of ``d`` are fast. Callbacks are not protected by locks and can be
     arbitrarily slow.
 
+    A :meth:`retain` call atomically pins a group of keys so that the LRU won't evict
+    any of them, returning a :class:`Retention` handle. All keys of the group must be
+    present or the whole request fails atomically (nothing is retained) with a
+    :class:`RetentionError`. Retained keys still occupy space according to their real
+    ``weight``: if there isn't enough room, or not enough evictable keys, to fit a new
+    entry, the insertion fails instead of evicting retained data. Call
+    :meth:`Retention.release` (or use the handle as a context manager) to unpin.
+
+    Retention is reentrant (a key may be held by several handles at once), neither
+    :meth:`retain` nor :meth:`Retention.release` count as reads (the LRU order is left
+    untouched), and releasing one handle never unpins keys still protected by another
+    handle. A key whose eviction callback is still running, but which has not been
+    removed from ``d`` yet, can be retained: when the callback returns the eviction is
+    cancelled, the value stays in the LRU, and any stale copy left by the callback is
+    cleaned up through ``on_cancel_evict``.
+
     Examples
     --------
     >>> lru = LRU(2, {}, on_evict=lambda k, v: print("Lost", k, v))
@@ -78,6 +143,13 @@ class LRU(ZictBase[KT, VT]):
     closed: bool
     total_weight: float
     _cancel_evict: dict[KT, bool]
+    #: Active retention handle IDs protecting each key. A key is protected from
+    #: eviction while this set is non-empty, but it still occupies space according to
+    #: its weight. Tracking IDs (rather than a single counter) keeps retentions
+    #: independent across handles: deleting and re-inserting a key, or releasing a stale
+    #: handle, can never undo another job's retention.
+    _retentions: dict[KT, set[int]]
+    _next_rid: int
 
     def __init__(
         self,
@@ -111,6 +183,8 @@ class LRU(ZictBase[KT, VT]):
         self.heavy = InsertionSortedSet(k for k, v in self.weights.items() if v >= n)
         self.closed = False
         self._cancel_evict = {}
+        self._retentions = {}
+        self._next_rid = 0
 
     @locked
     def __getitem__(self, key: KT) -> VT:
@@ -132,7 +206,51 @@ class LRU(ZictBase[KT, VT]):
             self.order.add(key)
         return result
 
+    @locked
+    def retain(self, keys: Collection[KT]) -> Retention[KT]:
+        """Atomically protect a group of keys from eviction.
+
+        Every key in ``keys`` must currently be in the LRU - a key that is being evicted
+        still counts as present as long as its eviction callbacks have not finished and
+        the value has not been removed from the underlying mapping yet. If any key is
+        missing, no key is retained and :class:`RetentionError` (a :class:`KeyError`
+        subclass) is raised.
+
+        Retained keys cannot be evicted, but they still take up space according to their
+        real ``weight``. This call neither reads nor writes any value, so it does not
+        change the LRU order; it is safe to call while eviction callbacks are running on
+        other threads.
+
+        The returned :class:`Retention` must be released exactly once, via
+        :meth:`Retention.release` or by using it as a context manager. Retentions are
+        reentrant: retaining the same key more than once keeps it protected until every
+        handle has been released.
+        """
+        # Materialize once: we must not iterate the input collection twice and, if it
+        # happens to be a generator, we'd get different results on the second pass.
+        group = list(keys)
+        for key in group:
+            if key not in self.d:
+                raise RetentionError(key)
+        rid = self._next_rid
+        self._next_rid += 1
+        for key in group:
+            self._retentions.setdefault(key, set()).add(rid)
+        return Retention(self, rid, group)
+
+    def _release(self, rid: int, keys: frozenset[KT]) -> None:
+        with self.lock:
+            for key in keys:
+                handles = self._retentions.get(key)
+                if handles is None:
+                    continue
+                handles.discard(rid)
+                if not handles:
+                    del self._retentions[key]
+
     def __setitem__(self, key: KT, value: VT) -> None:
+        weight = self.weight(key, value)
+        self._check_capacity(key, weight)
         self.set_noevict(key, value)
         try:
             self.evict_until_below_target()
@@ -142,10 +260,51 @@ class LRU(ZictBase[KT, VT]):
                 # Evict the rest of the LRU instead.
                 try:
                     while len(self.d) > 1:
-                        self.evict()
+                        try:
+                            evicted = self.evict()
+                        except KeyError:
+                            # No evictable key left, e.g. everything else is retained.
+                            break
+                        if evicted == (None, None, 0):
+                            # Only keys whose eviction is already running remain.
+                            break
                 except Exception:
                     pass
             raise
+
+    @locked
+    def _check_capacity(self, key: KT, weight: float) -> None:
+        """Make sure that ``key`` (an insertion or an overwrite) can be made to fit the
+        target without evicting any retained key. Raise :class:`RetentionError`
+        otherwise, without changing the LRU.
+
+        When no retention is active this is a no-op, preserving the historical behaviour
+        of attempting eviction (and re-raising any callback failure).
+        """
+        if not self._retentions:
+            return
+        # Weight freed by the operation itself when replacing an existing value of the
+        # same key. set_noevict() always removes the old entry (even if its eviction
+        # callbacks are still running), so the old weight is reclaimed regardless.
+        freed = self.weights.get(key, 0.0)
+        excess = self.total_weight - freed + weight + self.offset - self.n
+        if excess <= 0:
+            return
+
+        # Weight that eviction must not touch: retained keys, plus keys whose eviction
+        # callback is already running and whose space in d therefore can't be reclaimed
+        # by starting a new eviction. The two sets may overlap (a key can be retained
+        # while its callback is still running); count each key only once.
+        pinned_weight = sum(
+            weight_
+            for pinned_key, weight_ in self.weights.items()
+            if pinned_key != key
+            and (pinned_key in self._retentions or pinned_key in self._cancel_evict)
+        )
+        # Everything else is reclaimable, except the incoming key (which we must keep)
+        reclaimable = self.total_weight - pinned_weight - freed
+        if excess > reclaimable:
+            raise RetentionError(key)
 
     @locked
     def set_noevict(self, key: KT, value: VT) -> None:
@@ -154,6 +313,9 @@ class LRU(ZictBase[KT, VT]):
         functions to be thread-safe for its own thread-safety. It also is not prone to
         re-raising exceptions from the ``on_evict`` callbacks.
         """
+        # An overwrite must not silently drop a retention on the same key. discard()
+        # goes through __delitem__(), which would otherwise remove the bookkeeping.
+        retained_handles = self._retentions.get(key)
         self.discard(key)
         weight = self.weight(key, value)
         if key in self._cancel_evict:
@@ -164,9 +326,15 @@ class LRU(ZictBase[KT, VT]):
             self.heavy.add(key)  # Mark this key to be evicted first
         self.weights[key] = weight
         self.total_weight += weight
+        if retained_handles:
+            self._retentions[key] = retained_handles
 
     def evict_until_below_target(self, n: float | None = None) -> None:
         """Evict key/value pairs until the total weight falls below n
+
+        Retained keys (see :meth:`retain`) are never evicted. If no evictable key can
+        bring the total weight below n, the method returns leaving the retained keys in
+        place.
 
         Parameters
         ----------
@@ -177,9 +345,43 @@ class LRU(ZictBase[KT, VT]):
             n = self.n
         while self.total_weight + self.offset > n and not self.closed:
             try:
-                self.evict()
+                self._evict_one()
             except KeyError:
-                return  # Multithreaded race condition
+                return  # Nothing evictable left, or multithreaded race condition
+
+    def _pick_evictable(self, include_evicting: bool) -> KT:
+        """Return the next key to evict: a heavy key if any, otherwise the least
+        recently used key. Retained keys are always skipped. Keys whose eviction
+        callbacks are already running are skipped too, unless ``include_evicting`` is
+        True (used by the public :meth:`evict`, which returns a no-op sentinel for
+        them). Raise KeyError if no candidate remains.
+        """
+
+        def eligible(key: KT) -> bool:
+            if key in self._retentions:
+                return False
+            if not include_evicting and key in self._cancel_evict:
+                return False
+            return True
+
+        if self.heavy:
+            for key in self.heavy:
+                if eligible(key):
+                    return key
+        for key in self.order:
+            if eligible(key):
+                return key
+        raise KeyError("evict(): no evictable keys")
+
+    @locked
+    def _evict_one(self) -> tuple[KT, VT, float] | tuple[None, None, float]:
+        """Pick a key that is neither retained nor mid-eviction and evict it.
+        Raises KeyError if no such key exists. The call may still return the
+        (None, None, 0) sentinel if another thread retains or cancels the key while its
+        eviction callbacks are running.
+        """
+        key = self._pick_evictable(include_evicting=False)
+        return self.evict(key)
 
     @locked
     def evict(
@@ -187,6 +389,9 @@ class LRU(ZictBase[KT, VT]):
     ) -> tuple[KT, VT, float] | tuple[None, None, float]:
         """Evict least recently used key, or least recently inserted key with individual
         weight > n, if any. You may also evict a specific key.
+
+        Retained keys are skipped when picking a victim and cannot be evicted
+        explicitly; attempting to do so raises :class:`RetentionError`.
 
         This is typically called from internal use, but can be externally
         triggered as well.
@@ -201,9 +406,15 @@ class LRU(ZictBase[KT, VT]):
         """
         if key is nodefault:
             try:
-                key = next(iter(self.heavy or self.order))
-            except StopIteration:
+                # Include mid-eviction keys so that, if one is the only candidate, we
+                # preserve the historical behaviour of returning the no-op sentinel
+                # below instead of raising.
+                key = self._pick_evictable(include_evicting=True)
+            except KeyError:
                 raise KeyError("evict(): dictionary is empty")
+
+        if key in self._retentions:
+            raise RetentionError(key)
 
         if key in self._cancel_evict:
             return None, None, 0
@@ -226,7 +437,12 @@ class LRU(ZictBase[KT, VT]):
                 for cb in self.on_evict:
                     cb(key, value)
 
-                if self._cancel_evict[key]:
+                # The key may have been retained (or updated/deleted) from another
+                # thread while the callbacks were running. In either case the value is
+                # still in self.d, so it must not be removed now. Run the cancellation
+                # callbacks so that any stale copy written by on_evict (e.g. a copy in
+                # the slow layer of a Buffer) is cleaned up.
+                if self._cancel_evict[key] or key in self._retentions:
                     for cb in self.on_cancel_evict:
                         cb(key, value)
                     return None, None, 0
@@ -248,6 +464,9 @@ class LRU(ZictBase[KT, VT]):
         self.order.remove(key)
         self.heavy.discard(key)
         self.total_weight -= self.weights.pop(key)
+        # An explicit delete also drops any retention bookkeeping, so that a later
+        # re-insertion starts from a clean slate; outstanding handles release as no-ops.
+        self._retentions.pop(key, None)
 
     def keys(self) -> KeysView[KT]:
         return self.d.keys()

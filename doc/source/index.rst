@@ -70,6 +70,10 @@ Additionally, **zict** makes available the following general-purpose objects:
 
 .. autoclass:: InsertionSortedSet
    :members:
+.. autoclass:: Retention
+   :members:
+.. autoexception:: RetentionError
+   :members:
 .. autoclass:: WeakValueMapping
    :members:
 
