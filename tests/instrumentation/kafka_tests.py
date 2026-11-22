@@ -1,0 +1,320 @@
+#  BSD 3-Clause License
+#
+#  Copyright (c) 2022, Elasticsearch BV
+#  All rights reserved.
+#
+#  Redistribution and use in source and binary forms, with or without
+#  modification, are permitted provided that the following conditions are met:
+#
+#  * Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+#  * Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+#  * Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+#  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+#  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+#  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+#  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+#  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+#  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+#  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+#  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+#  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+import os
+import threading
+import time
+import uuid
+
+import pytest
+
+import elasticapm
+from elasticapm.conf.constants import SPAN, TRANSACTION
+
+kafka = pytest.importorskip("kafka")
+
+from kafka import KafkaConsumer, KafkaProducer, TopicPartition
+from kafka.admin import KafkaAdminClient, NewTopic
+
+pytestmark = [pytest.mark.kafka]
+
+KAFKA_HOST = os.environ.get("KAFKA_HOST")
+if not KAFKA_HOST:
+    pytestmark.append(pytest.mark.skip("Skipping kafka tests, no KAFKA_HOST environment variable set"))
+
+
+@pytest.fixture(scope="function")
+def topics():
+    suffix = uuid.uuid4().hex
+    topics = [f"test-{suffix}", f"foo-{suffix}", f"{suffix}-bar"]
+    admin_client = KafkaAdminClient(bootstrap_servers=[f"{KAFKA_HOST}:9092"])
+    # Use unique topic names because Kafka topic deletion is asynchronous and fixed names can leak state between tests.
+    try:
+        response = admin_client.create_topics(
+            [NewTopic(name, num_partitions=1, replication_factor=1) for name in topics]
+        )
+        errors = [error for error in response.topic_errors if error[1]]
+        assert not errors, f"Failed to create Kafka test topics: {errors}"
+        yield topics
+    finally:
+        try:
+            admin_client.delete_topics(topics)
+        except Exception:
+            pass
+        admin_client.close()
+
+
+@pytest.fixture()
+def producer(topics):
+    producer = KafkaProducer(bootstrap_servers=f"{KAFKA_HOST}:9092")
+    yield producer
+    producer.close()
+
+
+@pytest.fixture()
+def consumer(topics):
+    consumer = KafkaConsumer(
+        bootstrap_servers=f"{KAFKA_HOST}:9092",
+        consumer_timeout_ms=500,
+        # Unique topics can be produced to before the consumer's initial offset is resolved.
+        auto_offset_reset="earliest",
+    )
+    try:
+        consumer.subscribe(topics=topics)
+        expected_assignment = {TopicPartition(topic, 0) for topic in topics}
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            # Retry transient missing-topic metadata instead of waiting for the cached snapshot to expire.
+            consumer.topics()
+            consumer.poll(timeout_ms=100)
+            if consumer.assignment() == expected_assignment:
+                break
+        else:
+            pytest.fail(
+                f"Kafka consumer assignment timed out: expected {expected_assignment}, got {consumer.assignment()}"
+            )
+        yield consumer
+    finally:
+        consumer.close()
+
+
+def test_kafka_produce(instrument, elasticapm_client, producer, topics):
+    test_topic = topics[0]
+    elasticapm_client.begin_transaction("test")
+    producer.send(test_topic, key=b"foo", value=b"bar")
+    elasticapm_client.end_transaction("test", "success")
+    transactions = elasticapm_client.events[TRANSACTION]
+    span = elasticapm_client.events[SPAN][0]
+    assert span["name"] == f"Kafka SEND to {test_topic}"
+    assert span["context"]["message"]["queue"]["name"] == test_topic
+    assert span["context"]["destination"]["port"] == 9092
+    assert span["context"]["destination"]["service"]["name"] == "kafka"
+    assert span["context"]["destination"]["service"]["resource"] == f"kafka/{test_topic}"
+    assert span["context"]["destination"]["service"]["type"] == "messaging"
+
+
+def test_kafka_produce_ignore_topic(instrument, elasticapm_client, producer, topics):
+    test_topic, foo_topic, bar_topic = topics
+    elasticapm_client.config.update("1", ignore_message_queues="foo*,*bar")
+    elasticapm_client.begin_transaction("test")
+    producer.send(topic=foo_topic, key=b"foo", value=b"bar")
+    producer.send(bar_topic, key=b"foo", value=b"bar")
+    producer.send(test_topic, key=b"foo", value=b"bar")
+    elasticapm_client.end_transaction("test", "success")
+    spans = elasticapm_client.events[SPAN]
+    assert len(spans) == 1
+    assert spans[0]["name"] == f"Kafka SEND to {test_topic}"
+
+
+def test_kafka_consume(instrument, elasticapm_client, producer, consumer, topics):
+    test_topic = topics[0]
+
+    def delayed_send():
+        time.sleep(0.2)
+        elasticapm_client.begin_transaction("foo")
+        producer.send(test_topic, key=b"foo", value=b"bar")
+        producer.send(test_topic, key=b"baz", value=b"bazzinga")
+        producer.flush()
+        elasticapm_client.end_transaction("foo")
+
+    thread = threading.Thread(target=delayed_send)
+    thread.start()
+    # Give Kafka enough time to resolve offsets and deliver both delayed records before iteration stops.
+    consumer.config["consumer_timeout_ms"] = 2000
+    for item in consumer:
+        with elasticapm.capture_span("foo"):
+            pass
+    thread.join()
+    transactions = elasticapm_client.events[TRANSACTION]
+    spans = elasticapm_client.events[SPAN]
+    producer_transaction = next(transaction for transaction in transactions if transaction["name"] == "foo")
+    consumer_transactions = [transaction for transaction in transactions if transaction["type"] == "messaging"]
+    consumer_spans = [span for span in spans if span["name"] == "foo"]
+    # the consumer transactions should have the same trace id as the transaction that triggered the messages
+    assert len(consumer_transactions) == 2
+    assert len(consumer_spans) == 2
+    assert (
+        producer_transaction["trace_id"] == consumer_transactions[0]["trace_id"] == consumer_transactions[1]["trace_id"]
+    )
+    assert consumer_transactions[0]["name"] == f"Kafka RECEIVE from {test_topic}"
+    assert consumer_transactions[0]["context"]["message"]["queue"]["name"] == test_topic
+
+    assert consumer_spans[0]["transaction_id"] == consumer_transactions[0]["id"]
+    assert consumer_spans[1]["transaction_id"] == consumer_transactions[1]["id"]
+
+
+def test_kafka_consume_ongoing_transaction(instrument, elasticapm_client, producer, consumer, topics):
+    test_topic = topics[0]
+
+    def delayed_send():
+        time.sleep(0.2)
+        elasticapm_client.begin_transaction("foo")
+        producer.send(test_topic, key=b"foo", value=b"bar")
+        producer.send(test_topic, key=b"baz", value=b"bazzinga")
+        producer.flush()
+        elasticapm_client.end_transaction("foo")
+
+    thread = threading.Thread(target=delayed_send)
+    thread.start()
+    transaction = elasticapm_client.begin_transaction("foo")
+    # Give Kafka enough time to resolve offsets and deliver both delayed records before iteration stops.
+    consumer.config["consumer_timeout_ms"] = 2000
+    for item in consumer:
+        pass
+    thread.join()
+    elasticapm_client.end_transaction("foo")
+    transactions = elasticapm_client.events[TRANSACTION]
+    assert len(transactions) == 2
+    external_spans = elasticapm_client.spans_for_transaction(transactions[0])
+    spans = elasticapm_client.spans_for_transaction(transactions[1])
+    assert len(external_spans) == 2
+    assert len(spans) == 2
+    assert spans[0]["links"][0]["trace_id"] == external_spans[0]["trace_id"]
+    assert spans[1]["links"][0]["trace_id"] == external_spans[1]["trace_id"]
+
+
+def test_kafka_consumer_ignore_topic(instrument, elasticapm_client, producer, consumer, topics):
+    test_topic, foo_topic, bar_topic = topics
+    elasticapm_client.config.update("1", ignore_message_queues="foo*,*bar")
+
+    def delayed_send():
+        time.sleep(0.2)
+        producer.send(topic=foo_topic, key=b"foo", value=b"bar")
+        producer.send(bar_topic, key=b"foo", value=b"bar")
+        producer.send(test_topic, key=b"foo", value=b"bar")
+        producer.flush()
+
+    thread = threading.Thread(target=delayed_send)
+    thread.start()
+    # Give Kafka enough time to resolve offsets and deliver all delayed records before iteration stops.
+    consumer.config["consumer_timeout_ms"] = 2000
+    for item in consumer:
+        with elasticapm.capture_span("test"):
+            assert item
+    thread.join()
+    transactions = elasticapm_client.events[TRANSACTION]
+    assert len(transactions) == 1
+    assert transactions[0]["name"] == f"Kafka RECEIVE from {test_topic}"
+
+
+def test_kafka_consumer_ignore_topic_ongoing_transaction(instrument, elasticapm_client, producer, consumer, topics):
+    test_topic, foo_topic, bar_topic = topics
+    elasticapm_client.config.update("1", ignore_message_queues="foo*,*bar")
+
+    def delayed_send():
+        time.sleep(0.2)
+        producer.send(topic=foo_topic, key=b"foo", value=b"bar")
+        producer.send(bar_topic, key=b"foo", value=b"bar")
+        producer.send(test_topic, key=b"foo", value=b"bar")
+        producer.flush()
+
+    thread = threading.Thread(target=delayed_send)
+    thread.start()
+    transaction = elasticapm_client.begin_transaction("foo")
+    # Give Kafka enough time to resolve offsets and deliver all delayed records before iteration stops.
+    consumer.config["consumer_timeout_ms"] = 2000
+    for item in consumer:
+        pass
+    thread.join()
+    elasticapm_client.end_transaction("foo")
+    transactions = elasticapm_client.events[TRANSACTION]
+    spans = elasticapm_client.spans_for_transaction(transactions[0])
+    assert len(spans) == 1
+    assert spans[0]["name"] == f"Kafka RECEIVE from {test_topic}"
+
+
+def test_kafka_poll_ongoing_transaction(instrument, elasticapm_client, producer, consumer, topics):
+    test_topic = topics[0]
+
+    def delayed_send():
+        time.sleep(0.2)
+        producer.send(test_topic, key=b"foo", value=b"bar")
+        producer.send(test_topic, key=b"baz", value=b"bazzinga")
+        producer.flush()
+
+    thread = threading.Thread(target=delayed_send)
+    thread.start()
+    transaction = elasticapm_client.begin_transaction("foo")
+    results = consumer.poll(timeout_ms=1000)
+    elasticapm_client.end_transaction("foo")
+    transactions = elasticapm_client.events[TRANSACTION]
+    spans = elasticapm_client.events[SPAN]
+    assert len(spans) == 1
+    assert spans[0]["name"] == "Kafka POLL from " + ", ".join(sorted(topics))
+
+
+def test_kafka_no_client(instrument, producer, consumer, topics):
+    test_topic = topics[0]
+    assert elasticapm.get_client() is None
+    # the following code shouldn't trigger any errors
+    producer.send(test_topic, key=b"foo", value=b"bar")
+    for item in consumer:
+        pass
+
+
+def test_kafka_send_unsampled_transaction(instrument, elasticapm_client, producer, topics):
+    test_topic = topics[0]
+    transaction_object = elasticapm_client.begin_transaction("transaction")
+    transaction_object.is_sampled = False
+    producer.send(test_topic, key=b"foo", value=b"bar")
+    elasticapm_client.end_transaction("foo")
+    spans = elasticapm_client.events[SPAN]
+    assert len(spans) == 0
+
+
+def test_kafka_poll_unsampled_transaction(instrument, elasticapm_client, consumer, topics):
+    transaction_object = elasticapm_client.begin_transaction("transaction")
+    transaction_object.is_sampled = False
+    consumer.poll(timeout_ms=50)
+    elasticapm_client.end_transaction("foo")
+    spans = elasticapm_client.events[SPAN]
+    assert len(spans) == 0
+
+
+def test_kafka_consumer_unsampled_transaction_handles_stop_iteration(
+    instrument, elasticapm_client, producer, consumer, topics
+):
+    test_topic = topics[0]
+
+    def delayed_send():
+        time.sleep(0.2)
+        producer.send(test_topic, key=b"foo", value=b"bar")
+        producer.flush()
+
+    thread = threading.Thread(target=delayed_send)
+    thread.start()
+    transaction = elasticapm_client.begin_transaction("foo")
+    transaction.is_sampled = False
+    for item in consumer:
+        pass
+    thread.join()
+    elasticapm_client.end_transaction("foo")
+    spans = elasticapm_client.events[SPAN]
+    assert len(spans) == 0

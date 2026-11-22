@@ -1,0 +1,6 @@
+starlette>0.15,<1
+fastapi<1
+aiofiles
+httpx
+flask
+-r reqs-base.txt

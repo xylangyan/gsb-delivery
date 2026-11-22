@@ -1,0 +1,10 @@
+[flake8]
+exclude=
+    build/**,
+    src/**,
+    tests/**,
+    dist/**,
+    conftest.py,
+    setup.py
+max-line-length=120
+ignore=E731,W503,E203,BLK100,B301

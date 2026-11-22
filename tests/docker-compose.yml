@@ -1,0 +1,196 @@
+services:
+  postgres:
+    user: postgres
+    image: library/postgres:11.10  # PostgreSQL 12+ is not compatible with the odbc-postgresql package in our docker images
+    environment:
+      POSTGRES_USER: 'postgres'
+      POSTGRES_DB: 'elasticapm_test'
+      POSTGRES_PASSWORD: 'postgres'
+    volumes:
+      - pypgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 1s
+      timeout: 30s
+      retries: 3
+
+  cassandra3:
+    image: cassandra:3
+    volumes:
+      - pycassandradata3:/var/lib/cassandra
+    environment:
+      MAX_HEAP_SIZE: "1G"
+      HEAP_NEWSIZE: 400m
+
+  mongodb30:
+    image: mongo:3.0
+    volumes:
+      - pymongodata30:/data/db
+
+  mongodb32:
+    image: mongo:3.2
+    volumes:
+      - pymongodata32:/data/db
+
+  mongodb34:
+    image: mongo:3.4
+    volumes:
+      - pymongodata34:/data/db
+
+  mongodb36:
+    image: mongo:3.6
+    ports:
+      - "27017:27017"
+    volumes:
+      - pymongodata36:/data/db
+
+  mongodb80:
+    image: mongo:8.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - pymongodata80:/data/db
+
+  memcached:
+    image: memcached
+
+  redis:
+    image: redis
+
+  elasticsearch7:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+    environment:
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "network.host="
+      - "transport.host=127.0.0.1"
+      - "http.host=0.0.0.0"
+      - "xpack.security.enabled=false"
+    volumes:
+      - pyesdata7:/usr/share/elasticsearch/data
+
+  elasticsearch8:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.6
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+    ports:
+      - "9200:9200"
+    environment:
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "network.host=_site_"
+      - "transport.host=127.0.0.1"
+      - "http.host=0.0.0.0"
+      - "xpack.security.enabled=false"
+      - "action.destructive_requires_name=false" # allow for easy cleanup by calling DELETE *
+    volumes:
+      - pyesdata8:/usr/share/elasticsearch/data
+
+  elasticsearch9:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+    ports:
+      - "9200:9200"
+    environment:
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "network.host=_site_"
+      - "transport.host=127.0.0.1"
+      - "http.host=0.0.0.0"
+      - "xpack.security.enabled=false"
+      - "action.destructive_requires_name=false" # allow for easy cleanup by calling DELETE *
+    volumes:
+      - pyesdata9:/usr/share/elasticsearch/data
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=Very(!)Secure
+      - MSSQL_PID=Developer
+    volumes:
+      - pymssqldata:/var/opt/mssql
+
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password --log_error_verbosity=3
+    environment:
+      - MYSQL_DATABASE=eapm_tests
+      - MYSQL_USER=eapm
+      - MYSQL_PASSWORD=Very(!)Secure
+      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+    volumes:
+      - mysqldata:/var/lib/mysql
+
+  localstack:
+    image: localstack/localstack:4
+    ports:
+      - "4566:4566"
+      - "4571:4571"
+    environment:
+      - HOSTNAME=localstack
+      - HOSTNAME_EXTERNAL=localstack
+      - SERVICES=sns,sqs,s3,dynamodb,ec2
+      - DEBUG=${DEBUG- }
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - HOST_TMP_FOLDER=${TMPDIR}
+      - START_WEB=0
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  kafka:
+    image: apache/kafka:4.1.0
+    ports:
+      - "9092:9092"
+    environment:
+      - "KAFKA_NODE_ID=1"
+      - "KAFKA_PROCESS_ROLES=broker,controller"
+      - "KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093"
+      - "KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092"
+      - "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      - "KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093"
+      - "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER"
+      - "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1"
+      - "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1"
+      - "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1"
+    volumes:
+      - "kafka_data:/var/lib/kafka/data"
+
+  run_tests:
+    image: ${REGISTRY:-elasticobservability}/${IMAGE_NAME:-apm-agent-python-testing}:${PYTHON_VERSION}
+    environment:
+      ES_9_URL: 'http://elasticsearch9:9200'
+      ES_8_URL: 'http://elasticsearch8:9200'
+      ES_7_URL: 'http://elasticsearch7:9200'
+
+
+volumes:
+  pypgdata:
+    driver: local
+  pymongodata30:
+    driver: local
+  pymongodata32:
+    driver: local
+  pymongodata34:
+    driver: local
+  pymongodata36:
+    driver: local
+  pymongodata80:
+    driver: local
+  pyesdata7:
+    driver: local
+  pyesdata8:
+    driver: local
+  pyesdata9:
+    driver: local
+  pycassandradata3:
+    driver: local
+  pymssqldata:
+    driver: local
+  mysqldata:
+    driver: local
+  kafka_data:
+    driver: local
+  localstack_data:
+    driver: local

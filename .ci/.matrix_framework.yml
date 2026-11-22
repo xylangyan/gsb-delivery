@@ -1,0 +1,61 @@
+# this is a limited list of matrix builds to be used for PRs
+# see .jenkins_framework_full.yml for a full list
+FRAMEWORK:
+  - none
+  - django-1.11
+  - django-3.2
+  - django-4.0
+  - django-4.2
+  - django-5.0
+  - flask-0.12
+  - flask-2.3
+  - flask-3.0
+  - jinja2-3
+  - opentelemetry-newest
+  - opentracing-newest
+  - twisted-newest
+  - celery-5-flask-2
+  - celery-5-django-4
+  - celery-5-django-5
+  - requests-newest
+  - boto3-newest
+  - pymongo-newest
+  - redis-newest
+  - aioredis-newest
+  #- aioredis-2  # not supported yet
+  - psycopg-newest
+  - psycopg2-newest
+  - psycopg_pool-newest
+  - pymssql-newest
+  - pyodbc-newest
+  - memcached-newest
+  - pylibmc-newest
+  - elasticsearch-7
+  - elasticsearch-8
+  - elasticsearch-9
+  - cassandra-newest
+  - psutil-newest
+  #- eventlet-newest
+  - gevent-newest
+  - mysql_connector-newest
+  - pymysql-newest
+  - mysqlclient-newest
+  - aiohttp-newest
+  - aiopg-newest
+  - asyncpg-newest
+  - tornado-newest
+  # this has a dependency on requests, run it to catch update issues before merging. Drop after baseline > 0.21.0
+  - starlette-0.14
+  - starlette-newest
+  - pymemcache-newest
+  - graphene-2
+  - httpx-newest
+  - httplib2-newest
+  - prometheus_client-newest
+  - sanic-newest
+  - aiomysql-newest
+  - aiobotocore-newest
+  - kafka-python-newest
+  - grpc-newest
+  - azurefunctions-newest
+  - azure-newest
