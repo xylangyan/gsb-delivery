@@ -6,6 +6,11 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- :class:`LRU`, :class:`Buffer`, and :class:`AsyncBuffer` accept a new ``payload``
+  callback. Multiple keys may then reference the same in-memory payload, which is
+  charged to the total weight only once. Eviction still follows each key's own access
+  order and prefers a key whose payload is exclusive, so a shared payload isn't
+  spilled in full just to reclaim it.
 
 
 3.0.0 - 2023-04-17

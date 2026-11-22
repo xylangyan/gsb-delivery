@@ -23,6 +23,11 @@ class Buffer(ZictBase[KT, VT]):
         Number of elements to keep, or total weight if ``weight`` is used.
     weight: f(k, v) -> float, optional
         Weight of each key/value pair (default: 1)
+    payload: f(k, v) -> hashable or (hashable, float), optional
+        Identity of the real payload backing a value, or a ``(identity, size)`` tuple.
+        Multiple keys may reference the same payload; it is then only counted once
+        towards ``n``. Each key keeps its own access order.
+        When it returns just an identity, ``weight`` must return the payload size.
     fast_to_slow_callbacks: list of callables
         These functions run every time data moves from the fast to the slow
         mapping. They take two arguments, a key and a value.
@@ -54,6 +59,7 @@ class Buffer(ZictBase[KT, VT]):
     fast: LRU[KT, VT]
     slow: MutableMapping[KT, VT]
     weight: Callable[[KT, VT], float]
+    payload: Callable[[KT, VT], object] | None
     fast_to_slow_callbacks: list[Callable[[KT, VT], None]]
     slow_to_fast_callbacks: list[Callable[[KT, VT], None]]
     _cancel_restore: dict[KT, bool]
@@ -70,6 +76,7 @@ class Buffer(ZictBase[KT, VT]):
         slow_to_fast_callbacks: Callable[[KT, VT], None]
         | list[Callable[[KT, VT], None]]
         | None = None,
+        payload: Callable[[KT, VT], object] | None = None,
     ):
         super().__init__()
         self.fast = LRU(
@@ -78,9 +85,11 @@ class Buffer(ZictBase[KT, VT]):
             weight=weight,
             on_evict=[self.fast_to_slow],
             on_cancel_evict=[self._cancel_evict],
+            payload=payload,
         )
         self.slow = slow
         self.weight = weight
+        self.payload = self.fast.payload
         if callable(fast_to_slow_callbacks):
             fast_to_slow_callbacks = [fast_to_slow_callbacks]
         if callable(slow_to_fast_callbacks):
@@ -153,7 +162,7 @@ class Buffer(ZictBase[KT, VT]):
             del self._cancel_restore[key]
 
         # Avoid useless movement for heavy values
-        w = self.weight(key, value)
+        _, w = self.fast._payload_id_and_size(key, value)
         if w <= self.n:
             # Multithreaded edge case:
             # - Thread 1 starts slow_to_fast(x) and puts it at the top of fast

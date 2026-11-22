@@ -3,7 +3,7 @@ import contextvars
 import threading
 import time
 from collections import UserDict
-from concurrent.futures import Executor, Future
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 
 import pytest
 
@@ -270,3 +270,78 @@ async def test_external_executor():
     assert buff.slow == {"y": 2}
     assert n_submit == 2
     buff.close()
+
+
+@pytest.mark.asyncio
+async def test_shared_payload_reduction_and_replacement(check_thread_leaks):
+    """A blocked eviction of one reference to a shared payload must not make a
+    concurrent reduction spill the other reference, and its late success must be
+    undone if the key was replaced meanwhile."""
+    mib = 1024 * 1024
+
+    class Slow(UserDict):
+        def __init__(self):
+            super().__init__()
+            self.enter = threading.Event()
+            self.release = threading.Event()
+
+        def __setitem__(self, k, v):
+            if k == "B" and not self.enter.is_set():
+                self.enter.set()
+                assert self.release.wait(timeout=5)
+            super().__setitem__(k, v)
+
+    slow = Slow()
+    ex = ThreadPoolExecutor(1)
+    buff = AsyncBuffer(
+        {},
+        slow,
+        n=10 * mib,
+        executor=ex,
+        weight=lambda k, v: v[1],
+        payload=lambda k, v: v[0],
+    )
+    loop = asyncio.get_running_loop()
+    try:
+        buff.set_noevict("A", ("p", 6 * mib))
+        buff.set_noevict("B", ("p", 6 * mib))
+        buff.set_noevict("C", ("c", 4 * mib))
+        assert buff.fast.total_weight == 10 * mib
+
+        # Block B's on_evict callback on the sole writer thread
+        fut = loop.run_in_executor(ex, buff.fast.evict, "B")
+        assert await loop.run_in_executor(None, slow.enter.wait, 5)
+        assert "B" in buff.fast
+        assert buff.fast.total_weight == 10 * mib
+        assert buff.fast.payload_refs["p"] == 2
+
+        # Accept another reduction while B is still in fast
+        buff.async_evict_until_below_target(6 * mib)
+        await asyncio.sleep(0.05)
+        # A must not be treated as the last reference before B is decided
+        assert buff.fast.payload_refs["p"] == 2
+        assert {"A", "B", "C"} <= set(buff.fast)
+        assert buff.fast.total_weight == 10 * mib
+
+        # Replace B with a new 2 MiB payload through the normal write entry
+        buff["B"] = ("q", 2 * mib)
+        assert buff.fast.payload_refs["p"] == 1
+
+        # The old callback arrives late and succeeds
+        slow.release.set()
+        assert await fut == (None, None, 0)
+        while buff.futures:
+            await asyncio.wait(buff.futures)
+
+        assert buff.fast["B"] == ("q", 2 * mib)
+        assert "B" not in buff.slow
+        # A became the sole fast reference of the old payload and was spilled;
+        # only new B (2 MiB) and C (4 MiB) remain
+        assert set(buff.fast) == {"B", "C"}
+        assert buff.fast.total_weight == 6 * mib
+        assert set(buff.slow) == {"A"}
+    finally:
+        slow.release.set()
+        buff.close()
+        ex.shutdown(wait=True)
+

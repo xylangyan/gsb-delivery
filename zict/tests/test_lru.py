@@ -457,3 +457,74 @@ def test_stress_same_key_threadsafe():
     utils_test.check_same_key_threadsafe(lru)
     lru.n = 100
     utils_test.check_mapping(lru)
+
+
+def test_payload_weight_shared():
+    """Keys sharing a payload are charged once, but keep independent access order"""
+    lru = LRU(10, {}, weight=lambda k, v: v[1], payload=lambda k, v: v[0])
+    lru.set_noevict("A", ("p", 6))
+    lru.set_noevict("B", ("p", 6))
+    lru.set_noevict("C", ("c", 4))
+    assert lru.total_weight == 10
+    assert lru.payload_refs == {"p": 2, "c": 1}
+
+    lru["A"]  # A becomes more recently used than B and C
+    assert list(lru.order) == ["B", "C", "A"]
+
+    del lru["B"]
+    # A still keeps the shared payload alive and charged once
+    assert lru.total_weight == 10
+    assert lru.payload_refs == {"p": 1, "c": 1}
+
+    del lru["A"]
+    assert lru.total_weight == 4
+    assert lru.payload_refs == {"c": 1}
+
+
+def test_payload_weight_evict_prefers_exclusive_payload():
+    """Do not spill every reference to a shared payload to free it once"""
+    lru = LRU(10, {}, weight=lambda k, v: v[1], payload=lambda k, v: v[0])
+    lru.set_noevict("A", ("p", 6))
+    lru.set_noevict("B", ("p", 6))
+    lru.set_noevict("C", ("c", 4))
+    # A and B are older than C, but evicting either alone wouldn't free anything
+    lru.evict_until_below_target(6)
+    assert set(lru) == {"A", "B"}
+    assert lru.total_weight == 6
+
+    # A target below the size of the shared payload requires dropping all of its
+    # references; the payload is then freed exactly once
+    lru.evict_until_below_target(5)
+    assert not lru
+    assert lru.total_weight == 0
+    assert lru.payload_refs == {}
+    assert lru.payload_sizes == {}
+
+
+def test_payload_weight_exclusive_matches_lru():
+    """When no payload is shared, selection is the classic LRU one"""
+    lru = LRU(10, {}, weight=lambda k, v: v[1], payload=lambda k, v: v[0])
+    for k, w in [("x", 5), ("y", 4), ("z", 3)]:
+        lru.set_noevict(k, (k, w))
+    lru.evict_until_below_target(7)
+    assert dict(lru) == {"y": ("y", 4), "z": ("z", 3)}
+    assert lru.total_weight == 7
+
+
+def test_payload_weight_tuple():
+    """weight may return (identity, size) directly"""
+    lru = LRU(10, {}, weight=lambda k, v: v)
+    lru.set_noevict("A", ("p", 6))
+    lru.set_noevict("B", ("p", 6))
+    assert lru.total_weight == 6
+    assert lru.payload_refs == {"p": 2}
+    assert lru.shared_payloads == 1
+
+    # Sharing is detected even without an explicit payload= callback, so the
+    # exclusive key is still preferred over spilling every reference.
+    lru.set_noevict("C", ("c", 4))
+    lru.evict_until_below_target(6)
+    assert set(lru) == {"A", "B"}
+    assert lru.total_weight == 6
+    assert lru.shared_payloads == 1
+

@@ -423,3 +423,73 @@ def test_stress_same_key_threadsafe():
     assert not buff.fast
     assert not buff.slow
     utils_test.check_mapping(buff)
+
+
+def test_shared_payload_selects_exclusive_key():
+    """Spilling a single reference to a shared payload frees nothing; prefer a key
+    whose payload is exclusive, even if it is more recently used."""
+    mib = 1024 * 1024
+    a = {}
+    b = {}
+    buff = Buffer(
+        a, b, n=10 * mib, weight=lambda k, v: v[1], payload=lambda k, v: v[0]
+    )
+    buff["A"] = ("shared", 6 * mib)
+    buff["B"] = ("shared", 6 * mib)
+    buff["C"] = ("exclusive", 4 * mib)
+    assert buff.fast.total_weight == 10 * mib
+
+    buff.evict_until_below_target(6 * mib)
+    assert set(buff.fast) == {"A", "B"}
+    assert set(buff.slow) == {"C"}
+    assert buff.fast.total_weight == 6 * mib
+
+
+def test_shared_payload_replaced_during_blocked_eviction():
+    """A late, successful eviction callback must not free memory for the value that
+    replaced the key, and must not leave the old value in slow."""
+    mib = 1024 * 1024
+    ev1 = threading.Event()
+    ev2 = threading.Event()
+
+    class Slow(UserDict):
+        def __setitem__(self, k, v):
+            if k == "B":
+                ev1.set()
+                assert ev2.wait(timeout=5)
+            super().__setitem__(k, v)
+
+    buff = Buffer(
+        {}, Slow(), n=10 * mib, weight=lambda k, v: v[1], payload=lambda k, v: v[0]
+    )
+    buff.set_noevict("A", ("p", 6 * mib))
+    buff.set_noevict("B", ("p", 6 * mib))
+    buff.set_noevict("C", ("c", 4 * mib))
+
+    with ThreadPoolExecutor(1) as ex:
+        fut = ex.submit(buff.fast.evict, "B")
+        assert ev1.wait(timeout=5)
+        # B has been written to slow but still occupies fast: it must not be counted
+        # as freed, and A must not be treated as the last reference yet.
+        assert "B" in buff.fast
+        assert buff.fast.total_weight == 10 * mib
+        assert buff.fast.payload_refs["p"] == 2
+
+        # Replace B with a brand new payload through the normal write entry. A becomes
+        # the sole fast reference of the old payload and is immediately the LRU victim.
+        buff["B"] = ("q", 2 * mib)
+        assert "p" not in buff.fast.payload_refs
+        assert set(buff.fast) == {"B", "C"}
+        assert buff.fast.total_weight == 6 * mib
+        assert set(buff.slow) == {"A"}
+
+        ev2.set()
+        # The late callback is cancelled because B was replaced
+        assert fut.result() == (None, None, 0)
+
+    # No stale B in slow, no double charge, and the new B is intact
+    assert buff.fast["B"] == ("q", 2 * mib)
+    assert "B" not in buff.slow
+    assert buff.fast.total_weight == 6 * mib
+    assert set(buff.slow) == {"A"}
+
