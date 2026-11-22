@@ -62,6 +62,8 @@ module Roo
           end
         when :formula
           case onecell
+          when nil
+            ""
           when String
             %("#{onecell.gsub('"', '""')}") unless onecell.empty?
           when Integer

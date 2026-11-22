@@ -2,6 +2,8 @@
 
 require 'forwardable'
 require 'roo/excelx/extractor'
+require 'roo/excelx/formula'
+require 'roo/excelx/formula_translator'
 
 module Roo
   class Excelx
@@ -41,6 +43,13 @@ module Roo
         Roo::Utils.each_element(@path, 'row', &block)
       end
 
+      # Shared-formula masters are collected in a separate pass. A master may
+      # live outside the row window currently being streamed, yet dependents
+      # inside the window still need the master's formula and coordinates.
+      def shared_formula_registry
+        @shared_formula_registry ||= extract_shared_formula_registry
+      end
+
       # Yield each cell as Excelx::Cell to caller for given
       # row xml
       def each_cell(row_xml)
@@ -70,6 +79,160 @@ module Roo
         end
       end
 
+      def child_named(cell_xml, name)
+        cell_xml.children.find { |child| child.name == name }
+      end
+
+      def extract_shared_formula_registry
+        registry = SharedFormula::Registry.new
+
+        Roo::Utils.each_element(@path, 'row') do |row_xml|
+          row_xml.children.each do |cell_xml|
+            next unless cell_xml.name == 'c'
+
+            formula_xml = child_named(cell_xml, 'f')
+            next unless formula_xml && formula_xml['t'] == 'shared'
+
+            literal = formula_xml.content
+            next if literal.nil? || literal.empty?
+
+            coordinate = extract_coordinate_or_nil(cell_xml['r'])
+            next unless coordinate
+
+            registry.register(
+              SharedFormula::Definition.new(
+                index: formula_xml['si'],
+                coordinate: coordinate,
+                ref: formula_xml['ref'],
+                formula: literal,
+                literal: literal
+              )
+            )
+          end
+        end
+
+        registry
+      end
+
+      def extract_coordinate_or_nil(reference)
+        return nil if reference.nil? || reference.empty?
+
+        ::Roo::Utils.extract_coordinate(reference)
+      rescue ArgumentError
+        nil
+      end
+
+      # Returns [formula, formula_info] for the <f> element. Shared dependents
+      # are translated to this cell's actual coordinates. formula_info records
+      # where the formula came from; the cache status is added later.
+      def formula_for(formula_xml, coordinate)
+        return [nil, nil] unless formula_xml
+
+        type = formula_xml['t']
+        literal = formula_xml.content
+
+        case type
+        when 'shared'
+          shared_formula_for(formula_xml, coordinate, literal)
+        when 'array', 'dataTable'
+          info = build_formula_info(
+            kind: type.to_sym,
+            master: coordinate,
+            literal: literal,
+            formula: literal,
+            resolved: true
+          )
+          [literal, info]
+        else
+          info = build_formula_info(
+            kind: :explicit,
+            master: coordinate,
+            literal: literal,
+            formula: literal,
+            resolved: true
+          )
+          [literal, info]
+        end
+      end
+
+      def shared_formula_for(formula_xml, coordinate, literal)
+        index = formula_xml['si']
+        ref = formula_xml['ref']
+
+        if literal && !literal.empty?
+          # The cell carrying the text is the master. Its formula is already
+          # expressed at its own coordinates.
+          info = build_formula_info(
+            kind: :shared,
+            master: coordinate,
+            literal: literal,
+            formula: literal,
+            resolved: true,
+            shared_formula_index: index,
+            shared_formula_ref: ref
+          )
+          return [literal, info]
+        end
+
+        definition = shared_formula_registry.definition_for(index, coordinate)
+
+        unless definition
+          # A dependent whose master/ref does not cover this actual cell must
+          # not be reconstructed from a different or older anchor. It still has
+          # a formula identity, but no literal can be proven for this cell.
+          info = build_formula_info(
+            kind: :shared,
+            master: nil,
+            literal: nil,
+            formula: nil,
+            resolved: false,
+            shared_formula_index: index,
+            shared_formula_ref: nil,
+            unresolved_reason: :shared_formula_out_of_range
+          )
+          return [nil, info]
+        end
+
+        translated = FormulaTranslator.translate(definition.formula, definition.coordinate, coordinate)
+        info = build_formula_info(
+          kind: :shared,
+          master: definition.coordinate,
+          literal: definition.literal,
+          formula: translated,
+          resolved: true,
+          shared_formula_index: index,
+          shared_formula_ref: definition.ref
+        )
+        [translated, info]
+      end
+
+      def build_formula_info(values)
+        Excelx::FormulaInfo.new(values)
+      end
+
+      def cache_status_for(value_xml, inline_xml)
+        return :present if inline_xml && !inline_xml.search('t').map(&:content).join.empty?
+        return :missing unless value_xml
+
+        value_xml.content.empty? ? :empty : :present
+      end
+
+      # Roo never recalculates formulas. A stored <v> is a cached result: it
+      # cannot be verified against the formula, so it must not be presented as
+      # a freshly calculated value. An empty <v> is an empty cached result,
+      # not a cached zero; a missing <v> is no result at all.
+      def annotate_cache(info, cache_status)
+        info[:cache] = cache_status
+        info[:calculated] = false
+        info[:value_source] = cache_status == :present ? :cached : :none
+        info[:freshness] = :unverified
+      end
+
+      def attach_formula_info(cell, formula_info)
+        cell.formula_info = formula_info if formula_info && cell
+        cell
+      end
+
       # Internal: Creates a cell based on an XML clell..
       #
       # cell_xml - a Nokogiri::XML::Element. e.g.
@@ -96,23 +259,47 @@ module Roo
         # NOTE: This is error prone, to_i will silently turn a nil into a 0.
         #       This works by coincidence because Format[0] is General.
         style = cell_xml["s"].to_i
-        formula = nil
+        formula_xml = child_named(cell_xml, 'f')
+        value_xml = child_named(cell_xml, 'v')
+        inline_xml = child_named(cell_xml, 'is')
 
-        cell_xml_children.each do |cell|
-          case cell.name
-          when 'is'
-            content = cell.search('t').map(&:content).join
-            unless content.empty?
-              return Excelx::Cell.cell_class(:string).new(content, formula, style, hyperlink, coordinate)
-            end
-          when 'f'
-            formula = cell.content
-          when 'v'
-            format = style_format(style)
-            value_type = cell_value_type(cell_xml["t"], format)
+        formula, formula_info = formula_for(formula_xml, coordinate)
+        cache_status = cache_status_for(value_xml, inline_xml)
+        annotate_cache(formula_info, cache_status) if formula_info
 
-            return create_cell_from_value(value_type, cell, formula, format, style, hyperlink, coordinate)
+        if inline_xml
+          content = inline_xml.search('t').map(&:content).join
+          unless content.empty?
+            return attach_formula_info(
+              Excelx::Cell.cell_class(:string).new(content, formula, style, hyperlink, coordinate),
+              formula_info
+            )
           end
+        end
+
+        if value_xml && cache_status == :present
+          format = style_format(style)
+          value_type = cell_value_type(cell_xml["t"], format)
+
+          return create_cell_from_value(value_type, value_xml, formula, format, style, hyperlink, coordinate, formula_info)
+        end
+
+        if formula_info
+          # A formula whose cached <v> is empty or absent. Keep the cell and
+          # its identity. An empty <v> is recorded as an empty cached value;
+          # an absent <v> has no value at all. Neither is turned into 0 or
+          # 1900-01-01.
+          cached_value = cache_status == :empty ? "" : nil
+          formula_cell = Excelx::Cell::Formula.new(
+            cached_value,
+            formula,
+            [:numeric_or_formula, style_format(style).to_s],
+            style,
+            hyperlink,
+            coordinate
+          )
+          formula_cell.formula_info = formula_info
+          return formula_cell
         end
 
         create_empty_cell(coordinate, empty_cell)
@@ -124,7 +311,7 @@ module Roo
         end
       end
 
-      def create_cell_from_value(value_type, cell, formula, format, style, hyperlink, coordinate)
+      def create_cell_from_value(value_type, cell, formula, format, style, hyperlink, coordinate, formula_info = nil)
         # NOTE: format.to_s can replace excelx_type as an argument for
         #       Cell::Time, Cell::DateTime, Cell::Date or Cell::Number, but
         #       it will break some brittle tests.
@@ -138,39 +325,42 @@ module Roo
         #          and use a Boolean for it's value. Using a Boolean value breaks
         #          Roo::Base#to_csv.
         #       3. formula
-        case value_type
-        when :shared
-          cell_content = cell.content.to_i
-          value = shared_strings.use_html?(cell_content) ? shared_strings.to_html[cell_content] : shared_strings[cell_content]
-          Excelx::Cell.cell_class(:string).new(value, formula, style, hyperlink, coordinate)
-        when :boolean, :string
-          value = cell.content
-          Excelx::Cell.cell_class(value_type).new(value, formula, style, hyperlink, coordinate)
-        when :time, :datetime
-          cell_content = cell.content.to_f
-          # NOTE: A date will be a whole number. A time will have be > 1. And
-          #      in general, a datetime will have decimals. But if the cell is
-          #      using a custom format, it's possible to be interpreted incorrectly.
-          #      cell_content.to_i == cell_content && standard_style?=> :date
-          #
-          #      Should check to see if the format is standard or not. If it's a
-          #      standard format, than it's a date, otherwise, it is a datetime.
-          #      @styles.standard_style?(style_id)
-          #      STANDARD_STYLES.keys.include?(style_id.to_i)
-          cell_type = if cell_content < 1.0
-                        :time
-                      elsif (cell_content - cell_content.floor).abs > 0.000001
-                        :datetime
-                      else
-                        :date
-                      end
-          base_value = cell_type == :date ? base_date : base_timestamp
-          Excelx::Cell.cell_class(cell_type).new(cell_content, formula, excelx_type, style, hyperlink, base_value, coordinate)
-        when :date
-          Excelx::Cell.cell_class(:date).new(cell.content, formula, excelx_type, style, hyperlink, base_date, coordinate)
-        else
-          Excelx::Cell.cell_class(:number).new(cell.content, formula, excelx_type, style, hyperlink, coordinate)
-        end
+        created_cell =
+          case value_type
+          when :shared
+            cell_content = cell.content.to_i
+            value = shared_strings.use_html?(cell_content) ? shared_strings.to_html[cell_content] : shared_strings[cell_content]
+            Excelx::Cell.cell_class(:string).new(value, formula, style, hyperlink, coordinate)
+          when :boolean, :string
+            value = cell.content
+            Excelx::Cell.cell_class(value_type).new(value, formula, style, hyperlink, coordinate)
+          when :time, :datetime
+            cell_content = cell.content.to_f
+            # NOTE: A date will be a whole number. A time will have be > 1. And
+            #      in general, a datetime will have decimals. But if the cell is
+            #      using a custom format, it's possible to be interpreted incorrectly.
+            #      cell_content.to_i == cell_content && standard_style?=> :date
+            #
+            #      Should check to see if the format is standard or not. If it's a
+            #      standard format, than it's a date, otherwise, it is a datetime.
+            #      @styles.standard_style?(style_id)
+            #      STANDARD_STYLES.keys.include?(style_id.to_i)
+            cell_type = if cell_content < 1.0
+                          :time
+                        elsif (cell_content - cell_content.floor).abs > 0.000001
+                          :datetime
+                        else
+                          :date
+                        end
+            base_value = cell_type == :date ? base_date : base_timestamp
+            Excelx::Cell.cell_class(cell_type).new(cell_content, formula, excelx_type, style, hyperlink, base_value, coordinate)
+          when :date
+            Excelx::Cell.cell_class(:date).new(cell.content, formula, excelx_type, style, hyperlink, base_date, coordinate)
+          else
+            Excelx::Cell.cell_class(:number).new(cell.content, formula, excelx_type, style, hyperlink, coordinate)
+          end
+
+        attach_formula_info(created_cell, formula_info)
       end
 
       def extract_hyperlinks(relationships)

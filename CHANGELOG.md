@@ -1,5 +1,19 @@
 ## Unreleased
 
+### Changed/Added
+
+- Excelx: resolve shared formulas per cell instead of returning the master's
+  empty dependent marker. Relative references are translated to each cell's
+  actual coordinates; absolute references, string literals and sheet names are
+  preserved.
+- Excelx: add `#formula_info`, `#formula_literal`, `#formula_cache_status`,
+  `#shared_formula?` and `#formula_cached?` so callers can tell an explicit
+  formula from a shared one, keep the master's literal, and distinguish a
+  present, empty or missing cached value. Roo still does not recalculate
+  formulas, so cached results are reported as unverified rather than calculated.
+- Excelx: keep formula cells whose cached value is empty or missing instead of
+  dropping them or coercing them to zero/date values.
+
 ## [4.0.0](https://github.com/roo-rb/roo/compare/v3.0.0...v4.0.0) (2026-10-22)
 
 

@@ -165,11 +165,70 @@ module Roo
       safe_send(sheet_for(sheet).cells[key], :formula)
     end
 
-    # Predicate methods really should return a boolean
-    # value. Hopefully no one was relying on the fact that this
-    # previously returned either nil/formula
+    # Returns metadata about the formula at (row, col), or nil when the cell
+    # has no formula.
+    #
+    # The returned value behaves like a Hash and also exposes reader methods.
+    # Important keys:
+    #
+    #   :kind                  - :explicit, :shared, :array or :dataTable
+    #   :formula               - the formula translated to this cell's
+    #                            coordinates (nil when it cannot be proven)
+    #   :literal               - the formula exactly as stored in the master
+    #   :master                - the master cell's coordinate for shared
+    #                            formulas (nil when the master is unusable)
+    #   :shared_formula_index  - the si attribute
+    #   :shared_formula_ref    - the ref attribute of the master that applies
+    #   :cache                 - :present, :empty or :missing
+    #   :calculated            - always false: Roo does not recalculate
+    #   :value_source          - :cached or :none
+    #   :freshness             - :unverified
+    def formula_info(row, col, sheet = nil)
+      key = normalize(row, col)
+      safe_send(sheet_for(sheet).cells[key], :formula_info)
+    end
+
+    # The formula exactly as stored on the master cell. For a shared formula
+    # this stays at the master's coordinates; #formula returns the version
+    # translated to the requested cell.
+    def formula_literal(row, col, sheet = nil)
+      key = normalize(row, col)
+      safe_send(sheet_for(sheet).cells[key], :formula_literal)
+    end
+
+    # :present, :empty or :missing. :empty means the file carried <v></v>;
+    # :missing means there was no <v> at all. Neither is zero.
+    def formula_cache_status(row, col, sheet = nil)
+      key = normalize(row, col)
+      safe_send(sheet_for(sheet).cells[key], :formula_cache_status)
+    end
+
+    def shared_formula?(row, col, sheet = nil)
+      key = normalize(row, col)
+      !!safe_send(sheet_for(sheet).cells[key], :shared_formula?)
+    end
+
+    # The master coordinate for a shared formula, or nil for an explicit
+    # formula or one whose master cannot be proven.
+    def shared_formula_master(row, col, sheet = nil)
+      key = normalize(row, col)
+      safe_send(sheet_for(sheet).cells[key], :shared_formula_master)
+    end
+
+    def formula_cached?(row, col, sheet = nil)
+      key = normalize(row, col)
+      !!safe_send(sheet_for(sheet).cells[key], :cached_value?)
+    end
+
+    # Predicate methods really should return a boolean value.
+    #
+    # This reports the presence of a formula marker, which is why a stale
+    # shared-formula dependent can be true here while #formula returns nil.
+    # #formula_info explains why the literal could not be proven.
     def formula?(*args)
-      !!formula(*args)
+      key = normalize(args[0], args[1])
+      cell = sheet_for(args[2]).cells[key]
+      !!safe_send(cell, :formula?)
     end
 
     # returns each formula in the selected sheet as an array of tuples in following format

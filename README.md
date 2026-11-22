@@ -251,6 +251,64 @@ xlsx.font(1,1).bold?
 xlsx.formula('A', 2)
 ```
 
+#### Shared formulas and cached values
+
+Excel stores a shared formula once, on a master cell, and puts an empty
+`<f t="shared" si="..."/>` marker on every other cell in the shared range.
+`#formula` returns the formula translated to the coordinates of the cell you
+ask for: relative references shift by the row/column offset from the master,
+absolute (`$`) references do not, and text inside string literals or sheet
+names is left alone.
+
+```ruby
+# master at C4 stores  SUM($A4:B4)+"x"
+# C8 is a dependent in the same shared range
+xlsx.formula('C', 8)
+# => 'SUM($A8:B8)+"x"'
+```
+
+`#formula_literal` returns the text exactly as stored on the master, without
+translation. `#formula_info` returns the full description of where the formula
+came from and how its value was obtained.
+
+```ruby
+xlsx.formula_info('C', 8)
+# => {kind: :shared, master: [4, 3], literal: 'SUM($A4:B4)+"x"',
+#     formula: 'SUM($A8:B8)+"x"', shared_formula_index: '0',
+#     shared_formula_ref: 'C4:C9', cache: :present, calculated: false,
+#     value_source: :cached, freshness: :unverified}
+```
+
+Roo never recalculates formulas. A value read from a formula cell is the
+cached result stored in the file, so it is reported as cached and its freshness
+is unverified. The `:cache` key distinguishes the three cases a workbook can
+store:
+
+- `:present` - a normal cached result.
+- `:empty` - the file carried `<v></v>`. This is an empty result, not zero.
+- `:missing` - there was no `<v>` at all. Nothing is known about the result.
+
+An empty or missing formula cache is never coerced to `0` or `1900-01-01`. Use
+`#formula_cached?` to distinguish a stored cache element (`:present` or
+`:empty`) from no cache at all (`:missing`).
+
+```ruby
+xlsx.formula_cache_status('C', 6) # => :empty
+xlsx.formula_cache_status('C', 7) # => :missing
+xlsx.formula_cached?('C', 7)      # => false
+```
+
+If a later revision narrows a shared range, only cells inside the current
+`ref` are resolved. A stale dependent outside it keeps its cached value if the
+file has one, but `#formula` returns `nil` and `#formula_info` reports
+`resolved: false` instead of extrapolating from the old anchor.
+
+Shared formulas are resolved the same way for `#formula`, `#formulas`,
+`#cell`, `#to_csv` and `each_row_streaming`. The streaming reader first scans
+the worksheet for shared-formula masters, so a master outside the requested row
+window still resolves the dependents inside it.
+
+
 ### OpenOffice / LibreOffice Support
 
 Roo::OpenOffice has support for encrypted OpenOffice spreadsheets.

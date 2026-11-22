@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "roo/excelx/formula"
 require "roo/helpers/default_attr_reader"
 
 module Roo
@@ -38,6 +39,11 @@ module Roo
         #        deprecated.
         attr_writer :value
 
+        # Extra metadata about where the formula came from. Kept on the cell so
+        # callers can tell a literal formula from one inherited through a
+        # shared-formula master, and can tell a cached result from no result.
+        attr_reader :formula_info
+
         def initialize(value, formula, excelx_type, style, link, coordinate)
           @cell_value = value
           @cell_type = excelx_type if excelx_type
@@ -45,6 +51,28 @@ module Roo
           @style = style unless style == 1
           @coordinate = coordinate
           @value = link ? Roo::Link.new(link, value) : value
+        end
+
+        def formula_info=(info)
+          @formula_info = Excelx::FormulaInfo.new(info) if info
+        end
+
+        def formula_kind
+          formula_info&.dig(:kind)
+        end
+
+        def shared_formula?
+          formula_kind == :shared
+        end
+
+        def shared_formula_master
+          formula_info&.dig(:master)
+        end
+
+        # True when a cached element exists. An empty <v></v> is a stored
+        # cache that happens to be empty; a missing <v> is no cache at all.
+        def cached_value?
+          formula_info && formula_info[:cache] != :missing
         end
 
         def type
@@ -58,7 +86,15 @@ module Roo
         end
 
         def formula?
-          !!(defined?(@formula) && @formula)
+          !!(defined?(@formula) && @formula) || !!formula_info
+        end
+
+        def formula_literal
+          formula_info&.dig(:literal)
+        end
+
+        def formula_cache_status
+          formula_info&.dig(:cache)
         end
 
         def link?
