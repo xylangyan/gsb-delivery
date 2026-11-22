@@ -1,0 +1,297 @@
+# BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+
+import glob
+import math
+import os
+
+import numpy
+
+try:
+    import cupy
+
+    error_message = None
+
+except ModuleNotFoundError:
+    cupy = None
+    error_message = """to use {0}, you must install cupy:
+
+    pip install cupy
+
+or
+
+    conda install -c conda-forge cupy
+"""
+
+from awkward._connect.cuda.reducers import get_cuda_compute_reducer  # noqa: F401
+
+cuda_streamptr_to_contexts = {}
+kernel_errors = {}
+kernel = None
+
+ERROR_BITS = 8
+NO_ERROR = numpy.iinfo(numpy.uint64).max
+
+# When the pending-invocation list for a stream reaches this length, the
+# kernel dispatchers in awkward._kernels call synchronize_cuda() to check for
+# errors and drain it. This bounds the memory held by Invocation/ErrorContext
+# objects in workloads that never synchronize explicitly, at the cost of one
+# stream synchronization per MAX_PENDING_INVOCATIONS kernel launches.
+MAX_PENDING_INVOCATIONS = 8192
+
+
+dtype_to_ctype = {
+    numpy.bool_: "bool",
+    numpy.int8: "int8_t",
+    numpy.uint8: "uint8_t",
+    numpy.int16: "int16_t",
+    numpy.uint16: "uint16_t",
+    numpy.int32: "int32_t",
+    numpy.uint32: "uint32_t",
+    numpy.int64: "int64_t",
+    numpy.uint64: "uint64_t",
+    numpy.float32: "float",
+    numpy.float64: "double",
+}
+
+
+def fetch_specialization(keys):
+    specialized_name = keys[0].replace("'", "") + "<"
+
+    keys = keys[1:]
+    for key in keys[:-1]:
+        if dtype_to_ctype.get(key) is None:
+            dtype_string = repr(key)
+            specialized_name = specialized_name + dtype_string.split("'")[1] + "_t, "
+        else:
+            specialized_name = specialized_name + dtype_to_ctype[key] + ", "
+
+    if dtype_to_ctype.get(keys[-1]) is None:
+        dtype_string = repr(keys[-1])
+        specialized_name = specialized_name + dtype_string.split("'")[1] + "_t>"
+    else:
+        specialized_name = specialized_name + dtype_to_ctype[keys[-1]] + ">"
+
+    return specialized_name
+
+
+def fetch_template_specializations(kernel_dict, cuda_src):
+    # Only signatures whose name matches a __global__ template in the CUDA
+    # sources get specialized. This skips kernels dispatched to cuda.compute
+    # and launchers built from several sub-kernels (e.g. '_a', '_b'), while
+    # including those sub-kernels' own signatures.
+    import re
+
+    kernel_templates = set(re.findall(r"__global__\s+void\s+(\w+)\s*\(", cuda_src))
+
+    return [
+        fetch_specialization(list(keys))
+        for keys in kernel_dict
+        if keys[0] in kernel_templates
+    ]
+
+
+def populate_kernel_errors(kernel_name, cu_file):
+    import re
+
+    pattern_errstring = "// message:"
+
+    result_errstring = [_.start() for _ in re.finditer(pattern_errstring, cu_file)]
+
+    err_strings = []
+    for index in result_errstring:
+        error = cu_file[index:]
+        error = error[error.find('"') : error.find("\n")]
+        error = error.replace('"', "")
+        err_strings.append(error)
+
+    kernel_errors[kernel_name] = err_strings
+
+
+class Invocation:
+    def __init__(self, name, error_context):
+        self._name = name
+        self._error_context = error_context
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def error_context(self):
+        return self._error_context
+
+
+def import_cupy(name="Awkward Arrays with CUDA"):
+    if cupy is None:
+        raise ModuleNotFoundError(error_message.format(name))
+
+    return cupy
+
+
+def initialize_cuda_kernels(cupy):
+    if cupy is not None:
+        global kernel
+
+        if kernel is None:
+            import awkward._connect.cuda._kernel_signatures
+
+            cuda_src = f"#define ERROR_BITS {ERROR_BITS}\n#define NO_ERROR {NO_ERROR}"
+
+            cuda_kernels_path = os.path.join(
+                os.path.dirname(os.path.realpath(__file__)), "cuda_kernels"
+            )
+
+            with open(
+                os.path.join(cuda_kernels_path, "cuda_common.cu"),
+                encoding="utf-8",
+            ) as header_file:
+                cuda_src = cuda_src + "\n" + header_file.read()
+            for filename in glob.glob(os.path.join(cuda_kernels_path, "awkward_*.cu")):
+                with open(filename, encoding="utf-8") as cu_file:
+                    cu_code = cu_file.read()
+                    populate_kernel_errors(
+                        filename[filename.find("awkward_") : filename.find(".cu")],
+                        cu_code,
+                    )
+                    cuda_src = cuda_src + "\n" + cu_code
+
+            # Pass an empty Raw Module to fetch all template specializations
+            template_specializations = fetch_template_specializations(
+                awkward._connect.cuda._kernel_signatures.by_signature(None), cuda_src
+            )
+            cuda_kernel_templates = cupy.RawModule(
+                code=cuda_src,
+                options=(
+                    "--std=c++11",
+                    "--diag-suppress=186",
+                ),
+                name_expressions=template_specializations,
+            )
+            kernel = awkward._connect.cuda._kernel_signatures.by_signature(
+                cuda_kernel_templates
+            )
+
+        return kernel
+    else:
+        raise ModuleNotFoundError(error_message.format("Awkward Arrays with CUDA"))
+
+
+def synchronize_cuda(stream=None):
+    cupy = import_cupy("Awkward Arrays with CUDA")
+
+    if stream is None:
+        stream = cupy.cuda.get_current_stream()
+
+    stream.synchronize()
+
+    invocation_index = cuda_streamptr_to_contexts[stream.ptr][0].get().tolist()
+    contexts = cuda_streamptr_to_contexts[stream.ptr][1]
+
+    if invocation_index == NO_ERROR:
+        # All kernels enqueued so far completed without error: drain the
+        # pending-invocation list. Each Invocation holds an ErrorContext,
+        # which (lazily) holds references to operation arguments — without
+        # this reset, a successful workload accumulates Invocations (and
+        # pins their referenced buffers) for the lifetime of the process.
+        cuda_streamptr_to_contexts[stream.ptr] = (
+            cupy.array(NO_ERROR),
+            [],
+        )
+    else:
+        invoked_kernel = contexts[int(invocation_index // math.pow(2, ERROR_BITS))]
+        cuda_streamptr_to_contexts[stream.ptr] = (
+            cupy.array(NO_ERROR),
+            [],
+        )
+        if invoked_kernel.error_context is None:
+            raise ValueError(
+                f"{kernel_errors[invoked_kernel.name][int(invocation_index % math.pow(2, ERROR_BITS))]} in compiled CUDA code ({invoked_kernel.name})"
+            )
+        else:
+            raise invoked_kernel.error_context.decorate_exception(
+                ValueError,
+                ValueError(
+                    f"{kernel_errors[invoked_kernel.name][int(invocation_index % math.pow(2, ERROR_BITS))]} in compiled CUDA code ({invoked_kernel.name})"
+                ),
+            )
+
+
+def lazy(array):
+    """Wrap a CUDA-backed array for lazy, fused execution.
+
+    Internal entry point (``awkward._connect.cuda.lazy``); not exposed as a
+    public ``ak.*`` name while the lazy/fusion work is a PoC.
+
+    Args:
+        array (ak.Array): A CUDA-backed array.
+
+    Returns a :class:`awkward._connect.lazy._lazy_impl.LazyAwkwardArray`.
+
+    Raises:
+        TypeError: If ``array`` is not on the CUDA backend.
+    """
+    if array.layout.backend.name != "cuda":
+        raise TypeError("cuda.lazy is only available for arrays with the CUDA backend")
+
+    from awkward._connect.lazy._lazy_impl import lazy as _lazy
+
+    return _lazy(array)
+
+
+def to_cccl_iterator(array, *, dtype=None):
+    """Build a ``cuda.compute`` iterator over an Awkward Array (zero-copy).
+
+    This is the public, supported entry point for the recursive
+    form-to-iterator construction that the fusion codegen and the eager CCCL
+    helpers use internally. External ``cuda.compute`` code should call this
+    instead of hand-extracting buffers from ``ak.to_buffers`` and assembling
+    iterators by hand.
+
+    The mapping follows the layout tree:
+
+    - ``NumpyArray`` -> a CuPy buffer;
+    - ``RecordArray`` -> ``ZipIterator`` over the field iterators;
+    - ``IndexedArray`` -> ``PermutationIterator`` over (content, index);
+    - ``ListOffsetArray`` -> the flattened content iterator (offsets returned
+      separately in the metadata).
+
+    Args:
+        array (ak.Array, ak.Record, or ak.contents.Content): Source array. A
+            CUDA-backed array is consumed zero-copy; an array on another backend
+            is moved to the device first.
+        dtype: If given, cast the leaf ``NumpyArray`` buffers to this dtype
+            (e.g. ``numpy.float32``) while building the iterator.
+
+    Returns an ``(iterator, metadata)`` tuple. ``iterator`` is a
+    ``cuda.compute`` iterator (or CuPy buffer for a bare ``NumpyArray``);
+    ``metadata`` is a dict ``{"form", "buffers", "offsets", "length", "count"}``
+    where ``offsets`` is the list offsets as an ``int64`` CuPy array (or
+    ``None`` for a non-list array), ``length`` is the top-level length, and
+    ``count`` is the total number of items across all sublists.
+
+    Raises:
+        ModuleNotFoundError: If ``cupy`` is not installed.
+
+    Internal entry point (``awkward._connect.cuda.to_cccl_iterator``); not
+    exposed as a public ``ak.*`` name while the lazy/fusion work is a PoC.
+
+    Examples:
+        >>> import awkward as ak
+        >>> from awkward._connect import cuda
+        >>> arr = ak.Array([[1.0, 2.0, 3.0], [4.0, 5.0]], backend="cuda")
+        >>> it, meta = cuda.to_cccl_iterator(arr)
+        >>> meta["count"], len(meta["offsets"])
+        (5, 3)
+    """
+    if cupy is None:
+        raise ModuleNotFoundError(
+            error_message.format("awkward._connect.cuda.to_cccl_iterator")
+        )
+
+    from awkward._connect.cuda.helpers import awkward_to_cccl_iterator
+
+    return awkward_to_cccl_iterator(array, dtype=dtype)
+
+
+__all__ = ("lazy", "to_cccl_iterator")

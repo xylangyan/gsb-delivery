@@ -1,0 +1,267 @@
+---
+jupytext:
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.10.3
+kernelspec:
+  display_name: Python 3
+  language: python
+  name: python3
+---
+
+Awkward Array features that are supported in Numba-compiled functions
+=====================================================================
+
+See the [Numba documentation](https://numba.readthedocs.io/), which maintains lists of
+
+* [supported Python language features](https://numba.pydata.org/numba-doc/dev/reference/pysupported.html) and
+* [supported NumPy library features](https://numba.readthedocs.io/en/stable/reference/numpysupported.html)
+
+in JIT-compiled functions. This page describes the supported Awkward Array library features.
+
+```{code-cell} ipython3
+import awkward as ak
+import numpy as np
+import numba as nb
+```
+
+## Passing Awkward Arrays as arguments to a function
+
+The main use is to pass an Awkward Array into a function that has been JIT-compiled by Numba. As many arguments as you want can be Awkward Arrays, and they don't have to have the same length or shape.
+
+For disk caching with `@numba.njit(cache=True)`, pass Awkward Arrays as arguments.
+Capturing an Awkward Array as a global or closure constant requires process-local
+buffer pointers. Numba warns that the function uses dynamic globals and does not
+write its compiled implementation to the disk cache. The function still runs,
+but a fresh process must compile it again. This prevents reusing buffer addresses
+from a previous process. Functions that receive Awkward Arrays as arguments can
+reuse their compiled code from the disk cache with the new process's buffers.
+Compiled functions retain the lookup and buffers for a captured array, even if
+the Python array is later modified or its behavior is replaced. Its compiled
+layout type remains the one selected during compilation.
+
+```{code-cell} ipython3
+array1 = ak.Array([[0, 1.1, 2.2], [], [3.3, 4.4], [5.5], [6.6, 7.7, 8.8, 9.9]])
+array2 = ak.Array([
+    [{"x": 1.1, "y": [1]}, {"x": 2.2, "y": [1, 2]}, {"x": 3.3, "y": [1, 2, 3]}],
+    [],
+    [{"x": 4.4, "y": [1, 2, 3, 4]}, {"x": 5.5, "y": [1, 2, 3, 4, 5]}]
+])
+```
+
+```{code-cell} ipython3
+@nb.jit
+def first_array(array):
+    for i, list_of_numbers in enumerate(array):
+        for x in list_of_numbers:
+            if x == 3.3:
+                return i
+
+@nb.jit
+def second_array(array):
+    for i, list_of_records in enumerate(array):
+        for record in list_of_records:
+            if record.x == 3.3:
+                return i
+
+@nb.jit
+def where_is_3_point_3(a, b):
+    return first_array(a), second_array(b)
+```
+
+```{code-cell} ipython3
+where_is_3_point_3(array1, array2)
+```
+
+The only constraint is that union types can't be _accessed_ within the compiled function. (Heterogeneous _parts_ of an array can be ignored and passed through a compiled function.)
+
+## Returning Awkward Arrays from a function
+
+Parts of the input array can be returned from a compiled function.
+
+```{code-cell} ipython3
+@nb.jit
+def first_array(array):
+    for list_of_numbers in array:
+        for x in list_of_numbers:
+            if x == 3.3:
+                return list_of_numbers
+
+@nb.jit
+def second_array(array):
+    for list_of_records in array:
+        for record in list_of_records:
+            if record.x == 3.3:
+                return record
+
+@nb.jit
+def find_3_point_3(a, b):
+    return first_array(a), second_array(b)
+```
+
+```{code-cell} ipython3
+found_a, found_b = find_3_point_3(array1, array2)
+```
+
+```{code-cell} ipython3
+found_a
+```
+
+```{code-cell} ipython3
+found_b
+```
+
+## Cannot use `ak.*` functions or ufuncs
+
+Outside of a compiled function, Awkward's vectorized `ak.*` functions and NumPy's [universal functions (ufuncs)](https://numpy.org/doc/stable/reference/ufuncs.html) should be highly preferred over for-loop iteration because they are much faster.
+
+Inside of a compiled function, however, they can't be used at all. Use for-loops and if-statements instead.
+
+This is an either-or choice at the boundary of a `@nb.jit`-compiled function. (Even if `ak.*` had been implemented in Numba's compiled context, it would be slower than _compiled_ for-loops and if-statements because of the intermediate arrays they would necessarily create.)
+
+## Cannot use fancy slicing
+
+Similarly, any slicing other than
+
+* a single integer, like `array[i]` where `i` is an integer, or
+* a single record field as a _constant, literal_ string, like `array["x"]` or `array.x`,
+
+is not allowed. Unpack the data structures one level at a time.
+
+## Casting one-dimensional arrays as NumPy
+
+One-dimensional Awkward Arrays of numbers, which are completely equivalent to NumPy arrays, can be _cast_ as NumPy arrays within the compiled function.
+
+For flat numeric layouts, common NumPy functions perform this conversion
+implicitly: `np.sum`, `np.prod`, `np.min`, `np.max`, `np.mean`, `np.std`,
+`np.var`, `np.median`, `np.argmin`, `np.argmax`, `np.all`, `np.any`,
+`np.cumsum`, `np.cumprod`, `np.sort`, and `np.argsort`. This also applies to
+flat subarrays encountered while iterating through ragged data:
+
+```{code-cell} ipython3
+@nb.njit
+def sum_each_row(array):
+    result = np.empty(len(array))
+    for i, row in enumerate(array):
+        result[i] = np.sum(row)
+    return result
+
+sum_each_row(ak.Array([[1, 2], [], [3]]))
+```
+
+These overloads reuse the zero-copy `np.asarray` view and follow Numba's
+NumPy implementation, including its dtype rules and supported operations.
+`np.sum` accepts Numba-supported `axis` and `dtype` arguments; the other
+functions above currently support their default arguments. Array results are
+NumPy arrays. Ragged arrays, records, strings, and missing values are not
+implicitly converted.
+
+
+NumPy ufuncs supported by Numba also accept flat numeric Awkward Arrays
+directly, without an explicit cast. This includes unary functions such as
+`np.sin` and `np.sqrt`, and binary functions such as `np.add` and `np.maximum`.
+Inputs may combine flat Awkward views, NumPy arrays, and scalars, using the
+same broadcasting and dtype rules as Numba's NumPy implementation.
+
+```{code-cell} ipython3
+@nb.njit
+def trig_expression(array):
+    return np.sin(array) * 2 + np.cos(array)
+
+trig_expression(ak.Array([1.0, 2.0, 3.0]))
+```
+
+These calls reuse zero-copy NumPy views, including sliced views and flat
+subarrays inside ragged data. Numba's fused array expressions and
+`parallel=True` are supported. Results are NumPy arrays. Explicit output
+arrays must be NumPy arrays; their buffers are updated in place. Supported
+single-output unary and binary ufuncs accept positional outputs or `out=`.
+The native two-output binary ufunc `np.divmod` also accepts one or two
+positional NumPy output arrays; omitted outputs are returned as new arrays.
+Other multi-output ufuncs and generalized ufuncs are not enabled by this
+integration. Explicit `out=None` is rejected, as it is for NumPy inputs in
+Numba. Other keyword arguments and signatures remain limited by Numba.
+
+Numba discovers this integration through Awkward's installed
+`numba_extensions` entry point, so registration can occur during compilation
+without an explicit call to `ak.numba.register_and_check()`. The registered
+array-expression rewrite skips block inspection for functions without
+eligible Awkward views.
+
+This does not implicitly convert whole ragged arrays, optional arrays,
+records, or strings. It also does not introduce arithmetic operators on
+Awkward views inside Numba: use `np.add(a, b)`, for example, or cast explicitly.
+
+```{code-cell} ipython3
+@nb.jit
+def return_last_y_list_squared(array):
+    y_list_squared = None
+    for list_of_records in array:
+        for record in list_of_records:
+            y_list_squared = np.asarray(record.y)**2
+    return y_list_squared
+```
+
+```{code-cell} ipython3
+return_last_y_list_squared(array2)
+```
+
+This ability to cast Awkward Arrays as NumPy arrays, and then use NumPy's ufuncs or fancy slicing, softens the law against vectorized functions in the compiled context. (However, making intermediate NumPy arrays is just as bad as making intermediate Awkward Arrays.
+
+## Creating new arrays with `ak.ArrayBuilder`
+
+Numba can create NumPy arrays inside a compiled function and return them as NumPy arrays in Python, but Awkward Arrays are more complex and this is not possible. (Aside from implementation, what would be the interface? Data in Numba's compiled context must be fully typed, and Awkward Array types are complex.)
+
+Instead, arrays can be built with {obj}`ak.ArrayBuilder`, which can be used in compiled contexts and discovers type dynamically. Each {obj}`ak.ArrayBuilder` must be instantiated outside of a compiled function and passed in, and then its {func}`ak.ArrayBuilder.snapshot` (which creates the {obj}`ak.Array`) must be called outside of the compiled function, like this:
+
+```{code-cell} ipython3
+@nb.jit
+def create_ragged_array(builder, n):
+    for i in range(n):
+        builder.begin_list()
+        for j in range(i):
+            builder.integer(j)
+        builder.end_list()
+    return builder
+```
+
+```{code-cell} ipython3
+builder = ak.ArrayBuilder()
+
+create_ragged_array(builder, 10)
+
+array = builder.snapshot()
+
+array
+```
+
+or, more succintly,
+
+```{code-cell} ipython3
+create_ragged_array(ak.ArrayBuilder(), 10).snapshot()
+```
+
+Note that we didn't need to specify that the type of the data would be `var * int64`; this was determined by the way that {obj}`ak.ArrayBuilder` was called: {func}`ak.ArrayBuilder.integer` was only ever called between {func}`ak.ArrayBuilder.begin_list` and {func}`ak.ArrayBuilder.end_list`, and hence the type is `var * int64`.
+
+Note that {obj}`ak.ArrayBuilder` can be used outside of compiled functions, too, so it can be tested interactively:
+
+```{code-cell} ipython3
+with builder.record():
+    builder.field("x").real(3.14)
+    with builder.field("y").list():
+        builder.string("one")
+        builder.string("two")
+        builder.string("three")
+```
+
+```{code-cell} ipython3
+builder.snapshot()
+```
+
+But the context managers, `with builder.record()` and `with builder.list()`, don't work in Numba-compiled functions because Numba does not yet support it as a language feature.
+
+## Overriding behavior with `ak.behavior`
+
+Just as behaviors can be customized for Awkward Arrays in general, they can be customized in the compiled context as well. See the last section of the {obj}`ak.behavior` reference for details.

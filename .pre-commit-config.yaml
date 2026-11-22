@@ -1,0 +1,89 @@
+ci:
+  autoupdate_commit_msg: "chore: update pre-commit hooks"
+  autofix_commit_msg: "style: pre-commit fixes"
+  autoupdate_schedule: monthly
+
+exclude: ^(docs|studies|tests/samples|src/awkward/_typeparser/generated_parser.py)
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+  hooks:
+  - id: check-added-large-files
+  - id: check-case-conflict
+  - id: check-merge-conflict
+  - id: check-symlinks
+  - id: check-yaml
+  - id: end-of-file-fixer
+    exclude_types: [svg]
+  - id: mixed-line-ending
+  - id: requirements-txt-fixer
+  - id: trailing-whitespace
+  - id: name-tests-test
+    args: ["--pytest-test-first"]
+    exclude: ^tests/properties/
+
+- repo: https://github.com/cheshirekow/cmake-format-precommit
+  rev: e2c2116d86a80e72e7146a06e68b7c228afc6319  # frozen: v0.6.13
+  hooks:
+  - id: cmake-format
+    additional_dependencies: [pyyaml]
+
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: 25bcf95026b96e2dd3c0aec3090c3d6ef6ca2e6c  # frozen: v0.17.3
+  hooks:
+  - id: ruff-check
+    args: ["--fix", "--show-fixes"]
+  - id: ruff-format
+
+- repo: https://github.com/codespell-project/codespell
+  rev: 57b21406f092110c18776e39b0bda50d37c945c8  # frozen: v2.4.3
+  hooks:
+  - id: codespell
+    args: ["-L", "ue,subjet,parms,fo,numer,thre,nin,nout"]
+
+- repo: local
+  hooks:
+  - id: disallow-caps
+    name: disallow improper capitalization
+    language: pygrep
+    entry: PyBind|Cmake|CCache|Github|PyTest
+    exclude: .pre-commit-config.yaml
+
+- repo: https://github.com/shellcheck-py/shellcheck-py
+  rev: "a6564f5d57444e123433a5c9af733e3975c77229"  # frozen: v0.11.0.1-1
+  hooks:
+  - id: shellcheck
+
+- repo: local
+  hooks:
+  - id: require-test-name-identifier
+    name: require identifiers for test names
+    language: python
+    entry: python dev/validate-test-names.py
+    types: [file, python]
+    files: ^tests/
+
+- repo: https://github.com/python-jsonschema/check-jsonschema
+  rev: 39478bf2c099a58683d3f1aedf675105318b078d  # frozen: 0.39.0
+  hooks:
+    - id: check-github-workflows
+      args: ["--verbose"]
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: ad26ebfa797fcb9b8f83275937c1c1d6e126719c  # frozen: v2.4.1
+  hooks:
+    - id: mypy
+      files: src
+      additional_dependencies:
+        - numpy>=1.24
+
+- repo: https://github.com/abravalheri/validate-pyproject
+  rev: 82d21874c3242e4dc27bb47641c996902ef64eef  # frozen: v0.27
+  hooks:
+    - id: validate-pyproject
+
+- repo: https://github.com/zizmorcore/zizmor-pre-commit
+  rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+  hooks:
+    - id: zizmor
+      args: [--persona=pedantic]

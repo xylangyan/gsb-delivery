@@ -1,0 +1,46 @@
+// BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+#define FILENAME(line) FILENAME_FOR_EXCEPTIONS_C("src/cpu-kernels/awkward_ListArray_getitem_next_array.cpp", line)
+
+#include "awkward/kernels.h"
+#include "awkward/kernel-utils.h"
+
+template <typename C, typename T>
+ERROR awkward_ListArray_getitem_next_array(
+  T* __restrict__ tocarry,
+  T* __restrict__ toadvanced,
+  const C* __restrict__ fromstarts,
+  const C* __restrict__ fromstops,
+  const T* __restrict__ fromarray,
+  int64_t lenstarts,
+  int64_t lenarray,
+  int64_t lencontent) {
+  for (int64_t i = 0;  i < lenstarts;  i++) {
+    if (fromstops[i] < fromstarts[i]) {
+      return failure("stops[i] < starts[i]", i, kSliceNone, FILENAME(__LINE__));
+    }
+    if ((fromstarts[i] != fromstops[i])  &&
+        (fromstops[i] > lencontent)) {
+      return failure("stops[i] > len(content)", i, kSliceNone, FILENAME(__LINE__));
+    }
+    int64_t length = fromstops[i] - fromstarts[i];
+    for (int64_t j = 0;  j < lenarray;  j++) {
+      const auto regular_at = awkward::kernel::normalize_index(fromarray[j], length);
+      if (!regular_at) {
+        return failure("index out of range", i, fromarray[j], FILENAME(__LINE__));
+      }
+      tocarry[i*lenarray + j] = fromstarts[i] + *regular_at;
+      toadvanced[i*lenarray + j] = j;
+    }
+  }
+  return success();
+}
+
+#define WRAPPER(FUNC, C, T) \
+  ERROR FUNC(T* tocarry, T* toadvanced, const C* fromstarts, const C* fromstops, const T* fromarray, int64_t lenstarts, int64_t lenarray, int64_t lencontent) { \
+    return awkward_ListArray_getitem_next_array<C, T>(tocarry, toadvanced, fromstarts, fromstops, fromarray, lenstarts, lenarray, lencontent); \
+  }
+
+WRAPPER(awkward_ListArray32_getitem_next_array_64, int32_t, int64_t)
+WRAPPER(awkward_ListArrayU32_getitem_next_array_64, uint32_t, int64_t)
+WRAPPER(awkward_ListArray64_getitem_next_array_64, int64_t, int64_t)

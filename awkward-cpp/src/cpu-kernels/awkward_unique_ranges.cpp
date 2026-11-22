@@ -1,0 +1,42 @@
+// BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+#define FILENAME(line) FILENAME_FOR_EXCEPTIONS_C("src/cpu-kernels/awkward_unique_ranges.cpp", line)
+
+#include "awkward/kernels.h"
+
+template <typename T>
+ERROR awkward_unique_ranges(
+  T* __restrict__ toptr,
+  const int64_t* __restrict__ fromoffsets,
+  int64_t offsetslength,
+  int64_t* __restrict__ tooffsets) {
+  int64_t m = 0;
+  for (int64_t i = 0;  i < offsetslength - 1;  i++) {
+    tooffsets[i] = m;
+    toptr[m++] = toptr[fromoffsets[i]];
+    for (int64_t k = fromoffsets[i]; k < fromoffsets[i + 1]; k++) {
+      if (toptr[m - 1] != toptr[k]) {
+        toptr[m++] = toptr[k];
+      }
+    }
+  }
+  tooffsets[offsetslength - 1] = m;
+
+  return success();
+}
+
+#define WRAPPER(FUNC, T) \
+  ERROR FUNC(T* toptr, const int64_t* fromoffsets, int64_t offsetslength, int64_t* tooffsets) { \
+    return awkward_unique_ranges<T>(toptr, fromoffsets, offsetslength, tooffsets); \
+  }
+
+WRAPPER(awkward_unique_ranges_int8, int8_t)
+WRAPPER(awkward_unique_ranges_uint8, uint8_t)
+WRAPPER(awkward_unique_ranges_int16, int16_t)
+WRAPPER(awkward_unique_ranges_uint16, uint16_t)
+WRAPPER(awkward_unique_ranges_int32, int32_t)
+WRAPPER(awkward_unique_ranges_uint32, uint32_t)
+WRAPPER(awkward_unique_ranges_int64, int64_t)
+WRAPPER(awkward_unique_ranges_uint64, uint64_t)
+WRAPPER(awkward_unique_ranges_float32, float)
+WRAPPER(awkward_unique_ranges_float64, double)

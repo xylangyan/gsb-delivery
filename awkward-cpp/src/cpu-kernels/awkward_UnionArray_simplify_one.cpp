@@ -1,0 +1,37 @@
+// BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+#define FILENAME(line) FILENAME_FOR_EXCEPTIONS_C("src/cpu-kernels/awkward_UnionArray_simplify_one.cpp", line)
+
+#include "awkward/kernels.h"
+
+template <typename FROMTAGS,
+          typename FROMINDEX,
+          typename TOTAGS,
+          typename TOINDEX>
+ERROR awkward_UnionArray_simplify_one(
+  TOTAGS* __restrict__ totags,
+  TOINDEX* __restrict__ toindex,
+  const FROMTAGS* __restrict__ fromtags,
+  const FROMINDEX* __restrict__ fromindex,
+  int64_t towhich,
+  int64_t fromwhich,
+  int64_t length,
+  int64_t base) {
+  for (int64_t i = 0;  i < length;  i++) {
+    if (fromtags[i] == fromwhich) {
+      totags[i] = (TOTAGS)towhich;
+      toindex[i] = (TOINDEX)(fromindex[i] + base);
+    }
+  }
+  return success();
+}
+
+#define WRAPPER(FUNC, FROMTAGS, FROMINDEX, TOTAGS, TOINDEX) \
+  ERROR FUNC(TOTAGS* totags, TOINDEX* toindex, const FROMTAGS* fromtags, const FROMINDEX* fromindex, int64_t towhich, int64_t fromwhich, int64_t length, int64_t base) { \
+    return awkward_UnionArray_simplify_one<FROMTAGS, FROMINDEX, TOTAGS, TOINDEX>(totags, toindex, fromtags, fromindex, towhich, fromwhich, length, base); \
+  }
+
+WRAPPER(awkward_UnionArray8_32_simplify_one_to8_64, int8_t, int32_t, int8_t, int64_t)
+WRAPPER(awkward_UnionArray8_U32_simplify_one_to8_64, int8_t, uint32_t, int8_t, int64_t)
+WRAPPER(awkward_UnionArray8_64_simplify_one_to8_64, int8_t, int64_t, int8_t, int64_t)
+WRAPPER(awkward_UnionArray64_64_simplify_one_to8_64, int64_t, int64_t, int8_t, int64_t)

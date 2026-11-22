@@ -1,0 +1,434 @@
+# BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+
+import contextlib
+import datetime
+import io
+import os
+import time
+
+import yaml
+
+CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+
+
+@contextlib.contextmanager
+def write_if_changed(path):
+    """Yield a buffer to write to; only touch the file if the content changed
+    (ignoring the generation timestamp), so unchanged outputs keep their
+    mtimes and don't trigger rebuilds."""
+    buffer = io.StringIO()
+    yield buffer
+    content = buffer.getvalue()
+
+    def strip_stamp(text):
+        return [line for line in text.splitlines() if "AUTO GENERATED ON" not in line]
+
+    if os.path.exists(path):
+        with open(path) as file:
+            if strip_stamp(file.read()) == strip_stamp(content):
+                return
+    with open(path, "w") as file:
+        file.write(content)
+
+
+# Only registered raw kernels need CUDA sources; other supported kernels
+# dispatch through the canonical signature table to cuda.compute.
+cuda_kernels_impl = [
+    "awkward_ListArray_validity",
+    "awkward_ListOffsetArray_flatten_offsets",
+    "awkward_IndexedArray_simplify",
+    "awkward_RegularArray_getitem_next_array_regularize",
+    "awkward_RegularArray_reduce_local_nextparents_64",
+    "awkward_RegularArray_combinations_64",
+    "awkward_ListArray_getitem_jagged_apply",
+    "awkward_ListArray_getitem_jagged_expand",
+    "awkward_ListArray_getitem_jagged_shrink",
+    "awkward_ListArray_getitem_next_array_advanced",
+    "awkward_ListArray_getitem_next_array",
+    "awkward_ListArray_getitem_next_at",
+    "awkward_ListArray_getitem_next_range",
+    "awkward_ListArray_rpad_axis1",
+    "awkward_ListArray_getitem_next_range_spreadadvanced",
+    "awkward_ListOffsetArray_toRegularArray",
+    "awkward_ListOffsetArray_rpad_axis1",
+    "awkward_ListOffsetArray_drop_none_indexes",
+    "awkward_ListOffsetArray_reduce_local_nextparents_64",
+    "awkward_UnionArray_flatten_length",
+    "awkward_UnionArray_flatten_combine",
+    "awkward_UnionArray_nestedfill_tags_index",
+    "awkward_ListOffsetArray_reduce_nonlocal_nextshifts_64",
+    # The awkward_reduce_* value reducers (sum/prod/min/max/argmin/argmax/
+    # count/countnonzero and their bool/complex variants) have no compiled
+    # CUDA kernel: the CUDA backend dispatches them to the cuda.cccl-based
+    # helpers in awkward._connect.cuda._compute. Their signature-table entries
+    # are emitted as None (this kernel name is absent from cuda_kernels_impl),
+    # which routes CupyBackend.__getitem__ to the CudaComputeKernel path.
+]
+
+
+def reproducible_datetime():
+    timestamp = int(os.environ.get("SOURCE_DATE_EPOCH", time.time()))
+    build_date = datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
+    return build_date.isoformat().replace("T", " AT ")[:22]
+
+
+def type_to_ctype(typename):
+    is_const = False
+    if "Const[" in typename:
+        is_const = True
+        typename = typename[len("Const[") : -1]
+    count = 0
+    while "List[" in typename:
+        count += 1
+        typename = typename[len("List[") : -1]
+    typename = typename + "*" * count
+    if is_const:
+        typename = "const " + typename
+    return typename
+
+
+def include_kernels_h(specification):
+    print("Generating awkward-cpp/include/awkward/kernels.h...")
+
+    with write_if_changed(
+        os.path.join(
+            CURRENT_DIR, "..", "awkward-cpp", "include", "awkward", "kernels.h"
+        ),
+    ) as header:
+        header.write(
+            f"""// AUTO GENERATED ON {reproducible_datetime()}
+// DO NOT EDIT BY HAND!
+//
+// To regenerate file, run
+//
+//     python dev/generate-kernel-signatures.py
+//
+// (It is usually run as part of pip install . or localbuild.py.)
+
+#ifndef AWKWARD_KERNELS_H_
+#define AWKWARD_KERNELS_H_
+
+#include "awkward/common.h"
+
+extern "C" {{
+
+"""
+        )
+        for spec in specification["kernels"]:
+            for childfunc in spec["specializations"]:
+                header.write(" " * 2 + "EXPORT_SYMBOL ERROR\n")
+                header.write(" " * 2 + childfunc["name"] + "(\n")
+                for i, arg in enumerate(childfunc["args"]):
+                    header.write(
+                        " " * 4 + type_to_ctype(arg["type"]) + " " + arg["name"]
+                    )
+                    if i == (len(childfunc["args"]) - 1):
+                        header.write(");\n")
+                    else:
+                        header.write(",\n")
+            header.write("\n")
+        header.write(
+            """}
+
+#endif // AWKWARD_KERNELS_H_
+"""
+        )
+
+    print("           awkward-cpp/include/awkward/kernels.h.")
+
+
+type_to_dtype = {
+    "bool": "bool_",
+    "int8": "int8",
+    "uint8": "uint8",
+    "int16": "int16",
+    "uint16": "uint16",
+    "int32": "int32",
+    "uint32": "uint32",
+    "int64": "int64",
+    "uint64": "uint64",
+    "float": "float32",
+    "double": "float64",
+}
+
+
+def type_to_pytype(typename, special):
+    if "Const[" in typename:
+        typename = typename[len("Const[") : -1]
+    count = 0
+    while "List[" in typename:
+        count += 1
+        typename = typename[len("List[") : -1]
+    if typename.endswith("_t"):
+        typename = typename[:-2]
+    if count != 0:
+        special.append(type_to_dtype[typename])
+    return ("POINTER(" * count) + ("c_" + typename) + (")" * count)
+
+
+def kernel_signatures_py(specification):
+    print("Generating awkward-cpp/src/awkward_cpp/_kernel_signatures.py...")
+
+    with write_if_changed(
+        os.path.join(
+            CURRENT_DIR,
+            "..",
+            "awkward-cpp",
+            "src",
+            "awkward_cpp",
+            "_kernel_signatures.py",
+        ),
+    ) as file:
+        file.write(
+            f"""# AUTO GENERATED ON {reproducible_datetime()}
+# DO NOT EDIT BY HAND!
+#
+# To regenerate file, run
+#
+#     python dev/generate-kernel-signatures.py
+#
+# (It is usually run as part of pip install . or localbuild.py.)
+
+# fmt: off
+
+from ctypes import (
+    POINTER,
+    Structure,
+    c_bool,
+    c_int8,
+    c_uint8,
+    c_int16,
+    c_uint16,
+    c_int32,
+    c_uint32,
+    c_int64,
+    c_uint64,
+    c_float,
+    c_double,
+    c_char_p,
+)
+
+import numpy as np
+
+from numpy import (
+    bool_,
+    int8,
+    uint8,
+    int16,
+    uint16,
+    int32,
+    uint32,
+    int64,
+    uint64,
+    float32,
+    float64,
+)
+
+class ERROR(Structure):
+    _fields_ = [
+        ("str", c_char_p),
+        ("filename", c_char_p),
+        ("id", c_int64),
+        ("attempt", c_int64),
+    ]
+
+
+def by_signature(lib):
+    out = {{}}
+"""
+        )
+
+        for spec in specification["kernels"]:
+            for childfunc in spec["specializations"]:
+                special = [repr(spec["name"])]
+                arglist = [
+                    type_to_pytype(x["type"], special) for x in childfunc["args"]
+                ]
+                dirlist = [repr(x["dir"]) for x in childfunc["args"]]
+                file.write(
+                    """
+    f = lib.{}
+    f.argtypes = [{}]
+    f.restype = ERROR
+    f.dir = [{}]
+    out[{}] = f
+""".format(
+                        str(childfunc["name"]),
+                        ", ".join(arglist),
+                        ", ".join(dirlist),
+                        ", ".join(special),
+                    )
+                )
+
+        file.write(
+            """
+    return out
+"""
+        )
+
+    print("           awkward-cpp/src/awkward_cpp/_kernel_signatures.py...")
+
+
+def kernel_signatures_cuda_py(specification):
+    print("Generating src/awkward/_connect/cuda/_kernel_signatures.py...")
+
+    with write_if_changed(
+        os.path.join(
+            os.path.dirname(CURRENT_DIR),
+            "src",
+            "awkward",
+            "_connect",
+            "cuda",
+            "_kernel_signatures.py",
+        ),
+    ) as file:
+        file.write(
+            f"""# AUTO GENERATED ON {reproducible_datetime()}
+# DO NOT EDIT BY HAND!
+#
+# To regenerate file, run
+#
+#     python dev/generate-kernel-signatures.py
+#
+# This step is normally run explicitly before generating a package
+
+# fmt: off
+
+# pylint: skip-file
+
+from numpy import (
+    bool_,
+    int8,
+    uint8,
+    int16,
+    uint16,
+    int32,
+    uint32,
+    int64,
+    uint64,
+    float32,
+    float64,
+)
+
+from awkward._connect.cuda import fetch_specialization
+from awkward._connect.cuda import import_cupy
+
+import math
+
+cupy = import_cupy("Awkward Arrays with CUDA")
+"""
+        )
+
+        file.write(
+            """
+def by_signature(cuda_kernel_templates):
+    out = {}
+"""
+        )
+        with open(
+            os.path.join(
+                os.path.dirname(CURRENT_DIR),
+                "src",
+                "awkward",
+                "_connect",
+                "cuda",
+                "cuda_kernels",
+                "cuda_common.cu",
+            ),
+        ) as cu_file:
+            code = cu_file.read()
+            python_code = code[
+                code.find("// BEGIN PYTHON") : code.find("// END PYTHON")
+            ]
+            python_code = python_code.replace("// BEGIN PYTHON", "")
+            python_code = python_code.replace("// ", "    ")
+            file.write(python_code)
+
+        for spec in specification["kernels"]:
+            for childfunc in spec["specializations"]:
+                special = [repr(spec["name"])]
+                [type_to_pytype(x["type"], special) for x in childfunc["args"]]
+                dirlist = [repr(x["dir"]) for x in childfunc["args"]]
+                ispointerlist = [
+                    repr("List" in x["type"] or "ListArray-at" == x.get("role", None))
+                    for x in childfunc["args"]
+                ]
+                if spec["name"] in cuda_kernels_impl:
+                    with open(
+                        os.path.join(
+                            os.path.dirname(CURRENT_DIR),
+                            "src",
+                            "awkward",
+                            "_connect",
+                            "cuda",
+                            "cuda_kernels",
+                            spec["name"] + ".cu",
+                        ),
+                    ) as cu_file:
+                        code = cu_file.read()
+
+                        if "// BEGIN PYTHON" not in code:
+                            file.write(
+                                """
+    def f(grid, block, args):
+        cuda_kernel_templates.get_function(fetch_specialization([{}]))(grid, block, args)
+    f.dir = [{}]
+    f.is_ptr = [{}]
+    out[{}] = f
+""".format(
+                                    ", ".join(special),
+                                    ", ".join(dirlist),
+                                    ", ".join(ispointerlist),
+                                    ", ".join(special),
+                                )
+                            )
+                        else:
+                            python_code = code[
+                                code.find("// BEGIN PYTHON") : code.find(
+                                    "// END PYTHON"
+                                )
+                            ]
+                            python_code = python_code.replace("// BEGIN PYTHON", "")
+                            python_code = python_code.replace("// ", "    ")
+
+                            if "{dtype_specializations}" in python_code:
+                                python_code = python_code.replace(
+                                    "{dtype_specializations}", ", ".join(special[1:])
+                                )
+
+                            file.write(python_code)
+                            file.write(
+                                """    f.dir = [{}]
+    f.is_ptr = [{}]
+    out[{}] = f
+""".format(
+                                    ", ".join(dirlist),
+                                    ", ".join(ispointerlist),
+                                    ", ".join(special),
+                                )
+                            )
+                else:
+                    file.write(
+                        """
+    out[{}] = None
+""".format(
+                            ", ".join(special),
+                        )
+                    )
+
+        file.write(
+            """
+    return out
+"""
+        )
+
+    print("Done with  src/awkward/_connect/cuda/_kernel_signatures.py...")
+
+
+if __name__ == "__main__":
+    with open(os.path.join(CURRENT_DIR, "..", "kernel-specification.yml")) as specfile:
+        specification = yaml.safe_load(specfile)
+    include_kernels_h(specification)
+    kernel_signatures_py(specification)
+    kernel_signatures_cuda_py(specification)

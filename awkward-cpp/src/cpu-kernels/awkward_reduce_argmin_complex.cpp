@@ -1,0 +1,39 @@
+// BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+#define FILENAME(line) FILENAME_FOR_EXCEPTIONS_C("src/cpu-kernels/awkward_reduce_argmin_complex.cpp", line)
+
+#include "awkward/kernels.h"
+
+template <typename OUT, typename IN>
+ERROR awkward_reduce_argmin_complex(
+  OUT* __restrict__ toptr,
+  const IN* __restrict__ fromptr,
+  const int64_t* __restrict__ offsets,
+  int64_t outlength) {
+  for (int64_t bin = 0; bin < outlength; bin++) {
+    int64_t best = -1;
+    for (int64_t i = offsets[bin]; i < offsets[bin + 1]; i++) {
+      if (best == -1) {
+        best = i;
+      } else {
+        IN x = fromptr[i * 2];
+        IN y = fromptr[i * 2 + 1];
+        IN bx = fromptr[best * 2];
+        IN by = fromptr[best * 2 + 1];
+        if (x < bx || (x == bx && y < by)) {
+          best = i;
+        }
+      }
+    }
+    toptr[bin] = static_cast<OUT>(best);
+  }
+  return success();
+}
+
+#define WRAPPER(FUNC, OUT, IN) \
+  ERROR FUNC(OUT* toptr, const IN* fromptr, const int64_t* offsets, int64_t outlength) { \
+    return awkward_reduce_argmin_complex<OUT, IN>(toptr, fromptr, offsets, outlength); \
+  }
+
+WRAPPER(awkward_reduce_argmin_complex64_64, int64_t, float)
+WRAPPER(awkward_reduce_argmin_complex128_64, int64_t, double)
