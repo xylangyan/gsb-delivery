@@ -1,0 +1,178 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "json_repair"
+version = "0.64.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name="Stefano Baccianella", email="4247706+mangiucugna@users.noreply.github.com" },
+]
+description = "A package to repair broken json strings"
+keywords = ["JSON", "REPAIR", "LLM", "PARSER"]
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+[project.urls]
+"Homepage" = "https://github.com/mangiucugna/json_repair/"
+"Bug Tracker" = "https://github.com/mangiucugna/json_repair/issues"
+"Live demo" = "https://mangiucugna.github.io/json_repair/"
+[project.optional-dependencies]
+schema = [
+  "jsonschema>=4.21",
+  "pydantic>=2",
+]
+[dependency-groups]
+dev = [
+    { include-group = "schema" },
+    { include-group = "test" },
+    { include-group = "typecheck" },
+    "pre-commit",
+]
+schema = [
+    "jsonschema>=4.21",
+    "pydantic>=2",
+]
+test = [
+    "coverage",
+    "flask>=3",
+    "flask-cors>=6",
+    "pytest",
+    "pytest-benchmark",
+]
+typecheck = [
+    "mypy",
+    "pyrefly>=1.5.0",
+]
+[tool.uv.dependency-groups]
+dev = { requires-python = ">=3.13" }
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/.cursor/extensions/*",
+    "*/pythonFiles/lib/python/*",
+    "*/site-packages/*",
+    "src/json_repair/__main__.py",
+]
+[tool.coverage.report]
+include = [
+    "src/json_repair/*",
+]
+exclude_also = [
+    'def __repr__',
+    'if self.debug:',
+    'if settings.DEBUG',
+    'raise AssertionError',
+    'raise NotImplementedError',
+    'if 0:',
+    'if __name__ == .__main__.:',
+    'if TYPE_CHECKING:',
+    'class .*\bProtocol\):',
+    '@(abc\.)?abstractmethod',
+]
+[tool.setuptools.package-data]
+"json_repair" = ["py.typed"]
+[tool.setuptools.packages.find]
+where = ["src"]
+[project.scripts]
+json_repair = "json_repair.__main__:cli"
+[tool.ruff]
+line-length = 120
+# Keep documentation code examples outside Ruff's formatter scope.
+extend-exclude = ["*.md"]
+# Assume Python 3.13
+target-version = "py313"
+[tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
+# Rule families are documented at https://docs.astral.sh/ruff/rules/.
+select = [
+    "A", "ANN", "ARG", "B", "BLE", "C4", "COM", "C90", "DTZ", "E", "ERA", "EXE", "F", "FURB",
+    "G", "I", "INP", "ISC", "LOG", "N", "PERF", "PGH", "PIE", "PLC", "PLE", "PLW", "PT",
+    "PTH", "Q", "RET", "RSE", "S", "SIM", "T10", "T20", "TC", "TID", "UP", "W", "YTT",
+]
+# Additional individual rules
+extend-select = [
+  "DOC201",  # document return values
+  "DOC501",  # document explicitly raised exceptions
+  "FBT003",  # make boolean arguments explicit at call sites
+  "PLE1141", # catch dictionary unpacking without items()
+  "PLR0917", # limit positional arguments
+  "PLW1514", # require explicit text encoding
+  "PLW3201", # detect invalid special method names
+  "RUF001",  # ambiguous Unicode
+  "RUF008",  # mutable dataclass defaults
+  "RUF009",  # avoid function calls as dataclass defaults
+  "RUF012",  # mutable class defaults
+  "RUF013",  # implicit optional annotations
+  "RUF016",  # invalid index types
+  "RUF017",  # avoid quadratic list summation
+  "RUF018",  # assignment expressions in assertions
+  "RUF020",  # avoid Never and NoReturn in unions
+  "RUF024",  # prevent shared mutable values in dict.fromkeys
+  "RUF026",  # catch default_factory passed as a defaultdict keyword
+  "RUF027",  # detect likely missing f-string prefixes
+  "RUF028",  # validate formatter suppression comments
+  "RUF030",  # avoid printing assertion messages
+  "RUF033",  # catch misleading dataclass post-init defaults
+  "RUF034",  # detect conditional expressions with identical branches
+  "RUF040",  # catch non-string literal assertion messages
+  "RUF043",  # make pytest.raises regex intent explicit
+  "RUF049",  # avoid applying dataclass to enums
+  "RUF052",  # catch used variables named as unused
+  "RUF053",  # avoid mixing generic type parameter syntaxes
+  "RUF054",  # catch ambiguous form-feed indentation
+  "RUF059",  # catch unused unpacked variables
+  "RUF060",  # catch membership tests against empty collections
+  "RUF063",  # avoid accessing annotations through a class dictionary
+  "RUF066",  # detect properties without a return
+  "RUF068",  # duplicate __all__ entries
+  "RUF071",  # avoid character-based path prefix checks
+  "RUF072",  # detect empty finally blocks
+  "RUF073",  # avoid mixing f-strings and percent formatting
+  "RUF074",  # detect incorrect decorator order
+  "RUF075",  # protect context manager cleanup from exceptions
+  "RUF077",  # detect default values on method receivers
+  "RUF100",  # unused noqa
+  "RUF101",  # use canonical rule codes in suppressions
+  "RUF102",  # invalid rule codes in noqa comments
+  "RUF103",  # invalid Ruff suppression comments
+  "RUF104",  # unmatched Ruff suppression comments
+  "RUF200",  # validate pyproject.toml metadata
+  "RUF202",  # use canonical rule selectors
+  "TRY004",  # use TypeError for invalid types
+  "TRY203",  # catch exception handlers that only re-raise
+]
+ignore = [
+  "ANN401", # Allow Any; mypy handles type checking.
+  "S101",   # assert: Use of assert detected. We like assert
+  "COM812", # Ruff: The following rule may cause conflicts when used with the formatter
+  "E501",   # Line too long
+  "C901",   # `function` is too complex
+]
+[tool.ruff.lint.per-file-ignores]
+# Explicit re-exports is fine in __init__.py, still a code smell elsewhere.
+"__init__.py" = ["PLC0414"]
+"src/json_repair/json_repair.py" = ["T201"]
+"tests/profiler.py" = ["T201"]
+"!{src,tests}/**.py" = ["ANN"]
+[tool.mypy]
+strict = true
+
+[tool.pyrefly]
+search-path = ["."]
+project-excludes = ["examples/fastapi_app.py"]
+
+[tool.pyrefly.errors]
+no-any-return = "error"
+method-assign = "error"
+unannotated-return = "error"
+implicit-any = "error"

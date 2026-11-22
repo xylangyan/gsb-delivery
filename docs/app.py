@@ -1,0 +1,46 @@
+from flask import Flask, jsonify, request
+from flask.wrappers import Response
+from flask_cors import CORS
+from werkzeug.exceptions import BadRequest
+
+from json_repair import loads
+
+app = Flask(__name__)
+CORS(app)  # This will enable CORS for all routes
+
+
+@app.route("/api/repair-json", methods=["POST"])
+def format_json() -> Response | tuple[Response, int]:
+    try:
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise TypeError("Request JSON must be an object.")
+        malformed_json = data.get("malformedJSON")
+        if not isinstance(malformed_json, str):
+            raise TypeError("malformedJSON must be a string.")
+
+        schema = data.get("schema")
+        if schema is not None and not isinstance(schema, (dict, bool)):
+            raise ValueError("schema must be a JSON object or boolean.")
+        schema_repair_mode = data.get("schemaRepairMode", "standard")
+        if not isinstance(schema_repair_mode, str):
+            raise TypeError("schemaRepairMode must be a string.")
+        if schema_repair_mode not in {"standard", "salvage"}:
+            raise ValueError("schemaRepairMode must be 'standard' or 'salvage'.")
+        if schema_repair_mode == "salvage" and schema is None:
+            raise ValueError("schemaRepairMode='salvage' requires schema.")
+
+        parsed_json = loads(
+            malformed_json,
+            logging=True,
+            schema=schema,
+            schema_repair_mode=schema_repair_mode,
+        )
+
+        return jsonify(parsed_json)
+    except (BadRequest, TypeError, ValueError) as e:
+        return jsonify({"error": str(e)}), 400
+
+
+if __name__ == "__main__":
+    app.run()
