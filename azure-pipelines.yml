@@ -1,0 +1,32 @@
+pool:
+  vmImage: 'macOS-latest'
+
+strategy:
+  matrix:
+    Python311:
+      python.version: '3.11'
+      TOXENV: 3.11
+    Python312:
+      python.version: '3.12'
+      TOXENV: 3.12
+    Python313:
+      python.version: '3.13'
+      TOXENV: 3.13
+    Python314:
+      python.version: '3.14'
+      TOXENV: 3.14
+
+steps:
+- task: UsePythonVersion@0
+  displayName: 'Use Python $(python.version)'
+  inputs:
+    versionSpec: '$(python.version)'
+
+- script: pip install -U wheel tox coveralls coverage[toml] setuptools setuptools_scm[toml]
+  displayName: 'Install Tox'
+
+- script: |
+    tox
+  env:
+    PYTEST_ADDOPTS: "--cov-config=pyproject.toml --cov --cov-append --benchmark-skip"
+  displayName: 'Run Tox'
