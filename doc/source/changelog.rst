@@ -6,6 +6,15 @@ Changelog
 ------------------
 - Dropped support for Python 3.8 (:pr:`106`) `Guido Imperiale`_
 - New object :class:`KeyMap` (:pr:`110`) `Guido Imperiale`_
+- Overlapping :meth:`AsyncBuffer.async_get` calls for the same key are now coalesced,
+  even when they come from different event loops sharing the same buffer and executor:
+  a given key version is read from slow storage only once and every waiter is notified
+  by the single offloaded restore
+- New exception :class:`KeyVersionChangedError`: when a key is overwritten while an
+  :meth:`AsyncBuffer.async_get` of the same key is in flight, the waiting futures fail
+  with it instead of a :class:`KeyError`; deleting the key still raises
+  :class:`KeyError`. The stale read can no longer overwrite or resurrect the current
+  key, and later requests cannot join an obsolete restore
 
 
 3.0.0 - 2023-04-17

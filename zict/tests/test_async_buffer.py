@@ -1,14 +1,64 @@
 import asyncio
+import contextlib
 import contextvars
 import threading
 import time
 from collections import UserDict
-from concurrent.futures import Executor, Future
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 
 import pytest
 
 from zict import AsyncBuffer, Func
+from zict.async_buffer import KeyVersionChangedError
 from zict.tests import utils_test
+
+
+class _BlockingSlowDict(UserDict):
+    """Slow storage whose __getitem__ blocks until ``block`` is set."""
+
+    def __init__(self):
+        super().__init__()
+        self.in_get = threading.Event()
+        self.block = threading.Event()
+        self.n_getitem = 0
+
+    def __getitem__(self, key):
+        self.n_getitem += 1
+        snapshot = self.data.get(key)
+        self.in_get.set()
+        assert self.block.wait(timeout=10)
+        if key not in self.data:
+            raise KeyError(key)
+        return snapshot
+
+
+class _CountingExecutor(ThreadPoolExecutor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_submit = 0
+
+    def submit(self, fn, /, *args, **kwargs):
+        self.n_submit += 1
+        return super().submit(fn, *args, **kwargs)
+
+
+def _run_in_new_loop(coro_factory):
+    """Run ``coro_factory()`` in a brand-new event loop, in a dedicated thread."""
+    outcome = {}
+
+    def target():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            outcome["value"] = loop.run_until_complete(coro_factory())
+        except BaseException as exc:  # captured, re-raised by the caller via join
+            outcome["error"] = exc
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, outcome
 
 
 @pytest.mark.asyncio
@@ -270,3 +320,180 @@ async def test_external_executor():
     assert buff.slow == {"y": 2}
     assert n_submit == 2
     buff.close()
+
+
+@pytest.mark.asyncio
+async def test_coalesce_same_loop(check_thread_leaks):
+    """Two overlapping requests from the same loop share a single slow read."""
+    slow = _BlockingSlowDict()
+    slow["x"] = 1
+    with AsyncBuffer({}, slow, n=100) as buff:
+        first = buff.async_get(["x"])
+        assert slow.in_get.wait(timeout=5)
+
+        second = buff.async_get(["x"])
+        assert not second.done()
+        # Both requests are attached to the same in-flight restore
+        with buff.lock:
+            assert len(buff._gets["x"].waiters) == 1
+
+        slow.block.set()
+        assert await first == {"x": 1}
+        assert await second == {"x": 1}
+        assert slow.n_getitem == 1
+
+
+def test_coalesce_two_event_loops(check_thread_leaks):
+    """Two partitions, each with its own event loop, share one AsyncBuffer and one
+    thread executor. Overlapping requests for the same key version trigger a single
+    slow read. One side times out and closes its loop; the other is unaffected.
+    """
+    slow = _BlockingSlowDict()
+    slow["x"] = "old-x"
+    executor = _CountingExecutor(1)
+    buff = AsyncBuffer({}, slow, n=100, executor=executor)
+    # A key already resident in fast
+    buff["h"] = "hot"
+    try:
+        async def side_a():
+            future = buff.async_get(["x", "h"])
+            # shield(): the timeout must not cancel the shared restore
+            try:
+                await asyncio.wait_for(asyncio.shield(future), timeout=0.3)
+            except asyncio.TimeoutError:
+                # Give up on this side and wind the local future down before the loop
+                # closes. The shared restore and the other loop's waiter keep running.
+                future.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await future
+                raise  # Propagated to the main thread through _run_in_new_loop
+
+        thread_a, outcome_a = _run_in_new_loop(side_a)
+        assert slow.in_get.wait(timeout=5)
+        # The first side owns the single read of the slow block
+        assert slow.n_getitem == 1
+        assert executor.n_submit == 1
+
+        async def side_b():
+            # "x" appears twice, "h" is a hot hit, "m" does not exist
+            future = buff.async_get(["x", "x", "h", "m"], missing="omit")
+            assert not future.done()
+            return await future
+
+        thread_b, outcome_b = _run_in_new_loop(side_b)
+
+        # Both event loops are now waiting on the same restore
+        while True:
+            with buff.lock:
+                state = buff._gets.get("x")
+                if state is not None and len(state.waiters) == 2:
+                    break
+            time.sleep(0.01)
+
+        thread_a.join(timeout=5)
+        assert not thread_a.is_alive()
+        assert isinstance(outcome_a.get("error"), asyncio.TimeoutError)
+        # Side A's event loop is gone, but side B keeps running
+        assert thread_b.is_alive()
+
+        slow.block.set()
+        thread_b.join(timeout=5)
+        assert not thread_b.is_alive()
+        assert "error" not in outcome_b
+        result = outcome_b["value"]
+        # Both duplicate positions for x are filled, the missing slot m is omitted and
+        # the batch ordering is preserved
+        assert list(result) == ["x", "h"]
+        assert result == {"x": "old-x", "h": "hot"}
+        # The same version was read from slow exactly once
+        assert slow.n_getitem == 1
+
+        # A batch fully served from fast requires no executor work at all
+        async def hot_only():
+            future = buff.async_get(["h"])
+            assert future.done()
+            return await future
+
+        loop = asyncio.new_event_loop()
+        try:
+            assert loop.run_until_complete(hot_only()) == {"h": "hot"}
+        finally:
+            loop.close()
+        assert executor.n_submit == 1
+    finally:
+        slow.block.set()
+        buff.close()
+        executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_version_change_during_get(check_thread_leaks):
+    """An old-version slow read stays in the executor while the key is replaced.
+    The old waiter receives a version-change result (distinct from deletion), later
+    requests cannot join the obsolete read, and the stale return must not overwrite or
+    resurrect the current key.
+    """
+    slow = _BlockingSlowDict()
+    slow["x"] = "old-x"
+    executor = _CountingExecutor(1)
+    try:
+        with AsyncBuffer({}, slow, n=100, executor=executor) as buff:
+            old_future = buff.async_get(["x"])
+            assert slow.in_get.wait(timeout=5)
+            assert not old_future.done()
+            assert executor.n_submit == 1
+
+            # Replace the key while the old-version read is stuck in the worker thread
+            buff["x"] = "new-x"
+            with pytest.raises(KeyVersionChangedError, match="x") as info:
+                await old_future
+            assert info.value.key == "x"
+            assert not buff._gets
+
+            # A later request must not attach to the obsolete read; the new value is
+            # already in fast, so no additional thread read is scheduled
+            later = buff.async_get(["x"])
+            assert later.done()
+            assert await later == {"x": "new-x"}
+            assert executor.n_submit == 1
+
+            # Release the old slow read: nothing stale may overwrite or resurrect the
+            # key
+            slow.block.set()
+            await asyncio.sleep(0.1)
+            assert buff.fast["x"] == "new-x"
+            assert "x" not in buff.slow
+            assert slow.n_getitem == 1
+    finally:
+        # An externally provided executor is not owned/shut down by AsyncBuffer.close()
+        slow.block.set()
+        executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["set", "delete"])
+async def test_get_invalidation_set_vs_delete(check_thread_leaks, mode):
+    """Overwriting a key mid-read is reported differently from deleting it."""
+    slow = _BlockingSlowDict()
+    slow["x"] = 1
+    with AsyncBuffer({}, slow, n=100) as buff:
+        raise_future = buff.async_get(["x"])
+        omit_future = buff.async_get(["x"], missing="omit")
+        assert slow.in_get.wait(timeout=5)
+
+        if mode == "set":
+            buff["x"] = 2
+            with pytest.raises(KeyVersionChangedError):
+                await raise_future
+            with pytest.raises(KeyVersionChangedError):
+                await omit_future
+            assert buff.fast["x"] == 2
+        else:
+            del buff["x"]
+            with pytest.raises(KeyError):
+                await raise_future
+            assert await omit_future == {}
+            assert "x" not in buff
+
+        slow.block.set()
+        await asyncio.sleep(0.05)

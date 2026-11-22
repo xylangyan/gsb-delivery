@@ -1,4 +1,5 @@
 from zict.async_buffer import AsyncBuffer as AsyncBuffer
+from zict.async_buffer import KeyVersionChangedError as KeyVersionChangedError
 from zict.buffer import Buffer as Buffer
 from zict.cache import Cache as Cache
 from zict.cache import WeakValueMapping as WeakValueMapping
