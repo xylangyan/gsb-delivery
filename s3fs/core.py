@@ -10,6 +10,8 @@ import socket
 import weakref
 import re
 
+from dataclasses import replace
+from urllib.parse import quote
 from urllib3.exceptions import IncompleteRead
 
 import fsspec  # noqa: F401
@@ -32,6 +34,14 @@ from aiobotocore.config import AioConfig
 from botocore.exceptions import ClientError, HTTPClientError, ParamValidationError
 from botocore.parsers import ResponseParserError
 
+from s3fs.compose import (
+    S3_MAX_PART_SIZE,
+    S3_MIN_PART_SIZE,
+    PartConfirmation,
+    coerce_sources,
+    execute_merge,
+    plan_merge,
+)
 from s3fs.errors import translate_boto_error
 from s3fs.utils import S3BucketRegionCache, ParamKwargsHelper, _get_brange, FileExpired
 
@@ -2226,6 +2236,258 @@ class S3FileSystem(AsyncFileSystem):
         self.invalidate_cache(path)
 
     merge = sync_wrapper(_merge)
+
+    async def _read_source_range(self, path, version_id, start, end):
+        """Read ``[start, end)`` from one S3 object for client assembly."""
+        bucket, key, path_version = self.split_path(path)
+        if not self.version_aware and version_id:
+            raise ValueError(
+                "version_id cannot be specified if the filesystem "
+                "is not version aware"
+            )
+        head = {}
+        if start is not None or end is not None:
+            head["Range"] = await self._process_limits(path, start, end)
+        resp = await self._call_s3(
+            "get_object",
+            Bucket=bucket,
+            Key=key,
+            **version_id_kw(version_id or path_version),
+            **head,
+        )
+        try:
+            data = await resp["Body"].read()
+        finally:
+            resp["Body"].close()
+        if start is not None and end is not None:
+            if len(data) != end - start:
+                raise IOError(
+                    f"Short read from {path!r} bytes={start}-{end - 1}: "
+                    f"expected {end - start} bytes, got {len(data)}"
+                )
+        return data
+
+    class _ComposeExecutor:
+        """Adapt S3 multipart calls to the compose module's executor API."""
+
+        def __init__(self, fs, kwargs):
+            self.fs = fs
+            self.kwargs = dict(kwargs or {})
+
+        async def create_upload(self, path):
+            bucket, key, version_id = self.fs.split_path(path)
+            if version_id:
+                raise ValueError("Cannot write to an explicit versioned file!")
+            mpu = await self.fs._call_s3(
+                "create_multipart_upload",
+                self.kwargs,
+                Bucket=bucket,
+                Key=key,
+            )
+            return mpu["UploadId"]
+
+        async def read_range(self, path, version_id, start, end):
+            return await self.fs._read_source_range(path, version_id, start, end)
+
+        async def copy_part(
+            self,
+            upload_id,
+            path,
+            part_number,
+            source_path,
+            version_id,
+            start,
+            end,
+        ):
+            bucket, key, _ = self.fs.split_path(path)
+            src_bucket, src_key, src_version = self.fs.split_path(source_path)
+            source = "/".join(
+                quote(part, safe="/~")
+                for part in (src_bucket, src_key)
+            )
+            version = version_id or src_version
+            if version:
+                source += "?versionId=" + quote(version, safe="")
+            out = await self.fs._call_s3(
+                "upload_part_copy",
+                self.kwargs,
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=part_number,
+                CopySource=source,
+                CopySourceRange=f"bytes={start}-{end - 1}",
+            )
+            return out["CopyPartResult"]["ETag"]
+
+        async def upload_part(self, upload_id, path, part_number, data):
+            bucket, key, _ = self.fs.split_path(path)
+            out = await self.fs._call_s3(
+                "upload_part",
+                self.kwargs,
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=part_number,
+                Body=data,
+            )
+            return out["ETag"]
+
+        async def complete_upload(self, upload_id, path, parts):
+            bucket, key, _ = self.fs.split_path(path)
+            out = await self.fs._call_s3(
+                "complete_multipart_upload",
+                self.kwargs,
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={
+                    "Parts": [
+                        {"PartNumber": number, "ETag": etag}
+                        for number, etag in parts
+                    ]
+                },
+            )
+            self.fs.invalidate_cache(path)
+            return out
+
+    async def _plan_merge(
+        self,
+        path,
+        sources,
+        *,
+        min_part_size=S3_MIN_PART_SIZE,
+        max_part_size=S3_MAX_PART_SIZE,
+        max_parts=MAX_UPLOAD_PARTS,
+        confirmed=(),
+        resend_parts=(),
+        upload_id=None,
+        allow_small_last=True,
+        **kwargs,
+    ):
+        """Plan an ordered multipart object assembled from byte ranges.
+
+        ``sources`` entries may be :class:`s3fs.compose.SourceRange`, bytes for
+        client-local data, a mapping, a path string (the whole object), or a
+        tuple ``(path, start, end[, version_id[, copyable]])``.
+
+        The plan records each part's sources, whether it is a server copy,
+        client upload or a reuse, the client read/write bytes, and its future
+        output interval ``[output_start, output_end)``.
+
+        ``confirmed`` contains :class:`~s3fs.compose.PartConfirmation`
+        entries from the same upload.  Valid confirmations are preserved
+        unless their part number is listed in ``resend_parts`` (or
+        ``resend_parts=None`` allows replacing any part).  Parts from another
+        target, another upload, or without source provenance are reported in
+        ``plan.ignored_confirmations`` and never count as confirmations for
+        the new plan.
+        """
+        if self.split_path(path)[2]:
+            raise ValueError("Cannot write to an explicit versioned file!")
+        coerced = coerce_sources(sources)
+        resolved = []
+        for source in coerced:
+            resolved.append(await self._resolve_source(source))
+        return plan_merge(
+            path,
+            resolved,
+            min_part_size=min_part_size,
+            max_part_size=max_part_size,
+            max_parts=max_parts,
+            confirmed=confirmed,
+            resend_parts=resend_parts,
+            upload_id=upload_id,
+            allow_small_last=allow_small_last,
+        )
+
+    plan_merge = sync_wrapper(_plan_merge)
+
+    async def _resolve_source(self, source):
+        """Fill in a missing end for a whole-object remote source."""
+        if source.path is None or source.end is not None:
+            return source
+        info = await self._info(source.path, version_id=source.version_id)
+        return replace(source, end=source.start + info["size"])
+
+    async def _merge_sources(
+        self,
+        path,
+        sources,
+        *,
+        min_part_size=S3_MIN_PART_SIZE,
+        max_part_size=S3_MAX_PART_SIZE,
+        max_parts=MAX_UPLOAD_PARTS,
+        confirmed=(),
+        resend_parts=(),
+        upload_id=None,
+        allow_small_last=True,
+        plan=None,
+        complete=True,
+        **kwargs,
+    ):
+        """Assemble ``path`` from ordered source ranges.
+
+        Without ``plan`` this plans first.  Passing an existing plan is useful
+        when only newly confirmed parts should be sent on a retry.  The result
+        reports the actual client read and write bytes and the confirmations
+        for every executed part; a failure raises
+        :class:`~s3fs.compose.MergeExecutionError`, whose ``confirmations``
+        can be passed back as ``confirmed`` for a retry.  Pass
+        ``confirmed=part_list(...)`` from a previous attempt and
+        ``resend_parts=[...]`` to permit replacing specific parts.
+        """
+        if self.split_path(path)[2]:
+            raise ValueError("Cannot write to an explicit versioned file!")
+        if plan is None:
+            plan = await self._plan_merge(
+                path,
+                sources,
+                min_part_size=min_part_size,
+                max_part_size=max_part_size,
+                max_parts=max_parts,
+                confirmed=confirmed,
+                resend_parts=resend_parts,
+                upload_id=upload_id,
+                allow_small_last=allow_small_last,
+            )
+        executor = self._ComposeExecutor(self, kwargs)
+        return await execute_merge(
+            plan, executor, upload_id=upload_id, complete=complete
+        )
+
+    merge_sources = sync_wrapper(_merge_sources)
+
+    async def _confirmed_parts(self, path, upload_id, *, etags=None):
+        """Turn ``list_parts`` output into provenance-bearing confirmations.
+
+        S3's ListParts response has no source provenance, so those entries are
+        intentionally *unknown*: they cannot be reused or treated as new-target
+        confirmations.  Callers that retry an assembly should pass the
+        ``confirmations`` from a previous :meth:`merge_sources` result (or
+        ``MergeExecutionError``), which do carry their source slices.
+        """
+        if etags is not None:
+            return etags
+        bucket, key, _ = self.split_path(path)
+        listing = await self._call_s3(
+            "list_parts", Bucket=bucket, Key=key, UploadId=upload_id
+        )
+        out = []
+        for part in listing.get("Parts", []) or []:
+            out.append(
+                PartConfirmation(
+                    part_number=part["PartNumber"],
+                    etag=part.get("ETag", ""),
+                    slices=(),
+                    size=part.get("Size"),
+                    upload_id=upload_id,
+                    target=path,
+                )
+            )
+        return out
+
+    list_parts = sync_wrapper(_confirmed_parts)
 
     async def _copy_basic(self, path1, path2, **kwargs):
         """Copy file between locations on S3

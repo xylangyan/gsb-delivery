@@ -87,6 +87,49 @@ This gives the chance to pass any credentials or other necessary
 arguments needed to s3fs.
 
 
+Assembling an object from ranges
+--------------------------------
+
+:py:meth:`.S3FileSystem.merge_sources` writes one object from an ordered list
+of source ranges.  A remote range is copied with ``UploadPartCopy`` when it is
+a single contiguous range of one source; a part that mixes sources (or uses
+client-local bytes) is read and uploaded once by the client.  ``plan_merge``
+returns the plan without writing anything.
+
+.. code-block:: python
+
+   >>> plan = s3.plan_merge(
+   ...     "bucket/joined",
+   ...     [("bucket/a", 0, 8), b"local", ("bucket/b", 0, 9)],
+   ...     min_part_size=5, max_part_size=12, max_parts=3,
+   ... )
+   >>> [(s.part_number, s.action, s.output_start, s.output_end)
+   ...  for s in plan.steps]
+   [(1, 'copy', 0, 5), (2, 'upload', 5, 10), (3, 'copy', 10, 19)]
+
+Each step records its source paths, versions and ranges, the client read and
+write bytes, and the future output interval.  A result reports the actual
+bytes transferred.  Passing ``confirmed=result.confirmations`` to a later
+plan preserves the parts whose exact source bytes still occur at the same part
+number; ``resend_parts=[...]`` (or ``None``) permits replacing confirmed
+parts.  Parts from another target or upload, and parts without source
+provenance, are reported in ``plan.ignored_confirmations`` and are never
+treated as confirmations for the new target.
+
+.. code-block:: python
+
+   >>> retry = s3.plan_merge(
+   ...     "bucket/joined",
+   ...     [("bucket/a", 0, 8), b"local", ("bucket/b", 0, 9)],
+   ...     min_part_size=5, max_part_size=12, max_parts=3,
+   ...     confirmed=result.confirmations,
+   ... )
+   >>> retry.reused_parts
+   (1, 3)
+   >>> retry.client_bytes
+   8
+
+
 Async
 -----
 

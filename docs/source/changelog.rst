@@ -4,6 +4,12 @@ Changelog
 Unreleased
 ----------
 
+- Add ``S3FileSystem.plan_merge`` and ``S3FileSystem.merge_sources`` to assemble
+  one multipart object from ordered source ranges.  The planner works within
+  part-size and part-count limits, chooses server-side range copies where
+  possible, reuses confirmed parts whose source bytes still match, honours an
+  explicit resend allow-list, and reports the client read/write bytes and
+  future output interval of every step.
 - Preserve exclusive-create conditions and file options when committing empty files.
 - Forward per-call S3 request options through single-object and batched deletes.
 - Delete the requested object version in ``rm_file`` when the path includes one.

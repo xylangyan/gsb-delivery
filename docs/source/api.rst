@@ -13,14 +13,27 @@ API
    S3FileSystem.glob
    S3FileSystem.info
    S3FileSystem.ls
+   S3FileSystem.merge_sources
    S3FileSystem.mkdir
    S3FileSystem.mv
    S3FileSystem.open
+   S3FileSystem.plan_merge
    S3FileSystem.put
    S3FileSystem.read_block
    S3FileSystem.rm
    S3FileSystem.tail
    S3FileSystem.touch
+
+.. currentmodule:: s3fs.compose
+
+.. autosummary::
+   SourceRange
+   PartConfirmation
+   MergePlan
+   MergeResult
+   MergeExecutionError
+   plan_merge
+   execute_merge
 
 .. autosummary::
    S3File
@@ -46,6 +59,24 @@ API
 .. autoclass:: S3File
    :members:
    :inherited-members:
+
+.. currentmodule:: s3fs.compose
+
+.. autoclass:: SourceRange
+
+.. autoclass:: PartConfirmation
+
+.. autoclass:: MergePlan
+   :members:
+
+.. autoclass:: MergeResult
+   :members:
+
+.. autoclass:: MergeExecutionError
+
+.. autofunction:: plan_merge
+
+.. autofunction:: execute_merge
 
 .. currentmodule:: s3fs.mapping
 
