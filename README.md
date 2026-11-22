@@ -37,6 +37,7 @@ A Python implementation of the [Table Schema](http://specs.frictionlessdata.io/t
     - [`Schema`](#schema)
     - [`Field`](#field)
     - [`Storage`](#storage)
+    - [`VersionedRelations`](#versionedrelations)
     - [`validate`](#validate)
     - [`infer`](#infer)
     - [`FailedCast`](#failedcast)
@@ -49,6 +50,8 @@ A Python implementation of the [Table Schema](http://specs.frictionlessdata.io/t
     - [`UniqueKeyError`](#uniquekeyerror)
     - [`RelationError`](#relationerror)
     - [`UnresolvedFKError`](#unresolvedfkerror)
+    - [`RevisionError`](#revisionerror)
+    - [`RevisionConflict`](#revisionconflict)
     - [`StorageError`](#storageerror)
   - [Experimental](#experimental)
   - [Contributing](#contributing)
@@ -1221,6 +1224,142 @@ __Raises__
 - `exceptions.StorageError`: raises on any error
 
 
+### `VersionedRelations`
+```python
+VersionedRelations(self, schema=None, relations=None, trim=True)
+```
+Versioned store of foreign key relations (referenced rows).
+
+The store ingests the original relations data with a single sequential
+pass per resource (the source iterables are never re-read) and afterwards
+evolves only through atomically published revisions (patches). Readers
+pin a snapshot of one published version and use it to validate foreign
+keys - concurrently with other readers pinned to other versions.
+
+```python
+store = VersionedRelations(schema, relations)
+snapshot = store.snapshot()
+table.read(foreign_keys_values=snapshot.foreign_keys_values)
+snapshot.close()
+
+revision = store.begin(revision_id='r2')
+revision.update('inventory', {'warehouse': 'A', 'item': '007'}, {'code': 'Q'})
+revision.delete('inventory', {'warehouse': 'B', 'item': '009'})
+revision.insert('inventory', {'warehouse': 'B', 'item': '009', 'code': 'P'})
+store.publish(revision)
+```
+
+__Arguments__
+- __schema (Schema/dict)__: schema of the referencing table providing
+    the foreign keys (reference resources and fields) to index
+- __relations (dict)__: original relations data in a form of
+    `{resource1: [{field1: value1, ...}, ...], ...}`; every resource
+    is consumed exactly once so one-shot iterables are supported
+- __trim (bool)__: if true and a schema is provided, only the fields
+    needed for read-back (the foreign key reference fields) are
+    stored for every resource
+
+__Raises__
+- `TableSchemaException`: raises on any error
+
+#### `versioned_relations.version`
+Current published version number
+
+__Returns__
+
+`int/None`: current version number (None if not loaded)
+
+#### `versioned_relations.versions`
+Live (retained) version numbers
+
+Versions are retained while they are current or pinned by
+an existing snapshot; unreferenced old versions are collected.
+
+__Returns__
+
+`int[]`: sorted list of retained version numbers
+
+#### `versioned_relations.load`
+```python
+versioned_relations.load(relations)
+```
+Load the original relations data.
+
+Every resource iterable is consumed exactly once (a single
+sequential pass) so generators and other one-shot iterables
+are supported. Afterwards the data is only changed by revisions.
+
+__Arguments__
+- __relations (dict)__: `{resource1: [{field1: value1, ...}, ...], ...}`
+
+__Raises__
+- `RevisionError`: if relations data is already loaded
+
+__Returns__
+
+`int`: number of the published initial version
+
+#### `versioned_relations.begin`
+```python
+versioned_relations.begin(revision_id=None)
+```
+Begin a new revision (patch) based on the current version.
+
+Operations applied to the revision are private until published:
+concurrent readers never observe a partially applied patch.
+
+__Arguments__
+- __revision_id (any)__: optional identifier carried by the revision
+    (e.g. to allow resubmission with the original number)
+
+__Raises__
+- `RevisionError`: if no relations data is loaded
+
+__Returns__
+
+`Revision`: revision to apply operations to
+
+#### `versioned_relations.publish`
+```python
+versioned_relations.publish(revision)
+```
+Atomically publish a revision as a new version.
+
+The whole patch becomes visible to new snapshots at once; if the
+revision has failed, nothing is published. A revision based on a
+version which is not current anymore conflicts and is rejected
+without overwriting the newer relations data.
+
+__Arguments__
+- __revision (Revision)__: revision to publish
+
+__Raises__
+- `RevisionError`: if the revision has failed or is foreign
+- `RevisionConflict`: if the revision base is not the current version
+
+__Returns__
+
+`int`: number of the published version
+
+#### `versioned_relations.snapshot`
+```python
+versioned_relations.snapshot()
+```
+Pin the current version and return a snapshot for reading.
+
+The snapshot always reflects one valid published version - the one
+current at its start - even while newer revisions are published.
+Close the snapshot (or use it as a context manager) to allow the
+store to collect the pinned version once it gets old.
+
+__Raises__
+- `RevisionError`: if no relations data is loaded
+
+__Returns__
+
+`RelationsSnapshot`: snapshot of the current version
+
+
 ### `validate`
 ```python
 validate(descriptor)
@@ -1379,6 +1518,20 @@ UnresolvedFKError(self, message, errors=[])
 Unresolved foreign key reference error (RelationError subclass).
 
 
+### `RevisionError`
+```python
+RevisionError(self, message, errors=[])
+```
+All relations revision errors (RelationError subclass).
+
+
+### `RevisionConflict`
+```python
+RevisionConflict(self, message, errors=[])
+```
+Stale revision conflict error (RevisionError subclass).
+
+
 ### `StorageError`
 ```python
 StorageError(self, message, errors=[])
@@ -1440,6 +1593,15 @@ $ make test
 ## Changelog
 
 Here described only breaking and the most important changes. The full changelog and documentation for all released versions can be found in the nicely formatted [commit history](https://github.com/frictionlessdata/tableschema-py/commits/master).
+
+#### v1.21
+
+- Added `VersionedRelations` - a versioned store of foreign key relations:
+    - the original relations data is read with a single sequential pass
+    - revisions (patches) are published atomically with conflict detection
+    - readers validate foreign keys against pinned version snapshots
+- `table.iter/read` now resolve relations when only `foreign_keys_values` is provided
+- `table.index_foreign_keys_values` reads every relation only once and shares sub-indexes between foreign keys using the same reference fields
 
 #### v1.20
 

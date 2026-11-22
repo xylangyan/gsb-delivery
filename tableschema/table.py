@@ -255,7 +255,7 @@ class Table(object):
                             cache['data'].add(values)
 
                 # Resolve relations
-                if relations:
+                if relations or foreign_keys_values:
                     if self.schema:
                         row_with_relations = dict(zip(headers, copy(row)))
                         for foreign_key in self.schema.foreign_keys:
@@ -297,7 +297,9 @@ class Table(object):
                                 for field in foreign_key['fields']:
                                     if type(row_with_relations[field]) is not dict:
                                         # no previous refValues injected on this field
-                                        row_with_relations[field] = refValue
+                                        # (copy the referenced row to keep
+                                        # the relations data immutable)
+                                        row_with_relations[field] = copy(refValue)
                                     else:
                                         # alreayd one ref, merging
                                         row_with_relations[field].update(refValue)
@@ -480,21 +482,30 @@ class Table(object):
         # [reference] [foreign_keys tuple] = { (foreign_keys_values, ) : one_keyedrow, ... }
         foreign_keys = defaultdict(dict)
         if self.schema:
+            # group the foreign keys by reference to read every relation
+            # only once (relations can be one-shot iterables) and to share
+            # the same sub-index between foreign keys using the same fields
+            reference_fields = OrderedDict()
             for fk in self.schema.foreign_keys:
-                # load relation data
                 relation = fk['reference']['resource']
-
+                fields = tuple(fk['reference']['fields'])
+                reference_fields.setdefault(relation, [])
+                if fields not in reference_fields[relation]:
+                    reference_fields[relation].append(fields)
+            for relation, fields_list in reference_fields.items():
                 # create a set of foreign keys
                 # to optimize we prepare index of existing values
                 # this index should use reference + foreign_keys as key
                 # cause many foreign keys may use the same reference
-                foreign_keys[relation][tuple(fk['reference']['fields'])] = {}
+                for fields in fields_list:
+                    foreign_keys[relation][fields] = {}
                 for row in relations[relation]:
-                    key = tuple([row[foreign_field] for foreign_field in fk['reference']['fields']])
-                    # here we should chose to pick the first or nth row which match
-                    # previous implementation picked the first, so be it
-                    if key not in foreign_keys[relation][tuple(fk['reference']['fields'])]:
-                        foreign_keys[relation][tuple(fk['reference']['fields'])][key] = row
+                    for fields in fields_list:
+                        key = tuple([row[foreign_field] for foreign_field in fields])
+                        # here we should chose to pick the first or nth row which match
+                        # previous implementation picked the first, so be it
+                        if key not in foreign_keys[relation][fields]:
+                            foreign_keys[relation][fields][key] = row
         return foreign_keys
 
     # Private

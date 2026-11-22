@@ -98,6 +98,18 @@ class UnresolvedFKError(RelationError):
     pass
 
 
+class RevisionError(RelationError):
+    """All relations revision errors (RelationError subclass).
+    """
+    pass
+
+
+class RevisionConflict(RevisionError):
+    """Stale revision conflict error (RevisionError subclass).
+    """
+    pass
+
+
 class StorageError(TableSchemaException):
     """All storage errors.
     """

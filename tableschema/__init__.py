@@ -14,6 +14,7 @@ from .table import Table
 from .schema import Schema
 from .field import Field
 from .storage import Storage
+from .relations import VersionedRelations
 from .validate import validate
 from .infer import infer
 from .schema import FailedCast
@@ -26,6 +27,8 @@ from .exceptions import IntegrityError
 from .exceptions import UniqueKeyError
 from .exceptions import RelationError
 from .exceptions import UnresolvedFKError
+from .exceptions import RevisionError
+from .exceptions import RevisionConflict
 from .exceptions import StorageError
 
 # Deprecated
