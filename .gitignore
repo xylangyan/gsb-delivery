@@ -1,0 +1,9 @@
+Gemfile.lock
+lib/edtf/*.output
+.rbx
+.ruby-version
+*.swp
+.bundle
+coverage
+pkg
+*.gem
