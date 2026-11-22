@@ -1,0 +1,777 @@
+# title: Remove left join on distinct derived table
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x;
+
+# title: Noop - DISTINCT ON does not make projected columns unique
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT ON (y.c)
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT ON (y.c)
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+
+# title: Remove left join on DISTINCT ON with grouped output
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT ON (y.b)
+    y.b
+  FROM y
+  GROUP BY y.b
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x;
+
+# title: Remove left join on DISTINCT ON with LIMIT 1
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT ON (y.b)
+    y.b
+  FROM y
+  LIMIT 1
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x;
+
+# title: Remove left join on grouped derived table
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b,
+    SUM(y.c)
+  FROM y
+  GROUP BY y.b
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x;
+
+# title: Remove left join on aggregate derived table
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    SUM(y.b) AS b
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x;
+
+# title: Noop - not all distinct columns in condition
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b,
+    y.c
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b,
+    y.c
+  FROM y
+) AS y
+  ON x.b = y.b;
+
+# title: Noop - not all grouped columns in condition
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b,
+    y.c
+  FROM y
+  GROUP BY
+    y.b,
+    y.c
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b,
+    y.c
+  FROM y
+  GROUP BY
+    y.b,
+    y.c
+) AS y
+  ON x.b = y.b;
+
+# title: Noop - not left join
+SELECT
+  x.a
+FROM x
+JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x
+JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+
+# title: Noop - unqualified columns
+SELECT
+  a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+
+# title: Noop - cross join
+SELECT
+  a
+FROM x
+CROSS JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y;
+SELECT
+  a
+FROM x
+CROSS JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y;
+
+# title: Noop - column is used
+SELECT
+  x.a,
+  y.b
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a,
+  y.b
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    y.b
+  FROM y
+) AS y
+  ON x.b = y.b;
+
+# title: Multiple group by columns
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b,
+    y.c + 1 AS d,
+    COUNT(1)
+  FROM y
+  GROUP BY y.b, y.c + 1
+) AS y
+  ON x.b = y.b
+  AND 1 = y.d;
+SELECT
+  x.a
+FROM x;
+
+# title: Chained left joins
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  GROUP BY y.b
+) AS y
+  ON x.b = y.b
+LEFT JOIN (
+  SELECT
+    y.b AS c
+  FROM y
+  GROUP BY y.b
+) AS z
+  ON y.b = z.c;
+SELECT
+  x.a
+FROM x;
+
+# title: CTE
+WITH z AS (
+  SELECT DISTINCT
+    y.b
+  FROM y
+)
+SELECT
+  x.a
+FROM x
+LEFT JOIN z
+  ON x.b = z.b;
+WITH z AS (
+  SELECT DISTINCT
+    y.b
+  FROM y
+)
+SELECT
+  x.a
+FROM x;
+
+# title: Noop - Not all grouped expressions are in outputs
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b
+  FROM y
+  GROUP BY
+    y.b,
+    y.c
+) AS y
+  ON x.b = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b
+  FROM y
+  GROUP BY
+    y.b,
+    y.c
+) AS y
+  ON x.b = y.b;
+
+# title: Cross join on aggregate derived table
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    SUM(y.b) AS b
+  FROM y
+) AS y;
+SELECT
+  x.a
+FROM x;
+
+# title: Cross join on derived table with LIMIT 1
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  LIMIT 1
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  LIMIT 1
+) AS y;
+
+# title: Cross join on derived table with no FROM clause
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    1 AS b,
+    2 AS c
+) AS y;
+SELECT
+  x.a
+FROM x;
+
+# title: Noop - cross join on non-aggregate subquery
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    y.b
+  FROM y
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    y.b
+  FROM y
+) AS y;
+
+
+# title: Do not remove left anti join
+SELECT
+  x.b
+FROM x
+LEFT ANTI JOIN (
+  SELECT
+    1 AS b
+) AS sub
+  ON x.b = sub.b;
+SELECT
+  x.b
+FROM x
+LEFT ANTI JOIN (
+  SELECT
+    1 AS b
+) AS sub
+  ON x.b = sub.b;
+
+# title: Cross join on FROM-less subquery with WHERE
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    1 AS b
+  WHERE
+    FALSE
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    1 AS b
+  WHERE
+    FALSE
+) AS y;
+
+# title: Cross join on aggregate subquery with HAVING
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  HAVING
+    FALSE
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  HAVING
+    FALSE
+) AS y;
+
+# title: Cross join on grouped subquery
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  GROUP BY
+    y.b
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  GROUP BY
+    y.b
+) AS y;
+
+# title: Cross join on subquery with OFFSET
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    1 AS b
+  OFFSET 1
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    1 AS b
+  OFFSET 1
+) AS y;
+
+# title: Cross join on subquery with QUALIFY
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  QUALIFY
+    ROW_NUMBER() OVER () > 1
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  QUALIFY
+    ROW_NUMBER() OVER () > 1
+) AS y;
+
+# title: Cross join on aggregate subquery with WHERE
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b
+  FROM y
+  WHERE
+    FALSE
+) AS y;
+SELECT
+  x.a
+FROM x;
+
+# title: Cross join on set-returning subquery
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    UNNEST(ARRAY(1, 1)) AS b
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    UNNEST(ARRAY(1, 1)) AS b
+) AS y;
+
+# title: Cross join on aggregate subquery with set-returning column
+# execute: true
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b,
+    UNNEST(ARRAY(1, 2)) AS c
+  FROM y
+) AS y;
+SELECT
+  x.a
+FROM x
+CROSS JOIN (
+  SELECT
+    COUNT(*) AS b,
+    UNNEST(ARRAY(1, 2)) AS c
+  FROM y
+) AS y;
+
+# title: Left join on set-returning subquery
+# execute: true
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    UNNEST(ARRAY(1, 1)) AS b
+) AS y
+  ON x.a = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    UNNEST(ARRAY(1, 1)) AS b
+) AS y
+  ON x.a = y.b;
+
+# title: Left join on subquery with FETCH
+# execute: true
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  FETCH FIRST 1 ROWS ONLY
+) AS y
+  ON x.a = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  FETCH FIRST 1 ROWS ONLY
+) AS y
+  ON x.a = y.b;
+
+# title: Left join on non-unique subquery
+# execute: true
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+) AS y
+  ON x.a = y.b;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+) AS y
+  ON x.a = y.b;
+
+# title: Remove left join on filtered subquery with LIMIT 1
+# execute: true
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  WHERE
+    y.b > 100
+  LIMIT 1
+) AS y
+  ON x.a = y.b;
+SELECT
+  x.a
+FROM x;
+
+# title: Preserve left join when CAST collapses distinct keys
+# execute: true
+SELECT x.a FROM x LEFT JOIN (SELECT DISTINCT t.b FROM (VALUES ('1'), ('01')) AS t(b)) AS y ON x.a = CAST(y.b AS INT) ORDER BY x.a;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT DISTINCT
+    t.b
+  FROM (VALUES
+    ('1'),
+    ('01')) AS t(b)
+) AS y
+  ON x.a = CAST(y.b AS INT)
+ORDER BY
+  x.a;
+
+# title: Preserve left join when TRY_CAST collapses grouped keys
+# execute: true
+SELECT x.a FROM x LEFT JOIN (SELECT t.b FROM (VALUES ('1'), ('01')) AS t(b) GROUP BY t.b) AS y ON TRY_CAST(y.b AS INT) = x.a ORDER BY x.a;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    t.b
+  FROM (VALUES
+    ('1'),
+    ('01')) AS t(b)
+  GROUP BY
+    t.b
+) AS y
+  ON TRY_CAST(y.b AS INT) = x.a
+ORDER BY
+  x.a;
+
+# title: Preserve inner join with USING on single-row aggregate
+# execute: true
+SELECT x.a FROM x JOIN (SELECT MIN(y.b) AS b FROM y) AS y USING (b) ORDER BY x.a;
+SELECT
+  x.a
+FROM x
+JOIN (
+  SELECT
+    MIN(y.b) AS b
+  FROM y
+) AS y
+  USING (b)
+ORDER BY
+  x.a;
+
+# title: Preserve NATURAL JOIN on single-row aggregate
+# execute: true
+SELECT x.a FROM x NATURAL JOIN (SELECT MIN(y.b) AS b FROM y) AS y ORDER BY x.a;
+SELECT
+  x.a
+FROM x
+NATURAL JOIN (
+  SELECT
+    MIN(y.b) AS b
+  FROM y
+) AS y
+ORDER BY
+  x.a;
+
+# title: Preserve RIGHT JOIN with USING on single-row aggregate when left is empty
+# execute: true
+SELECT empty_x.a FROM (SELECT x.a, x.b FROM x WHERE FALSE) AS empty_x RIGHT JOIN (SELECT MIN(y.b) AS b FROM y) AS y USING (b);
+SELECT
+  empty_x.a
+FROM (
+  SELECT
+    x.a,
+    x.b
+  FROM x
+  WHERE
+    FALSE
+) AS empty_x
+RIGHT JOIN (
+  SELECT
+    MIN(y.b) AS b
+  FROM y
+) AS y
+  USING (b);
+
+# title: Noop - UNION ALL derived table can repeat join keys
+# execute: true
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  UNION ALL
+  SELECT
+    y.b AS b
+  FROM y
+) AS y
+  ON x.a = y.b
+ORDER BY
+  x.a;
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  UNION ALL
+  SELECT
+    y.b AS b
+  FROM y
+) AS y
+  ON x.a = y.b
+ORDER BY
+  x.a;
+
+# title: Remove left join on UNION derived table
+# execute: true
+SELECT
+  x.a
+FROM x
+LEFT JOIN (
+  SELECT
+    y.b AS b
+  FROM y
+  UNION
+  SELECT
+    y.b AS b
+  FROM y
+) AS y
+  ON x.a = y.b
+ORDER BY
+  x.a;
+SELECT
+  x.a
+FROM x
+ORDER BY
+  x.a;
