@@ -25,8 +25,10 @@ module Roo
     require 'roo/excelx/coordinate'
     require 'roo/excelx/format'
     require 'roo/excelx/images'
+    require 'roo/excelx/drawing'
+    require 'roo/excelx/image_placement'
 
-    delegate [:styles, :workbook, :shared_strings, :rels_files, :sheet_files, :comments_files, :image_rels, :image_files] => :@shared
+    delegate [:styles, :workbook, :shared_strings, :rels_files, :sheet_files, :comments_files, :image_rels, :image_files, :drawing_files] => :@shared
     ExceedsMaxError = Class.new(StandardError)
 
     # initialization and opening of a spreadsheet file
@@ -105,6 +107,25 @@ module Roo
     def images(sheet = nil)
       images_names = sheet_for(sheet).images.map(&:last)
       images_names.map { |iname| image_files.find { |ifile| ifile[iname] } }
+    end
+
+    # Returns every image placement of the sheet with the original
+    # coordinates from its drawing anchor (1 based rows/columns, offsets
+    # and dimensions in EMU). The same media file can be placed several
+    # times, even on different sheets; each placement is returned on its
+    # own. A placement whose media entry is missing from the package is
+    # still returned (see ImagePlacement#missing?), which differs from a
+    # sheet without images, where an empty array is returned.
+    def image_placements(sheet = nil)
+      sheet_for(sheet).image_placements
+    end
+
+    # Returns the image placements of the sheet expressed in visible row
+    # numbers (hidden rows are collapsed). Cropped pictures whose top-left
+    # cell is hidden are not lent to a neighbouring row: they are not
+    # part of the result.
+    def visible_image_placements(sheet = nil)
+      sheet_for(sheet).visible_image_placements
     end
 
     # Returns the content of a spreadsheet-cell.
@@ -460,6 +481,11 @@ module Roo
           # Extracting drawing relationships to make images lists for each sheet
           nr = Regexp.last_match[1].to_i
           image_rels[nr - 1] = "#{@tmpdir}/roo_image_rels#{nr}"
+        when %r{drawings/drawing([0-9]+).xml$}
+          # Extracting the drawing itself to read anchors, offsets and
+          # cropping of each image placement
+          nr = Regexp.last_match[1].to_i
+          drawing_files[nr - 1] = "#{@tmpdir}/roo_drawing#{nr}.xml"
         end
 
         entry.extract(File.basename(path), destination_directory: File.dirname(path)) if path

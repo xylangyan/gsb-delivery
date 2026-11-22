@@ -4,7 +4,7 @@ module Roo
     class Sheet
       extend Forwardable
 
-      delegate [:styles, :workbook, :shared_strings, :rels_files, :sheet_files, :comments_files, :image_rels] => :@shared
+      delegate [:styles, :workbook, :shared_strings, :rels_files, :sheet_files, :comments_files, :image_rels, :image_files, :drawing_files] => :@shared
 
       attr_reader :images
 
@@ -12,8 +12,8 @@ module Roo
         @name = name
         @shared = shared
         @sheet_index = sheet_index
-        @images = Images.new(image_rels[sheet_index]).list
         @rels = Relationships.new(rels_files[sheet_index])
+        @images = Images.new(drawing_rels_path).list
         @comments = Comments.new(comments_files[sheet_index])
         @sheet = SheetDoc.new(sheet_files[sheet_index], @rels, shared, options)
       end
@@ -96,7 +96,76 @@ module Roo
         @sheet.dimensions
       end
 
+      # returns the 1 based numbers of the hidden rows in this sheet
+      def hidden_rows
+        @sheet.hidden_rows
+      end
+
+      # returns every image placement of this sheet with the original
+      # coordinates from its drawing anchor. The same media file can be
+      # placed several times; each placement is returned on its own.
+      def image_placements
+        @image_placements ||= build_image_placements
+      end
+
+      # returns the image placements expressed in visible row numbers
+      # (hidden rows are collapsed). Cropped pictures whose top-left cell
+      # is hidden are not lent to a neighbouring row: they are dropped.
+      def visible_image_placements
+        image_placements.filter_map { |placement| placement.in_visible_rows(hidden_rows) }
+      end
+
       private
+
+      # Internal: the index of the drawing attached to this sheet, found by
+      # following the sheet's own drawing relationship instead of assuming
+      # that sheet N uses drawing N.
+      def drawing_index
+        @drawing_index ||= begin
+          rel = @rels.to_a.values.find { |r| r['Type'].to_s.end_with?('/drawing') }
+          target = rel && rel['Target']
+          target && target[%r{drawing(\d+)\.xml}, 1]&.to_i
+        end
+      end
+
+      def drawing_rels_path
+        drawing_index && image_rels[drawing_index - 1]
+      end
+
+      def drawing_path
+        drawing_index && drawing_files[drawing_index - 1]
+      end
+
+      def build_image_placements
+        return [] unless drawing_path
+
+        entries = Images.new(drawing_rels_path).entries
+        Drawing.new(drawing_path).anchors.map do |anchor|
+          relationship_id = anchor.embed || anchor.link
+          entry = entries[relationship_id] || {}
+          media = entry[:name]
+          ImagePlacement.new(
+            anchor: anchor.type,
+            relationship_id: relationship_id,
+            name: anchor.name,
+            media: media,
+            path: media && image_files.find { |file| file[media] },
+            target: entry[:target],
+            external: entry[:external] || !anchor.link.nil?,
+            src_rect: anchor.src_rect,
+            row: anchor.from && anchor.from[:row] + 1,
+            col: anchor.from && anchor.from[:col] + 1,
+            to_row: anchor.to && anchor.to[:row] + 1,
+            to_col: anchor.to && anchor.to[:col] + 1,
+            row_offset: anchor.from && anchor.from[:row_offset],
+            col_offset: anchor.from && anchor.from[:col_offset],
+            to_row_offset: anchor.to && anchor.to[:row_offset],
+            to_col_offset: anchor.to && anchor.to[:col_offset],
+            width: anchor.ext && anchor.ext[:cx],
+            height: anchor.ext && anchor.ext[:cy]
+          )
+        end
+      end
 
       # Take an xml row and return an array of Excelx::Cell objects
       # optionally pad array to header width(assumed 1st row).

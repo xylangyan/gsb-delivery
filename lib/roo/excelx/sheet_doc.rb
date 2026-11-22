@@ -36,6 +36,11 @@ module Roo
         @dimensions ||= extract_dimensions
       end
 
+      # Returns the 1 based numbers of the hidden rows of the sheet.
+      def hidden_rows
+        @hidden_rows ||= extract_hidden_rows
+      end
+
       # Yield each row xml element to caller
       def each_row_streaming(&block)
         Roo::Utils.each_element(@path, 'row', &block)
@@ -235,6 +240,17 @@ module Roo
         Roo::Utils.each_element(@path, 'dimension') do |dimension|
           return dimension["ref"]
         end
+      end
+
+      def extract_hidden_rows
+        rows = []
+        doc.xpath('/worksheet/sheetData/row').each.with_index(1) do |row_xml, index|
+          hidden = row_xml['hidden']
+          next unless hidden == '1' || hidden == 'true'
+
+          rows << (row_xml['r'] ? row_xml['r'].to_i : index)
+        end
+        rows
       end
 
       def style_format(style)
