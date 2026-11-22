@@ -229,6 +229,71 @@ The cache key includes the configured URLs. An empty URL list does not reuse a
 cache entry fetched with the standard URLs; if no entry exists for the empty
 URL list, `tldextract` uses its bundled snapshot.
 
+### How to publish public and private rules independently
+
+Some deployments split one suffix rule source into its public and private
+sections and push each half from a separate pipeline. `SharedRuleCache` stores
+each response as an immutable, validated candidate and publishes only a
+mutually compatible public/private pair.
+
+Each response can carry its own upstream identifier and compatibility
+requirement as metadata comments:
+
+```text
+// VERSION: P2
+com
+co.uk
+```
+
+```text
+// VERSION: S3
+// REQUIRES-PUBLIC: >=P2
+// ===BEGIN PRIVATE DOMAINS===
+blogspot.com
+// ===END PRIVATE DOMAINS===
+```
+
+Submit local responses through an extractor sharing one cache directory:
+
+```python
+>>> import tempfile
+
+>>> public_text = "// VERSION: P2\ncom\nco.uk\n"
+>>> private_text = (
+...     "// VERSION: S3\n// REQUIRES-PUBLIC: >=P2\n"
+...     "// ===BEGIN PRIVATE DOMAINS===\nblogspot.com\n"
+...     "// ===END PRIVATE DOMAINS===\n"
+... )
+>>> writer = tldextract.TLDExtract(cache_dir=tempfile.mkdtemp())
+>>> writer.submit_private_rules(private_text).status.value
+'pending_pairing'
+>>> writer.submit_public_rules(public_text).status.value
+'active'
+>>> writer("waiterrant.blogspot.com", include_psl_private_domains=True).suffix
+'blogspot.com'
+```
+
+- A complete private list with no compatible public list is reported as
+  `pending_pairing`. It is not invalid data, and it does not replace the last
+  compatible pair.
+- A late older version never overwrites a newer published version.
+- Invalid text is rejected without changing the published pair.
+- A write that fails while storing an object or replacing `manifest.json` leaves
+  readers on the previous pair.
+- `receipts()` persists each outcome, distinguishing `active`, `pending_pairing`,
+  `already_used`, `superseded`, `conflict`, `rejected`, and `save_failed`.
+- Publication uses one atomic replacement of `<cache>/shared-suffix-rules/
+  <namespace>/manifest.json`, so another process sees either the old pair or
+  the new pair, never a mixture.
+
+Set the namespace to keep independent rule sources apart when they share a
+cache directory. `stage_public_rules` and `stage_private_rules` store a
+candidate without publishing it; `publish_rules()` reconciles everything
+stored and publishes the best compatible pair.
+
+With no published pair, cold starts keep the existing behavior: fetch the
+configured URLs, or fall back to the bundled snapshot when configured to do so.
+
 ### URL validation
 
 `tldextract` accepts any string and is very lenient. It prioritizes ease of use

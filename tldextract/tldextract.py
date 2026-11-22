@@ -54,6 +54,13 @@ from .remote import (
     looks_like_ip,
     looks_like_ipv6,
 )
+from .rule_updates import (
+    DEFAULT_NAMESPACE,
+    ActiveRules,
+    PublishReceipt,
+    SharedRuleCache,
+    UpdateReceipt,
+)
 from .suffix_list import get_suffix_lists
 
 
@@ -334,6 +341,7 @@ class TLDExtract:
         include_psl_private_domains: bool = False,
         extra_suffixes: Sequence[str] = (),
         cache_fetch_timeout: str | float | None = CACHE_TIMEOUT,
+        rule_namespace: str | None = None,
     ) -> None:
         """Construct a callable for extracting subdomain, domain, and suffix components from a URL.
 
@@ -383,6 +391,11 @@ class TLDExtract:
 
         When set this way, the same timeout value will be used for both connect
         and read timeouts. The older `TLDEXTRACT_CACHE_TIMEOUT` is also supported.
+
+        `rule_namespace` selects the shared, versioned rule store within
+        `cache_dir`. Instances that use the same namespace publish and read the
+        same compatible public/private pair, even across processes. The default
+        namespace is `"default"`. See `SharedRuleCache` for the publishing API.
         """
         if isinstance(suffix_list_urls, _UseEnvironmentUrls):
             suffix_list_urls = _suffix_list_urls_from_env()
@@ -402,13 +415,15 @@ class TLDExtract:
         self.include_psl_private_domains = include_psl_private_domains
         self.extra_suffixes = extra_suffixes
         self._extractor: _PublicSuffixListTLDExtractor | None = None
-
         self.cache_fetch_timeout = (
             float(cache_fetch_timeout)
             if isinstance(cache_fetch_timeout, str)
             else cache_fetch_timeout
         )
         self._cache = DiskCache(cache_dir)
+        self.rule_namespace = _rule_namespace(rule_namespace)
+        self._rule_cache = SharedRuleCache(self._cache, namespace=self.rule_namespace)
+        self._active_rules: ActiveRules | None = None
 
     def __call__(
         self,
@@ -577,9 +592,99 @@ class TLDExtract:
             session: Optional requests.Session for HTTP configuration
         """
         self._extractor = None
+        self._active_rules = None
         self._cache.clear()
+        self._rule_cache.clear()
         if fetch_now:
             self._get_tld_extractor(session=session)
+
+    @property
+    def active_rules(self) -> ActiveRules | None:
+        """The shared, versioned rule pair currently backing this extractor.
+
+        This is the published pair from :class:`tldextract.rule_updates.SharedRuleCache`,
+        or ``None`` when no pair has been published for this instance's
+        namespace.
+        """
+        if self._active_rules is None:
+            self._active_rules = self._rule_cache.active()
+        return self._active_rules
+
+    def submit_public_rules(
+        self,
+        text: str,
+        *,
+        version: str | None = None,
+        sequence: int | None = None,
+    ) -> UpdateReceipt:
+        """Stage and publish a public rule list into the shared compatible cache."""
+        receipt = self._rule_cache.submit_public(
+            text, version=version, sequence=sequence
+        )
+        self._refresh_shared_rules(receipt)
+        return receipt
+
+    def stage_public_rules(
+        self,
+        text: str,
+        *,
+        version: str | None = None,
+        sequence: int | None = None,
+    ) -> UpdateReceipt:
+        """Validate and store a public list without publishing it."""
+        return self._rule_cache.stage_public(text, version=version, sequence=sequence)
+
+    def submit_private_rules(
+        self,
+        text: str,
+        *,
+        version: str | None = None,
+        sequence: int | None = None,
+        requires_public: str | None = None,
+        requires_public_sequence: int | None = None,
+    ) -> UpdateReceipt:
+        """Stage and publish a private rule list into the shared compatible cache."""
+        receipt = self._rule_cache.submit_private(
+            text,
+            version=version,
+            sequence=sequence,
+            requires_public=requires_public,
+            requires_public_sequence=requires_public_sequence,
+        )
+        self._refresh_shared_rules(receipt)
+        return receipt
+
+    def stage_private_rules(
+        self,
+        text: str,
+        *,
+        version: str | None = None,
+        sequence: int | None = None,
+        requires_public: str | None = None,
+        requires_public_sequence: int | None = None,
+    ) -> UpdateReceipt:
+        """Validate and store a private list without publishing it."""
+        return self._rule_cache.stage_private(
+            text,
+            version=version,
+            sequence=sequence,
+            requires_public=requires_public,
+            requires_public_sequence=requires_public_sequence,
+        )
+
+    def publish_rules(self) -> PublishReceipt:
+        """Reconcile every stored candidate and publish the best compatible pair."""
+        receipt = self._rule_cache.publish()
+        if receipt.changed:
+            self._extractor = None
+            self._active_rules = None
+        return receipt
+
+    def _refresh_shared_rules(self, receipt: UpdateReceipt) -> None:
+        if not receipt.changed:
+            return
+        self._extractor = None
+        self._active_rules = None
 
     @property
     def tlds(self, session: requests.Session | None = None) -> list[str]:
@@ -598,20 +703,30 @@ class TLDExtract:
         settings passed to __init__:
 
         1. Memoized on `self`
-        2. Local system _cache file
-        3. Remote PSL, over HTTP
-        4. Bundled PSL snapshot file
+        2. Published compatible pair in the shared versioned rule cache
+        3. Local system _cache file
+        4. Remote PSL, over HTTP
+        5. Bundled PSL snapshot file
         """
         if self._extractor:
             return self._extractor
 
-        public_tlds, private_tlds = get_suffix_lists(
-            cache=self._cache,
-            urls=self.suffix_list_urls,
-            cache_fetch_timeout=self.cache_fetch_timeout,
-            fallback_to_snapshot=self.fallback_to_snapshot,
-            session=session,
-        )
+        active = self._rule_cache.active()
+        if active is not None:
+            # Keep both halves on the extractor so a per-call private-mode
+            # override still sees the private rules.
+            public_tlds = active.public_tlds
+            private_tlds = active.private_tlds
+            self._active_rules = active
+        else:
+            self._active_rules = None
+            public_tlds, private_tlds = get_suffix_lists(
+                cache=self._cache,
+                urls=self.suffix_list_urls,
+                cache_fetch_timeout=self.cache_fetch_timeout,
+                fallback_to_snapshot=self.fallback_to_snapshot,
+                session=session,
+            )
 
         if not any([public_tlds, private_tlds, self.extra_suffixes]):
             raise ValueError("No tlds set. Cannot proceed without tlds.")
@@ -640,6 +755,13 @@ def _suffix_list_urls_from_env() -> Sequence[str]:
             source = pathlib.Path(os.path.abspath(source)).as_uri()
         urls.append(source)
     return urls
+
+
+def _rule_namespace(explicit: str | None) -> str:
+    """Resolve the shared rule namespace for a configured source."""
+    if explicit is not None and explicit.strip():
+        return explicit.strip()
+    return DEFAULT_NAMESPACE
 
 
 TLD_EXTRACTOR = TLDExtract()

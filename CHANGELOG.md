@@ -3,6 +3,17 @@
 After upgrading, update your cache file by deleting it or via `tldextract
 --update`.
 
+## Unreleased
+
+* Features
+  * Add `SharedRuleCache` for independently published public and private rule
+    lists. It validates each response, stores immutable candidates, and
+    publishes only mutually compatible pairs via one atomically replaced
+    manifest. A complete but unpaired private list is reported as
+    `pending_pairing` rather than rejected. Add `TLDExtract.submit_public_rules`,
+    `submit_private_rules`, `stage_public_rules`, `stage_private_rules`,
+    `publish_rules`, and `active_rules`.
+
 ## 5.4.0 (2026-10-03)
 
 * Features
