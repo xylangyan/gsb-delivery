@@ -1,0 +1,69 @@
+site_name: apischema
+repo_name: wyfo/apischema
+repo_url: https://github.com/wyfo/apischema
+
+theme:
+  name: material
+  palette:
+  - media: "(prefers-color-scheme: light)"
+    scheme: default
+    primary: green
+    accent: indigo
+    toggle:
+      icon: material/brightness-4
+      name: "Switch to dark mode"
+  - media: "(prefers-color-scheme: dark)"
+    scheme: slate
+    primary: green
+    accent: indigo
+    toggle:
+      icon: material/brightness-7
+      name: "Switch to light mode"
+
+nav:
+- index.md
+- data_model.md
+- de_serialization.md
+- json_schema.md
+- validation.md
+- Conversions: conversions.md
+- GraphQL:
+  - Overview: graphql/overview.md
+  - graphql/data_model_and_resolvers.md
+  - graphql/schema.md
+  - graphql/relay.md
+- Examples:
+  - examples/sqlalchemy_support.md
+  - examples/pydantic_support.md
+  - examples/attrs_support.md
+  - examples/subclass_union.md
+  - examples/subclass_tagged_union.md
+  - examples/recoverable_fields.md
+  - examples/inherited_deserializer.md
+- optimizations_and_benchmark.md
+- difference_with_pydantic.md
+- Releases: https://github.com/wyfo/apischema/releases
+
+
+markdown_extensions:
+- pymdownx.highlight:
+    anchor_linenums: true
+- pymdownx.inlinehilite
+- pymdownx.snippets
+- pymdownx.superfences
+- markdown_include.include:
+    base_path: examples
+- toc:
+    permalink: True
+#    toc_depth: 3
+- admonition
+
+plugins:
+- search
+- exclude:
+    glob:
+    - requirements.txt
+
+extra:
+  version:
+    provider: mike
