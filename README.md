@@ -31,11 +31,13 @@ A Python implementation of the [Table Schema](http://specs.frictionlessdata.io/t
     - [Working with Table](#working-with-table)
     - [Working with Schema](#working-with-schema)
     - [Working with Field](#working-with-field)
+    - [Working with Reconciler](#working-with-reconciler)
   - [API Reference](#api-reference)
     - [`cli`](#cli)
     - [`Table`](#table)
     - [`Schema`](#schema)
     - [`Field`](#field)
+    - [`Reconciler`](#reconciler)
     - [`Storage`](#storage)
     - [`validate`](#validate)
     - [`infer`](#infer)
@@ -329,6 +331,42 @@ Data values can be cast to native Python objects with a Field instance. Type ins
 Casting a value will check the value is of the expected type, is in the correct format, and complies with any constraints imposed by a schema. E.g. a date value (in ISO 8601 format) can be cast with a DateType instance. Values that can't be cast will raise an `InvalidCastError` exception.
 
 Casting a value that doesn't meet the constraints will raise a `ConstraintError` exception.
+
+### Working with Reconciler
+
+```python
+from tableschema import Reconciler
+
+reconciler = Reconciler(locales=[
+    {'decimalChar': '.', 'groupChar': ','},
+    {'decimalChar': ',', 'groupChar': '.'},
+])
+
+# Historical expense rows mix the two locale conventions, so `2,400` can
+# be read as two magnitudes. Each bill is reconciled independently.
+bill = reconciler.begin_bill()
+bill.add_row(1, {'base': '2,400', 'fee': '1,200', 'rate': '50%'})
+bill.add_row(2, {'base': '4.00', 'fee': '2.00', 'rate': '50%'})
+
+# While evidence is pending only unconfirmed items are reported
+bill.unconfirmed # -> [1]
+bill.rows[0]['base'] # -> None (no confirmed amount at a wrong magnitude)
+
+# The authoritative billing base total pins the readings down
+bill.set_base_total('6.40')
+bill.rows[0]['base'] # -> Decimal('2.4')
+bill.rows[0]['fee'] # -> Decimal('1.2')
+bill.status # -> 'reconciled'
+```
+
+A row is only confirmed when the account evidence leaves a single reading: `fee == base * rate` must hold exactly (checked with exact arithmetic, immune to the current decimal context precision), and the row bases of a bill must add up to its authoritative total when one is provided. Without such evidence an ambiguous row stays unconfirmed — ordinary `minimum`/`maximum` bounds are checked against determined amounts but never used to pick a reading. Values that are already cast (e.g. numbers read back from a storage) are compared as canonical numbers without re-applying locale or percent semantics.
+
+Errors trace back to the source data via `row_number` and `column` attributes:
+- `NumberSyntaxError` — a value can't be read as a number under any candidate locale
+- `ReconciliationError` — no reading matches the row or bill account evidence
+- `AmountLimitError` — a determined amount exceeds the configured bounds
+
+Callers that don't opt into reconciliation keep the original casting behavior.
 
 ## API Reference
 
@@ -1040,6 +1078,88 @@ __Arguments__
 __Returns__
 
 `bool`: returns if value is compliant to the field
+
+
+### `Reconciler`
+```python
+Reconciler(locales=None,
+           base_field='base',
+           fee_field='fee',
+           rate_field='rate',
+           minimum=None,
+           maximum=None)
+```
+Reconcile expense rows whose numbers mix locale conventions.
+
+__Arguments__
+- __locales (dict[])__: candidate locale descriptors, each supporting `decimalChar`, `groupChar` and optionally `currency` with `currencyPosition` ('prefix' or 'suffix'). Defaults to the two classic conventions: `.` decimal with `,` grouping and `,` decimal with `.` grouping.
+- __base_field/fee_field/rate_field (str)__: mapping keys of the billing base, the fee and the rate
+- __minimum/maximum (any)__: canonical numeric bounds checked only against determined amounts
+
+#### `reconciler.begin_bill`
+```python
+reconciler.begin_bill()
+```
+Start a new independent bill reconciliation. Row numbers are scoped to the returned bill.
+
+__Returns__
+
+`BillReconciliation`: fresh bill
+
+#### `reconciler.reconcile_bill`
+```python
+reconciler.reconcile_bill(rows, base_total=None)
+```
+Reconcile one bill in a single call.
+
+__Arguments__
+- __rows ((int, dict)[])__: `(row_number, mapping)` pairs
+- __base_total (any)__: authoritative billing base total if trusted
+
+__Returns__
+
+`BillReconciliation`: the sealed bill
+
+#### `bill.add_row`
+```python
+bill.add_row(row_number, mapping)
+```
+Add one expense row of the bill.
+
+__Raises__
+- `NumberSyntaxError`: a value can't be read under any locale
+- `ReconciliationError`: no reading satisfies `fee == base * rate`
+- `AmountLimitError`: the determined amount exceeds the bounds
+
+#### `bill.set_base_total`
+```python
+bill.set_base_total(total)
+```
+Provide the authoritative billing base total after all rows were read. Only readings whose bases add up to the total survive.
+
+__Raises__
+- `NumberSyntaxError`: the total is not a canonical number
+- `ReconciliationError`: no combination of readings adds up
+- `AmountLimitError`: a newly determined amount exceeds the bounds
+
+#### `bill.close`
+```python
+bill.close()
+```
+Seal the bill; unconfirmed rows stay ambiguous.
+
+__Returns__
+
+`str`: the final bill status
+
+#### `bill.status`
+Bill status: 'pending' while evidence may still arrive, otherwise 'reconciled' when every row is confirmed else 'ambiguous'.
+
+#### `bill.rows`
+Per-row results in the order rows were added. Each entry has `row_number`, `status` ('confirmed' or 'unconfirmed'), `base`/`fee`/`rate` (Decimals when confirmed, otherwise None) and `candidates` (the surviving readings of an unconfirmed row).
+
+#### `bill.unconfirmed`
+Numbers of the rows still waiting for disambiguating evidence.
 
 
 ### `Storage`

@@ -17,6 +17,11 @@ from .storage import Storage
 from .validate import validate
 from .infer import infer
 from .schema import FailedCast
+from .reconcile import Reconciler
+from .reconcile import BillReconciliation
+from .reconcile import ReconciliationError
+from .reconcile import NumberSyntaxError
+from .reconcile import AmountLimitError
 from .exceptions import DataPackageException
 from .exceptions import TableSchemaException
 from .exceptions import LoadError
