@@ -8,6 +8,18 @@ All notable changes to this project will be documented in this file.
 `Unreleased`_
 -------------
 
+Added
+^^^^^
+
+* Added settleable :class:`Batch<dramatiq.batches.Batch>` support for
+  crawl-style jobs that discover continuation pages or new sites while
+  running.  A batch tracks per-site obligations behind a versioned
+  compare-and-swap backend, only settles once every accepted obligation
+  has explicit completion, cancellation or termination evidence, and
+  records late results without turning a stopped promise into new work.
+  The optional ``BatchSettlements`` middleware drives completion,
+  discovery and one-shot settlement callbacks from stamped messages.
+
 Fixed
 ^^^^^
 

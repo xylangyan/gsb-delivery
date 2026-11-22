@@ -79,6 +79,8 @@ setup(
     long_description_content_type="text/markdown",
     packages=[
         "dramatiq",
+        "dramatiq.batches",
+        "dramatiq.batches.backends",
         "dramatiq.brokers",
         "dramatiq.middleware",
         "dramatiq.rate_limits",

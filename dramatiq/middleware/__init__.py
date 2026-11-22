@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from .age_limit import AgeLimit
 from .asyncio import AsyncIO
+from .batch_settlements import BatchSettlements, stamp_message
 from .callbacks import Callbacks
 from .current_message import CurrentMessage
 from .group_callbacks import GroupCallbacks
@@ -40,6 +41,7 @@ __all__ = [
     # Middlewares
     "AgeLimit",
     "AsyncIO",
+    "BatchSettlements",
     "Callbacks",
     "CurrentMessage",
     "GroupCallbacks",
@@ -49,6 +51,7 @@ __all__ = [
     "ShutdownNotifications",
     "TimeLimit",
     "TimeLimitExceeded",
+    "stamp_message",
 ]
 
 

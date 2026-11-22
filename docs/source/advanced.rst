@@ -440,3 +440,79 @@ at arbitrary depth, you may find the dramatiq-workflow_ package
 useful.
 
 .. _dramatiq-workflow: https://github.com/Outset-AI/dramatiq-workflow
+
+
+Settleable Batches
+^^^^^^^^^^^^^^^^^^
+
+A |group| is fixed at dispatch time, but crawl-style jobs often learn
+about continuation pages or entirely new sites while they are running.
+A :class:`~dramatiq.batches.Batch` tracks those *obligations* and gives
+you a precise rule for when the run can be settled: every accepted
+obligation must have explicit completion, cancellation or termination
+evidence.  A branch that a page might discover does not count until the
+page submits it, so an unknown branch can never settle the batch early.
+
+Start by registering only the obligations you already know about::
+
+    from dramatiq.batches import Batch
+    from dramatiq.batches.backends import RedisBatchStateBackend
+
+    backend = RedisBatchStateBackend()
+    batch = Batch.open(
+        "nightly-1",
+        backend=backend,
+        obligations=[
+            {"key": "East1", "site": "East"},
+            {"key": "West1", "site": "West"},
+        ],
+    )
+
+A page submission completes the current page and registers the
+continuation it discovered atomically, so there is never a committed
+state where the page is complete but its continuation is unaccounted
+for::
+
+    batch.submit_page(
+        "East1",
+        range={"pages": [1]},
+        discovered=[{"key": "East2", "site": "East"}],
+    )
+
+Re-registering the same key is an idempotent no-op, which is what makes
+a lost registration receipt safe to retry after a broker restart.  The
+same key can never become two obligations.
+
+Administrative stop commands pin the batch version they were issued
+against.  A command carrying an older version raises
+:class:`~dramatiq.batches.BatchVersionConflict` instead of clobbering a
+newer registration::
+
+    batch.terminate_obligation("East2", effective_version=batch.version)
+    batch.cancel_obligation("East3", effective_version=batch.version)
+
+If a result arrives after the cancellation or termination, it is kept as
+late material on that obligation; it never reopens the obligation or
+turns the old promise into new work.
+
+Settlement only succeeds when nothing is left pending and produces a
+single settlement version with the completion range of every site::
+
+    if batch.can_settle:
+        settlement = batch.settle()
+
+Settling does not wait for the next run; an independent batch settles
+on its own schedule.  To drive all of this automatically from message
+processing, add the |BatchSettlements| middleware and stamp each work
+message with the obligation it fulfills::
+
+    from dramatiq.middleware import BatchSettlements, stamp_message
+
+    broker.add_middleware(BatchSettlements(backend))
+    broker.enqueue(stamp_message(crawl.message("East", 1), "nightly-1", "East1"))
+
+An actor may then return ``{"range": ..., "discovered": [...]}``; the
+middleware completes the obligation, accepts and enqueues the stamped
+continuation messages, and fires the batch's settlement callbacks
+exactly once.  Existing |GroupCallbacks| keep working unchanged.
+

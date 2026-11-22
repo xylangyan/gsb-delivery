@@ -107,11 +107,13 @@ Optional Middleware
 The following middleware classes are available, but not enabled by default.
 
 .. autoclass:: dramatiq.middleware.AsyncIO
+.. autoclass:: dramatiq.middleware.BatchSettlements
 .. autoclass:: dramatiq.middleware.CurrentMessage
    :members: get_current_message
    :member-order: bysource
 .. autoclass:: dramatiq.middleware.GroupCallbacks
 .. autoclass:: dramatiq.middleware.prometheus.Prometheus
+.. autofunction:: dramatiq.middleware.stamp_message
 
 .. py:class:: dramatiq.results.Results
    :no-index:
@@ -213,6 +215,57 @@ Barriers
 
 .. autoclass:: dramatiq.rate_limits.Barrier
    :members:
+
+
+Batches
+-------
+
+Batches track per-site page obligations that may gain continuation
+pages while work is in progress.  A batch can only be settled once
+every accepted obligation has explicit completion, cancellation or
+termination evidence.
+
+Batch Backends
+^^^^^^^^^^^^^^
+
+Batch state backends store one versioned document per batch and
+expose a compare-and-swap so concurrent registrations and resolutions
+are safe.
+
+.. autoclass:: dramatiq.batches.BatchStateBackend
+   :members:
+.. autoclass:: dramatiq.batches.backends.RedisBatchStateBackend
+   :show-inheritance:
+.. autoclass:: dramatiq.batches.backends.StubBatchStateBackend
+   :show-inheritance:
+
+Batch
+^^^^^
+
+.. autoclass:: dramatiq.batches.Batch
+   :members:
+
+Batch Errors
+^^^^^^^^^^^^
+
+.. autoexception:: dramatiq.batches.BatchError
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.BatchNotFound
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.BatchAlreadyExists
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.BatchSettled
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.BatchVersionConflict
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.BatchOpen
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.ObligationNotFound
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.ObligationClosed
+   :show-inheritance:
+.. autoexception:: dramatiq.batches.DuplicateObligation
+   :show-inheritance:
 
 
 Workers
