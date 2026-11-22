@@ -1,0 +1,310 @@
+﻿import jsonata
+import pytest
+from jsonata.regex_engine import default_regex_engine
+
+
+#
+# see https://docs.jsonata.org/string-functions#string
+# 
+class TestString:
+
+    def test_string(self):
+        res = jsonata.Jsonata("$string($)").evaluate("abc")
+        assert res == "abc"
+
+    def test_boolean(self):
+        assert jsonata.Jsonata("$string($)").evaluate(True) == "true"
+
+    def test_number(self):
+        assert jsonata.Jsonata("$string(5)").evaluate(None) == "5"
+
+    def test_large_integer(self):
+        # Integers below 1e21 keep all their digits, as in jsonata-js
+        assert jsonata.Jsonata("$string($)").evaluate(5890840712243076) == "5890840712243076"
+        assert jsonata.Jsonata("'id-' & $").evaluate(5890840712243076) == "id-5890840712243076"
+        assert jsonata.Jsonata("$string(1e20)").evaluate(None) == "100000000000000000000"
+        assert jsonata.Jsonata("$string(1e21)").evaluate(None) == "1e+21"
+        assert jsonata.Jsonata("$string(123456789.123456789)").evaluate(None) == "123456789.123457"
+        # Above 2^53 the digits are those of the shortest decimal for the double, as in JavaScript
+        assert jsonata.Jsonata("$string(1.0000000000000001e18)").evaluate(None) == "1000000000000000100"
+        assert jsonata.Jsonata("$string($)").evaluate(2 ** 60) == "1152921504606847000"
+        # From 1e21 integers have an exponent, but are not rounded either
+        assert jsonata.Jsonata("$string(1.2345678901234568e21)").evaluate(None) == "1.2345678901234568e+21"
+        assert jsonata.Jsonata("$string(-1.2345678901234568e21)").evaluate(None) == "-1.2345678901234568e+21"
+        assert jsonata.Jsonata("$string($)").evaluate(10 ** 21 - 1) == "1e+21"
+
+    def test_rounded_number(self):
+        # Non-integers are rounded to 15 significant digits, with no exponent if that leaves an integer
+        assert jsonata.Jsonata("$string(1.1 * 100)").evaluate(None) == "110"
+        assert jsonata.Jsonata("'total: ' & 2.3 * 100").evaluate(None) == "total: 230"
+        assert jsonata.Jsonata("$string(1e-7)").evaluate(None) == "1e-7"
+        # Halves are rounded up, as toPrecision does
+        assert jsonata.Jsonata("$string(100000000000000.5)").evaluate(None) == "100000000000001"
+
+    def test_array(self):
+        assert jsonata.Jsonata("[1..5].$string()").evaluate(None) == ["1", "2", "3", "4", "5"]
+
+    def test_map(self):
+        assert jsonata.Jsonata("$string($)").evaluate({}) == "{}"
+
+    def test_map2(self):
+        assert jsonata.Jsonata("$string($)").evaluate({"x": 1}) == "{\"x\":1}"
+
+    def test_escape(self):
+        assert jsonata.Jsonata("$string($)").evaluate({"a": str('"')}) == "{\"a\":\"\\\"\"}"
+        assert jsonata.Jsonata("$string($)").evaluate({"a": str('\\')}) == "{\"a\":\"\\\\\"}"
+        assert jsonata.Jsonata("$string($)").evaluate({"a": str('\t')}) == "{\"a\":\"\\t\"}"
+        assert jsonata.Jsonata("$string($)").evaluate({"a": str('\n')}) == "{\"a\":\"\\n\"}"
+        assert jsonata.Jsonata("$string($)").evaluate({"a": "</"}) == "{\"a\":\"</\"}"
+
+    def test_replace(self):
+        assert jsonata.Jsonata("$replace('hello', '.', '')").evaluate(None) == "hello"
+        assert jsonata.Jsonata("$replace('hello', 'l', 'x')").evaluate(None) == "hexxo"
+        assert jsonata.Jsonata("$replace('h.ello', '.', '')").evaluate(None) == "hello"
+        assert jsonata.Jsonata("$replace('h.e.l.l.o', '.', '',2)").evaluate(None) == "hel.l.o"
+
+    def test_regex(self):
+        assert (jsonata.Jsonata("($matcher := $eval('/^' & 'foo' & '/i'); $.$spread()[$.$keys() ~> $matcher])")
+                .evaluate({"foo": 1, "bar": 2}) == {"foo": 1})
+
+    def test_regex_literal(self):
+        expr = jsonata.Jsonata("/^test.*$/")
+        result = expr.evaluate(None)
+        assert result.pattern == "^test.*$"
+
+    def test_eval_regex(self):
+        expr = jsonata.Jsonata("$eval('/^test.*$/')")
+        result = expr.evaluate(None)
+        assert result.pattern == "^test.*$"
+
+    def test_eval_regex_check_answer_data(self):
+        expr = jsonata.Jsonata("(\n    $matcher := $eval('/l/');\n    ('Hello World' ~> $matcher);\n)")
+        result = expr.evaluate(None)
+        assert result["match"] == "l"
+        assert result["start"] == 2
+        assert result["end"] == 3
+        assert result["groups"] == ["l"]
+        assert callable(result["next"].function)
+
+    def test_eval_regex_call_next_and_check_result(self):
+        expr = jsonata.Jsonata("(\n    $matcher := $eval('/l/');\n    ('Hello World' ~> $matcher).next();\n)")
+        result = expr.evaluate(None)
+        assert result["match"] == "l"
+        assert result["start"] == 3
+        assert result["end"] == 4
+        assert result["groups"] == ["l"]
+
+    def test_eval_sees_enclosing_variable_binding(self):
+        # $eval's dynamically-parsed expression must see variables bound in
+        # the enclosing scope (here, via an in-expression := assignment),
+        # not just the static top-level environment.
+        expr = jsonata.Jsonata('($x := 5; $eval("$x + 1"))')
+        assert expr.evaluate(None) == 6
+
+    def test_eval_sees_explicit_top_level_bindings(self):
+        # Same as above, but for bindings passed via evaluate()'s bindings
+        # argument rather than an in-expression assignment.
+        expr = jsonata.Jsonata('$eval("$x")')
+        assert expr.evaluate(None, {"x": 42}) == 42
+
+    def test_eval_unaffected_by_sibling_argument_scope(self):
+        # $eval's second (focus) argument is evaluated before its own body
+        # runs, and here contains a nested block with its own environment.
+        # Without saving/restoring the evaluation context around each
+        # nested eval() call, evaluating that sibling argument would leave
+        # the tracked "current" environment pointing at the inner block's
+        # scope, causing $eval to resolve $x (from the outer scope) as
+        # undefined instead of 5.
+        expr = jsonata.Jsonata('($x := 5; $eval("$x", (($y := 1; $y))))')
+        assert expr.evaluate(None) == 5
+
+    #
+    # Additional $split tests
+    #   
+    def test_split(self):
+        # Splitting on an undefined value
+        res = jsonata.Jsonata("$split(a, '-')").evaluate({})
+        assert res == None
+
+        # Splitting on an undefined value, equivalent to above
+        res = jsonata.Jsonata("a ~> $split('-')").evaluate({})
+        assert res == None
+
+        # Splitting empty string with empty separator must return empty list
+        res = jsonata.Jsonata("$split('', '')").evaluate(None)
+        assert res == []
+
+        # Split characters with limit
+        res = jsonata.Jsonata("$split('a1b2c3d4', '', 4)").evaluate(None)
+        assert res == ["a", "1", "b", "2"]
+
+        # Check string is not treated as regexp
+        res = jsonata.Jsonata("$split('this..is.a.test', '.')").evaluate(None)
+        # System.out.println( Functions.string(res, false))
+        assert res == ["this", "", "is", "a", "test"]
+
+        # Check trailing empty strings
+        res = jsonata.Jsonata("$split('this..is.a.test...', '.')").evaluate(None)
+        # System.out.println( Functions.string(res, false))
+        assert res == ["this", "", "is", "a", "test", "", "", ""]
+
+        # Check trailing empty strings
+        res = jsonata.Jsonata("$split('this..is.a.test...', /\\./)").evaluate(None)
+        assert res == ["this", "", "is", "a", "test", "", "", ""]
+
+        # Check string is not treated as regexp, trailing empty strings, and limit
+        res = jsonata.Jsonata("$split('this.*.*is.*a.*test.*.*.*.*.*.*', '.*', 8)").evaluate(None)
+        assert res == ["this", "", "is", "a", "test", "", "", ""]
+
+        # Escaped regexp, trailing empty strings, and limit
+        res = jsonata.Jsonata("$split('this.*.*is.*a.*test.*.*.*.*.*.*', /\\.\\*/, 8)").evaluate(None)
+        assert res == ["this", "", "is", "a", "test", "", "", ""]
+
+    def test_fieldname_with_special_char(self):
+        expr = jsonata.Jsonata("$ ~> |$|{}|")
+        o = {"a\nb": "c\nd"}
+        assert expr.evaluate(o) == o
+
+    def test_trim(self):
+        assert jsonata.Jsonata("$trim(\"\n\")").evaluate(None) == ""
+        assert jsonata.Jsonata("$trim(\" \")").evaluate(None) == ""
+        assert jsonata.Jsonata("$trim(\"\")").evaluate(None) == ""
+        assert jsonata.Jsonata("$trim(notthere)").evaluate(None) is None
+
+    def test_undefined_args(self):
+        assert jsonata.Jsonata("$substring('abc', $nothing)").evaluate(None) == "abc"
+        assert jsonata.Jsonata("$substring('abc', $nothing, 1)").evaluate(None) == ""
+        assert jsonata.Jsonata("$substring(?, $nothing)('abc')").evaluate(None) == "abc"
+        assert jsonata.Jsonata("$substringAfter('abc', $nothing)").evaluate(None) == "abc"
+        assert jsonata.Jsonata("$pad('abc', $nothing)").evaluate(None) == "abc"
+        assert jsonata.Jsonata("$contains('abc', $nothing)").evaluate(None) is None
+        assert jsonata.Jsonata("$split('abc', $nothing)").evaluate(None) is None
+        assert jsonata.Jsonata("$split('abc', $nothing, 1)").evaluate(None) is None
+        assert jsonata.Jsonata("$replace('abc', $nothing, 'x')").evaluate(None) is None
+        assert jsonata.Jsonata("'abc' ~> $replace($nothing, 'x')").evaluate(None) is None
+
+    def test_null_args(self):
+        for expr in ["$substring('abc', null)", "$substring('abc', 1, null)", "$substring('abc', $nothing, null)",
+                     "$substring($nothing, null)", "$substring($nothing, 1, null)",
+                     "$pad('abc', null)", "$pad('abc', 5, null)", "$pad($nothing, null)",
+                     "$substringBefore('abc', null)", "$substringBefore($nothing, null)",
+                     "$substringAfter('abc', null)", "$substringAfter($nothing, null)",
+                     "$contains('abc', null)", "$contains($nothing, null)",
+                     "$split('abc', null)", "$split($nothing, null)",
+                     "$replace('abc', null, 'x')", "$replace($nothing, null, 'x')"]:
+            with pytest.raises(jsonata.JException) as exc_info:
+                jsonata.Jsonata(expr).evaluate(None)
+            assert exc_info.value.error == "T0410"
+
+    def test_match_limit(self):
+        res = jsonata.Jsonata("$match('ababab', /ab/)").evaluate(None)
+        assert res is not None
+        assert [m["index"] for m in res] == [0, 2, 4]
+        assert jsonata.Jsonata("$match('ababab', /ab/, 0)").evaluate(None) is None
+        assert jsonata.Jsonata("$match('ababab', /ab/, 1)").evaluate(None) == {"match": "ab", "index": 0, "groups": []}
+
+        res = jsonata.Jsonata("$match('ababab', /ab/, 2)").evaluate(None)
+        assert res is not None
+        assert [m["index"] for m in res] == [0, 2]
+
+        res = jsonata.Jsonata("$match('ababab', /ab/, 5)").evaluate(None)
+        assert res is not None
+        assert [m["index"] for m in res] == [0, 2, 4]
+
+    def test_match_fractional_limit(self):
+        res = jsonata.Jsonata("$match('ababab', /ab/, 4/2)").evaluate(None)
+        assert res is not None
+        assert [m["index"] for m in res] == [0, 2]
+
+        # Like jsonata-js, matches are returned while the count is less than the limit
+        res = jsonata.Jsonata("$match('ababab', /ab/, 1.5)").evaluate(None)
+        assert res is not None
+        assert [m["index"] for m in res] == [0, 2]
+
+    def test_match_limit_stops_searching(self):
+        searched = []
+
+        class CountingPattern:
+            def __init__(self, pattern):
+                self._pattern = pattern
+
+            def __getattr__(self, name):
+                return getattr(self._pattern, name)
+
+            def finditer(self, string):
+                for m in self._pattern.finditer(string):
+                    searched.append(m.start())
+                    yield m
+
+        def counting_regex_engine(pattern, flags):
+            return CountingPattern(default_regex_engine(pattern, flags))
+
+        # The search stops once the limit is reached
+        for limit, expected in [(0, []), (1, [0]), (2, [0, 2])]:
+            searched.clear()
+            jsonata.Jsonata(f"$match('ababab', /ab/, {limit})", counting_regex_engine).evaluate(None)
+            assert searched == expected
+
+    def test_partial_application_with_map(self):
+        # Only ? placeholders are unbound, so $map doesn't pass the index as a trailing argument
+        assert jsonata.Jsonata("$map(['abc', 'abc'], $substring(?, 1))").evaluate(None) == ["bc", "bc"]
+        assert jsonata.Jsonata("$map(['ab', 'ab'], $match(?, /ab/)).match").evaluate(None) == ["ab", "ab"]
+
+    def test_partial_application_optional_args(self):
+        # Trailing args that weren't supplied aren't passed to the native function
+        assert jsonata.Jsonata("$sort(?)([3, 1, 2])").evaluate(None) == [1, 2, 3]
+        assert jsonata.Jsonata("$map([[3, 1, 2], [2, 1]], $sort(?))").evaluate(None) == [[1, 2, 3], [1, 2]]
+
+    @staticmethod
+    def _sequence_guardrail_error(expression, sequence, input=None):
+        # Returns the error code the expression raised with the given `sequence` bound
+        with pytest.raises(jsonata.JException) as exc_info:
+            jsonata.Jsonata(expression, sequence=sequence).evaluate(input)
+        return exc_info.value.error
+
+    def test_sequence_guardrail_stops_large_ranges(self):
+        assert self._sequence_guardrail_error("[0..1001]", 1000) == "D2015"
+
+    def test_sequence_guardrail_stops_large_intermediate_sequences(self):
+        assert self._sequence_guardrail_error("[0..100].([0..100]) ~> $count()", 1000) == "D2015"
+
+    def test_sequence_guardrail_stops_appending_large_sequences(self):
+        assert self._sequence_guardrail_error("$append([0..600], [0..600]) ~> $count()", 1000) == "D2015"
+
+    def test_sequence_guardrail_stops_large_wildcard_results(self):
+        # $append's result keeps the bound, so the wildcard's accumulator stays
+        # bounded after appending an array value
+        assert self._sequence_guardrail_error("* ~> $count()", 2, {"a": [1, 2], "b": 3}) == "D2015"
+
+    def test_sequence_guardrail_stops_large_descendant_results(self):
+        assert self._sequence_guardrail_error("** ~> $count()", 2, {"a": 1, "b": 2}) == "D2015"
+
+    def test_sequence_guardrail_stops_large_tuple_streams(self):
+        # The tuples are discarded by the filter, but are still bounded while
+        # they're built
+        input = {"a": list(range(101)), "b": list(range(101))}
+        assert self._sequence_guardrail_error("a@$x.b@$y[false]", 1000, input) == "D2015"
+
+    def test_sequence_guardrail_allows_exact_limit_range(self):
+        assert jsonata.Jsonata("[0..2]", sequence=3).evaluate(None) == [0, 1, 2]
+
+    def test_sequence_guardrail_allows_sequences_within_limit(self):
+        assert jsonata.Jsonata("[0..30].([0..30]) ~> $count()", sequence=1000).evaluate(None) == 961
+        assert jsonata.Jsonata("$append([0..499], [0..499]) ~> $count()", sequence=1000).evaluate(None) == 1000
+
+    def test_sequence_guardrail_propagates_through_eval(self):
+        # $eval wraps any error raised while evaluating its expression in D3121
+        assert self._sequence_guardrail_error("$eval('[0..100].([0..100]) ~> $count()')", 1000) == "D3121"
+
+    def test_sequence_guardrail_does_not_bound_results(self):
+        # The bound only applies while the expression is being evaluated, so a
+        # returned sequence can be changed freely
+        result = jsonata.Jsonata("*", sequence=2).evaluate({"a": 1, "b": 2})
+        result.append(3)
+        assert result == [1, 2, 3]
+
+    def test_sequence_guardrail_is_restored_after_evaluate(self):
+        # The bound only applies to the evaluation of the expression it was
+        # configured on, not to later evaluations on the same thread
+        assert self._sequence_guardrail_error("[0..100].([0..100]) ~> $count()", 1000) == "D2015"
+        assert jsonata.Jsonata("[0..100].([0..100]) ~> $count()").evaluate(None) == 10201
