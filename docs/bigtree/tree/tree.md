@@ -1,0 +1,106 @@
+---
+title: Tree
+---
+
+# 🎄 Tree
+
+Conceptually, trees are made up of nodes, and they are synonymous; a tree is a node. In bigtree implementation, node
+refers to the `Node` class, whereas tree refers to the `Tree` class. Tree is implemented as a wrapper around a Node to
+implement tree-level methods for a more intuitive API.
+
+Construct, export, helper, query, search, and iterator methods encapsulated in Tree class.
+
+## Tree Construct Methods
+
+Construct Tree from list, dictionary, and pandas/polars DataFrame.
+
+To decide which method to use, consider your data type and data values. Construction methods are implemented as class
+methods.
+
+| Construct tree from | Using full path       | Using parent-child relation                          | Add node attributes |
+|---------------------|-----------------------|------------------------------------------------------|---------------------|
+| List                | `Tree.from_list`      | `Tree.from_list_relation`                            | No                  |
+| Dictionary          | `Tree.from_dict`      | `Tree.from_nested_dict`, `Tree.from_nested_dict_key` | Yes                 |
+| pandas DataFrame    | `Tree.from_dataframe` | `Tree.from_dataframe_relation`                       | Yes                 |
+| polars DataFrame    | `Tree.from_polars`    | `Tree.from_polars_relation`                          | Yes                 |
+
+| Construct tree from | Notation           | Add node attributes   |
+|---------------------|--------------------|-----------------------|
+| String              | `Tree.from_str`    | No                    |
+| Newick string       | `Tree.from_newick` | Yes                   |
+| rich Tree           | `Tree.from_rich`   | Only style attributes |
+
+To add attributes to an existing tree,
+
+| Add attributes from | Using full path         | Using node name         |
+|---------------------|-------------------------|-------------------------|
+| Dictionary          | `add_dict_by_path`      | `add_dict_by_name`      |
+| pandas DataFrame    | `add_dataframe_by_path` | `add_dataframe_by_name` |
+| polars DataFrame    | `add_polars_by_path`    | `add_polars_by_name`    |
+
+!!! note
+
+    If attributes are added to existing tree using **full path**, paths that previously did not exist will be added.<br>
+    If attributes are added to existing tree using **node name**, names that previously did not exist will not be created.
+
+## Tree Export Methods
+
+Export Tree to list, dictionary, pandas/polars DataFrame, and various formats.
+
+| Export Tree to                          | Method                                            |
+|-----------------------------------------|---------------------------------------------------|
+| Command Line / Print                    | `show`, `hshow`, `vshow`, `ishow`                 |
+| Generator (versatile)                   | `yield_tree`, `hyield`, `vyield`                  |
+| String                                  | `to_html`, `to_newick`                            |
+| Dictionary                              | `to_dict`, `to_nested_dict`, `to_nested_dict_key` |
+| DataFrame (pandas, polars)              | `to_dataframe`, `to_polars`                       |
+| Dot (for .dot, .png, .svg, .jpeg, etc.) | `to_dot`                                          |
+| Pillow (for .png, .jpg, .jpeg, etc.)    | `to_pillow`, `to_pillow_graph`                    |
+| Mermaid Markdown (for .md)              | `to_mermaid`                                      |
+| Visualization                           | `to_vis`                                          |
+
+## Tree Iterator Methods
+
+Iterator methods will return Node-type object(s).
+
+| Data Structure | Algorithm                                 | Description             |
+|----------------|-------------------------------------------|-------------------------|
+| Tree           | `preorder_iter`                           | Depth-First Search, NLR |
+| Tree           | `postorder_iter`                          | Depth-First Search, LRN |
+| Tree           | `levelorder_iter`, `levelordergroup_iter` | Breadth-First Search    |
+| Tree           | `zigzag_iter`, `zigzaggroup_iter`         | Breadth-First Search    |
+
+## Tree Modify Methods
+
+Modification functions can shift and/or copy nodes within the same tree.
+
+| Description   | Method                                    |
+|---------------|-------------------------------------------|
+| Shift node(s) | `shift_nodes` / `shift_and_replace_nodes` |
+| Copy node(s)  | `copy_nodes`                              |
+
+## Tree Query and Search Methods
+
+Query and search to find nodes. These methods will return Node-type object(s).
+
+| Search by       | One node                                            | One or more nodes                   |
+|-----------------|-----------------------------------------------------|-------------------------------------|
+| Query string    | `query`                                             |                                     |
+| General method  | `find`, `find_child`                                | `findall`, `find_children`          |
+| Node name       | `find_name`, `find_child_by_name`                   | `find_names`                        |
+| Node path       | `find_path`, `find_full_path`, `find_relative_path` | `find_paths`, `find_relative_paths` |
+| Node attributes | `find_attr`                                         | `find_attrs`                        |
+
+## Tree Helper Methods
+
+Helper functions that can come in handy. Helper methods will return a separate Tree-type object.
+
+| Description   | Method                   |
+|---------------|--------------------------|
+| Clone tree    | `clone`                  |
+| Get subtree   | `subtree`                |
+| Prune tree    | `prune`                  |
+| Compare trees | `diff_dataframe`, `diff` |
+
+-----
+::: bigtree.tree.tree
