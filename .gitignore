@@ -1,0 +1,23 @@
+syntax: glob
+
+README.html
+build
+dist
+docs/_build/
+fastavro.egg-info
+fastavro/*.so
+fastavro/_*.c
+fastavro/_*.html
+profile.out
+venv
+.tox
+.idea
+*.pyc
+*.pyd
+.cache/
+.pytest_cache/
+.eggs/
+.coverage
+py3*/
+pypy/
+.vscode/
