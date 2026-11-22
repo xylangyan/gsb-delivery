@@ -1,0 +1,350 @@
+# pyright: reportInvalidTypeArguments=warning
+
+"""
+pint.facets.plain.unit
+~~~~~~~~~~~~~~~~~~~~~
+
+:copyright: 2016 by Pint Authors, see AUTHORS for more details.
+:license: BSD, see LICENSE for more details.
+"""
+
+from __future__ import annotations
+
+import copy
+import locale
+import operator
+from numbers import Number
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, overload
+
+from ..._typing import Magnitude, UnitLike
+from ...compat import NUMERIC_TYPES
+from ...errors import DimensionalityError
+from ...util import PrettyIPython, SharedRegistryObject, UnitsContainer
+
+if TYPE_CHECKING:
+    import datetime
+
+    import numpy as np
+    import optype as opt
+
+    from ..context import Context
+    from .quantity import PlainQuantity
+
+
+class PlainUnit(PrettyIPython, SharedRegistryObject):
+    """Describes a unit supporting arithmetic operations."""
+
+    def __reduce__(self):
+        # See notes in Quantity.__reduce__
+        from pint import _unpickle_unit
+
+        return _unpickle_unit, (PlainUnit, self._units)
+
+    def __init__(self, units: UnitLike) -> None:
+        super().__init__()
+        self._units = self._REGISTRY._into_units(units)
+
+    def __copy__(self) -> Self:
+        ret = self.__class__(self._units)
+        return ret
+
+    def __deepcopy__(self, memo) -> Self:
+        ret = self.__class__(copy.deepcopy(self._units, memo))
+        return ret
+
+    def __format__(self, spec: str) -> str:
+        return self._REGISTRY.formatter.format_unit(self, spec)
+
+    def __str__(self) -> str:
+        return self._REGISTRY.formatter.format_unit(self)
+
+    def __bytes__(self) -> bytes:
+        return str(self).encode(locale.getpreferredencoding())
+
+    def __repr__(self) -> str:
+        return f'Unit("{self._units}")'
+
+    @property
+    def dimensionless(self) -> bool:
+        """Return True if the PlainUnit is dimensionless; False otherwise."""
+        return not bool(self.dimensionality)
+
+    @property
+    def dimensionality(self) -> UnitsContainer:
+        """
+        Returns
+        -------
+        dict
+            Dimensionality of the PlainUnit, e.g. ``{length: 1, time: -1}``
+        """
+        try:
+            return self._dimensionality
+        except AttributeError:
+            dim = self._REGISTRY._get_dimensionality(self._units)
+            self._dimensionality = dim
+
+        return self._dimensionality
+
+    def compatible_units(self, *contexts):
+        if contexts:
+            with self._REGISTRY.context(*contexts):
+                return self._REGISTRY.get_compatible_units(self)
+
+        return self._REGISTRY.get_compatible_units(self)
+
+    def is_compatible_with(
+        self, other: Any, *contexts: str | Context, **ctx_kwargs: Any
+    ) -> bool:
+        """check if the other object is compatible
+
+        Parameters
+        ----------
+        other
+            The object to check. Treated as dimensionless if not a
+            Quantity, PlainUnit or str.
+        *contexts : str or pint.Context
+            Contexts to use in the transformation.
+        **ctx_kwargs :
+            Values for the Context/s
+
+        Returns
+        -------
+        bool
+        """
+        from .quantity import PlainQuantity
+
+        if contexts or self._REGISTRY._active_ctx:
+            try:
+                (1 * self).to(other, *contexts, **ctx_kwargs)
+                return True
+            except DimensionalityError:
+                return False
+
+        if isinstance(other, (PlainQuantity, PlainUnit)):
+            return self.dimensionality == other.dimensionality
+
+        if isinstance(other, str):
+            return (
+                self.dimensionality
+                == self._REGISTRY.parse_expression(other).dimensionality
+            )
+
+        return self.dimensionless
+
+    # PlainUnit * (PlainUnit | UnitsContainer) -> PlainUnit
+    @overload
+    def __mul__(self, other: Self | UnitsContainer) -> Self: ...
+    # PlainUnit * timedelta -> PlainQuantity[float]
+    @overload
+    def __mul__(
+        self, other: datetime.timedelta | np.timedelta64
+    ) -> PlainQuantity[float]: ...
+    # PlainUnit * <ArrayLike> -> PlainQuantity[<Array>]
+    @overload
+    def __mul__[T: np.number](
+        self, other: opt.numpy.AnyArray[T]
+    ) -> PlainQuantity[opt.numpy.ArrayND[T]]: ...
+    # PlainUnit * <Magnitude> -> PlainQuantity[<Magnitude>]
+    @overload
+    def __mul__[T: Magnitude](self, other: T) -> PlainQuantity[T]: ...
+    # PlainUnit * <PlainQuantity> -> <PlainQuantity>
+    @overload
+    def __mul__[Q: PlainQuantity](self, other: Q) -> Q: ...
+    def __mul__(self, other):
+        if isinstance(other, UnitsContainer):
+            return self.__class__(self._units * other)
+
+        if self._check(other):
+            if isinstance(other, self.__class__):
+                return self.__class__(self._units * other._units)
+            else:
+                other = cast("PlainQuantity", other)
+                return self._REGISTRY.Quantity(1, self._units) * other
+
+        if isinstance(other, Number) and other == 1:
+            qty = self._REGISTRY.Quantity(other, self._units)
+            if self._REGISTRY.autoconvert_to_preferred:
+                qty.ito_preferred()
+            if self._REGISTRY.auto_reduce_dimensions:
+                qty.ito_reduced_units()
+            return qty
+
+        return self._REGISTRY.Quantity(1, self._units)._mul_div(
+            other, operator.mul, parse_string_as_magnitude=True
+        )
+
+    __rmul__ = __mul__
+
+    # PlainUnit / (PlainUnit or UnitsContainer) -> PlainUnit
+    @overload
+    def __truediv__(self, other: Self | UnitsContainer) -> Self: ...
+    # PlainUnit / timedelta -> PlainQuantity[float]
+    @overload
+    def __truediv__(
+        self, other: datetime.timedelta | np.timedelta64
+    ) -> PlainQuantity[float]: ...
+    # PlainUnit / <ArrayLike> -> PlainQuantity[<Array>]
+    @overload
+    def __truediv__[T: np.number](
+        self, other: opt.numpy.AnyArray[T]
+    ) -> PlainQuantity[opt.numpy.ArrayND[T]]: ...
+    # PlainUnit / (<Magnitude> or PlainQuantity[<Magnitude>])
+    #   -> PlainQuantity[type of 1 / <Magnitude>]
+    @overload
+    def __truediv__[U: Magnitude](
+        self,
+        other: PlainQuantity[opt.CanRTruediv[Literal[1], U]]
+        | opt.CanRTruediv[Literal[1], U],
+    ) -> PlainQuantity[U]: ...
+    def __truediv__(self, other):
+        # First handle the case where `other` is a unit or quantity
+        if isinstance(other, UnitsContainer):
+            return self.__class__(self._units / other)
+        if self._check(other):
+            if isinstance(other, self.__class__):
+                return self.__class__(self._units / other._units)
+            other = cast("PlainQuantity", other)
+        return self._REGISTRY.Quantity(1, self._units) / other
+
+    # UnitsContainer / PlainUnit -> PlainUnit
+    @overload
+    def __rtruediv__(self, other: UnitsContainer) -> Self: ...
+    # timedelta / PlainUnit -> PlainQuantity[float]
+    @overload
+    def __rtruediv__(
+        self, other: datetime.timedelta | np.timedelta64
+    ) -> PlainQuantity[float]: ...
+    # <Magnitude> / PlainUnit -> PlainQuantity[<Magnitude>]
+    @overload
+    def __rtruediv__[M: Magnitude](self, other: M) -> PlainQuantity[M]: ...
+    # <ArrayLike> / PlainUnit -> PlainQuantity[<Array>]
+    @overload
+    def __rtruediv__[T: np.number](
+        self, other: opt.numpy.AnyArray[T]
+    ) -> PlainQuantity[opt.numpy.ArrayND[T]]: ...
+    def __rtruediv__(self: PlainUnit, other) -> PlainUnit | PlainQuantity:
+        # NOTE: As PlainUnit and Quantity both handle __truediv__ with each other,
+        #   __rtruediv__ can only be called for something different.
+        if isinstance(other, UnitsContainer):
+            return self.__class__(other / self._units)
+        # other is quantity-like or magnitude-like
+        return self._REGISTRY.Quantity(1, 1 / self._units) * other
+
+    __div__ = __truediv__
+    __rdiv__ = __rtruediv__
+
+    def __pow__(self, other: Magnitude) -> Self:
+        if isinstance(other, NUMERIC_TYPES):
+            return self.__class__(self._units**other)
+        else:
+            raise TypeError(f"Cannot power PlainUnit by {type(other)}")
+
+    def __hash__(self) -> int:
+        return self._units.__hash__()
+
+    def __eq__(self, other) -> bool:
+        # We compare to the plain class of PlainUnit because each PlainUnit class is
+        # unique.
+        if isinstance(other, str):
+            if str(self) == other:
+                return True
+            try:
+                other = self._REGISTRY.Unit(other)
+            except Exception:
+                return False
+
+        if self._check(other):
+            if isinstance(other, self.__class__):
+                return self._units == other._units
+            else:
+                return other == self._REGISTRY.Quantity(1, self._units)
+
+        elif isinstance(other, NUMERIC_TYPES):
+            return other == self._REGISTRY.Quantity(1, self._units)
+
+        else:
+            return self._units == other
+
+    def __ne__(self, other) -> bool:
+        return not (self == other)
+
+    def compare(self, other, op) -> bool:
+        self_q = self._REGISTRY.Quantity(1, self)
+
+        if isinstance(other, NUMERIC_TYPES):
+            return self_q.compare(other, op)
+        elif isinstance(other, (PlainUnit, UnitsContainer, dict)):
+            return self_q.compare(self._REGISTRY.Quantity(1, other), op)
+
+        return NotImplemented
+
+    __lt__ = lambda self, other: self.compare(other, op=operator.lt)
+    __le__ = lambda self, other: self.compare(other, op=operator.le)
+    __ge__ = lambda self, other: self.compare(other, op=operator.ge)
+    __gt__ = lambda self, other: self.compare(other, op=operator.gt)
+
+    def __int__(self) -> int:
+        return int(self._REGISTRY.Quantity(1, self._units))
+
+    def __float__(self) -> float:
+        return float(self._REGISTRY.Quantity(1, self._units))
+
+    def __complex__(self) -> complex:
+        return complex(self._REGISTRY.Quantity(1, self._units))
+
+    @property
+    def systems(self):
+        out = set()
+        for uname in self._units.keys():
+            for sname, sys in self._REGISTRY._systems.items():
+                if uname in sys.members:
+                    out.add(sname)
+        return frozenset(out)
+
+    def from_(self, value, strict=True, name="value"):
+        """Converts a numerical value or quantity to this unit
+
+        Parameters
+        ----------
+        value :
+            a Quantity (or numerical value if strict=False) to convert
+        strict :
+            boolean to indicate that only quantities are accepted (Default value = True)
+        name :
+            descriptive name to use if an exception occurs (Default value = "value")
+
+        Returns
+        -------
+        type
+            The converted value as this unit
+
+        """
+        if self._check(value):
+            if not isinstance(value, self._REGISTRY.Quantity):
+                value = self._REGISTRY.Quantity(1, value)
+            return value.to(self)
+        elif strict:
+            raise ValueError("%s must be a Quantity" % value)
+        else:
+            return value * self
+
+    def m_from(self, value, strict=True, name="value"):
+        """Converts a numerical value or quantity to this unit, then returns
+        the magnitude of the converted value
+
+        Parameters
+        ----------
+        value :
+            a Quantity (or numerical value if strict=False) to convert
+        strict :
+            boolean to indicate that only quantities are accepted (Default value = True)
+        name :
+            descriptive name to use if an exception occurs (Default value = "value")
+
+        Returns
+        -------
+        type
+            The magnitude of the converted value
+
+        """
+        return self.from_(value, strict=strict, name=name).magnitude
