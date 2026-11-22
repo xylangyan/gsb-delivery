@@ -188,6 +188,61 @@ specify the custom separator:
 sheet.to_csv(separator: ":") # "," using by default
 ```
 
+### Exporting selected sheets as a workbook
+
+`Roo::Excelx::Exporter` writes a local `.xlsx` containing only explicitly authorized
+sheets. It follows the OOXML relationship graph from `workbook.xml` down; it never
+picks a part because its file name or sheet position happens to match.
+
+```ruby
+require 'roo'
+
+plan = Roo::Excelx::Exporter.plan('source.xlsx', sheet_names: ['A'])
+plan[:sheets].first[:parts].each do |part|
+  puts "#{part[:part]} <- #{part[:source]} (#{part[:reason]})"
+end
+
+result = Roo::Excelx::Exporter.write('source.xlsx', 'a-only.xlsx', sheet_names: ['A'])
+result[:audit][:ok] # => true when the reread copy matches cell by cell
+```
+
+Each planned part records its `sha256`, its `source`, the relationship chain that
+reached it, and whether it is external. External hyperlinks and external workbook
+targets keep `TargetMode="External"` and are not copied.
+
+**Complete vs strict scope**
+
+- `scope: :complete` (default) keeps every part the selected sheets actually need.
+  A whole shared part is retained when it cannot be split.
+- `scope: :strict` refuses to write if a content-bearing part is shared with an
+  unselected sheet and cannot be reduced to a per-sheet subset.
+
+`plan[:shared_parts]` gives the per-part verdict. Each entry has
+`whole_part_structural_copy_valid`, `whole_part_carries_unselected_content`,
+`strict_subset_copy_self_consistent`, and a human-readable `verdict`. Typical
+results:
+
+- Shared strings: a strict subset is possible by pruning and remapping indices.
+- Comments part shared by A and B: a strict subset is not derivable from the part;
+  it has cell references but no sheet tag. A strict A-only copy needs a new
+  sheet-scoped comments part and relationship, otherwise the whole part must be
+  retained and it carries B's comments too.
+- Drawing shared by A and B: anchors cannot be attributed to one sheet, so a
+  partial slice is not meaningful; retain the whole drawing or rebuild a new one.
+- Styles, theme, workbook metadata, and `.rels` parts: these carry no sheet cell
+  values and are safely retained or rebuilt.
+
+`Roo::Excelx::Auditor` rereads a written copy and compares cells, comments,
+hyperlinks, and visible image digests against the source sheet. The same behavior
+is available from a loaded workbook:
+
+```ruby
+workbook = Roo::Excelx.new('source.xlsx')
+plan = workbook.export_plan(sheet_names: ['A'])
+workbook.export_sheets('a-only.xlsx', sheet_names: ['A'])
+workbook.verify_export('a-only.xlsx', sheet_names: ['A'])[:ok]
+```
+
 ### Excel (xlsx and xlsm) Support
 
 Stream rows from an Excelx spreadsheet.

@@ -8,4 +8,12 @@ module Roo
   class HeaderRowNotFoundError < Error; end
 
   class FileNotFound < Error; end
+
+  # Raised when a selected-sheet export cannot be completed without borrowing
+  # content from another sheet, another workbook, or an unauthorized part.
+  class ExportError < Error; end
+
+  # Raised when a copy is internally inconsistent, e.g. a cell points at a
+  # shared string that the copy does not contain.
+  class InconsistentCopyError < ExportError; end
 end

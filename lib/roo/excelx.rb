@@ -15,6 +15,7 @@ module Roo
 
     require 'roo/excelx/shared'
     require 'roo/excelx/workbook'
+    require 'roo/excelx/package'
     require 'roo/excelx/shared_strings'
     require 'roo/excelx/styles'
     require 'roo/excelx/cell'
@@ -25,9 +26,14 @@ module Roo
     require 'roo/excelx/coordinate'
     require 'roo/excelx/format'
     require 'roo/excelx/images'
+    require 'roo/excelx/exporter'
+    require 'roo/excelx/writer'
+    require 'roo/excelx/auditor'
 
     delegate [:styles, :workbook, :shared_strings, :rels_files, :sheet_files, :comments_files, :image_rels, :image_files] => :@shared
     ExceedsMaxError = Class.new(StandardError)
+
+    attr_reader :source_path
 
     # initialization and opening of a spreadsheet file
     # values for packed: :zip
@@ -58,6 +64,7 @@ module Roo
 
       @shared = Shared.new(@tmpdir, shared_options)
       @filename = local_filename(filename_or_stream, @tmpdir, packed)
+      @source_path = @filename
       process_zipfile(@filename || filename_or_stream)
 
       @sheet_names = []
@@ -68,8 +75,10 @@ module Roo
         next if options[:only_visible_sheets] && sheet['state'] == 'hidden'
 
         sheet_name = sheet['name']
+        built_sheet = Sheet.new(sheet_name, @shared, index, sheet_options, kind: @sheet_kinds[index])
         @sheet_names << sheet_name
-        @sheets_by_name[sheet_name] = @sheets[index] = Sheet.new(sheet_name, @shared, index, sheet_options)
+        @sheets_by_name[sheet_name] = built_sheet
+        @sheets << built_sheet
       end
 
       if cell_max
@@ -105,6 +114,43 @@ module Roo
     def images(sheet = nil)
       images_names = sheet_for(sheet).images.map(&:last)
       images_names.map { |iname| image_files.find { |ifile| ifile[iname] } }
+    end
+
+    # Builds a local export plan for the authorized sheets. The plan lists every
+    # part the selected sheets actually reach, with its relationship owner,
+    # resolved target, digest, and source. Parts belonging to unselected sheets
+    # are never used to fill a gap.
+    def export_plan(sheet_names:, scope: :complete)
+      ensure_package
+      Exporter.new(@package, sheet_names: sheet_names, scope: scope, source: source_path).plan
+    end
+
+    # Writes a local .xlsx containing only the authorized sheets and rereads it
+    # cell by cell. See Roo::Excelx::Exporter for the complete vs strict scope.
+    def export_sheets(destination, sheet_names:, scope: :complete)
+      ensure_package
+      exporter = Exporter.new(@package, sheet_names: sheet_names, scope: scope, source: source_path)
+      plan = exporter.plan
+      result = exporter.write(destination, plan)
+      {
+        plan: plan,
+        write: result,
+        audit: verify_export(destination, sheet_names: plan[:selected_sheets])
+      }
+    end
+
+    def verify_export(destination, sheet_names:)
+      if source_path
+        Auditor.new(source_path, destination, sheet_names: sheet_names).report
+      else
+        {
+          ok: nil,
+          skipped: true,
+          reason: 'the source was opened from a stream, so there is no source path to reread; reopen the source file path to run the cell-by-cell audit',
+          copy: destination,
+          sheets: Array(sheet_names)
+        }
+      end
     end
 
     # Returns the content of a spreadsheet-cell.
@@ -305,6 +351,17 @@ module Roo
 
     private
 
+    def ensure_package
+      @package ||= begin
+        zipfile = @filename || @source_path
+        if is_stream?(zipfile)
+          raise ExportError, 'export requires a file-backed workbook; open the file path to export selected sheets'
+        end
+
+        Package.new(zipfile)
+      end
+    end
+
     def clean_sheet(sheet)
       @sheets_by_name[sheet].cells.each_pair do |coord, value|
         next unless value.value.is_a?(::String)
@@ -315,79 +372,15 @@ module Roo
       @cleaned[sheet] = true
     end
 
-    # Internal: extracts the worksheet_ids from the workbook.xml file. xlsx
-    #           documents require a workbook.xml file, so a if the file is missing
-    #           it is not a valid xlsx file. In these cases, an ArgumentError is
-    #           raised.
-    #
-    # wb - a Zip::Entry for the workbook.xml file.
-    # path - A String for Zip::Entry's destination path.
-    #
-    # Examples
-    #
-    #   extract_worksheet_ids(<Zip::Entry>, 'tmpdir/roo_workbook.xml')
-    #   # => ["rId1", "rId2", "rId3"]
-    #
-    # Returns an Array of Strings.
-    def extract_worksheet_ids(entries, path)
-      wb = entries.find { |e| e.name[/workbook.xml$/] }
-      fail ArgumentError 'missing required workbook file' if wb.nil?
+    def extract_images(entry_names, tmpdir)
+      image_names = entry_names.grep(%r{media/image([0-9]+)})
+      image_names.each do |entry_name|
+        content = @package.read(entry_name)
+        next unless content
 
-      wb.extract(File.basename(path), destination_directory: File.dirname(path))
-      workbook_doc = Roo::Utils.load_xml(path).remove_namespaces!
-      workbook_doc.xpath('//sheet').map { |s| s['id'] }
-    end
-
-    # Internal
-    #
-    # wb_rels - A Zip::Entry for the workbook.xml.rels file.
-    # path - A String for the Zip::Entry's destination path.
-    #
-    # Examples
-    #
-    #   extract_worksheets(<Zip::Entry>, 'tmpdir/roo_workbook.xml.rels')
-    #   # => {
-    #         "rId1"=>"worksheets/sheet1.xml",
-    #         "rId2"=>"worksheets/sheet2.xml",
-    #         "rId3"=>"worksheets/sheet3.xml"
-    #        }
-    #
-    # Returns a Hash.
-    def extract_worksheet_rels(entries, path)
-      wb_rels = entries.find { |e| e.name[/workbook.xml.rels$/] }
-      fail ArgumentError 'missing required workbook file' if wb_rels.nil?
-
-      wb_rels.extract(File.basename(path), destination_directory: File.dirname(path))
-      rels_doc = Roo::Utils.load_xml(path).remove_namespaces!
-
-      relationships = rels_doc.xpath('//Relationship').select do |relationship|
-        worksheet_types.include? relationship['Type']
-      end
-
-      relationships.each_with_object({}) do |relationship, hash|
-        hash[relationship['Id']] = relationship['Target']
-      end
-    end
-
-    # Extracts the sheets in order, but it will ignore sheets that are not
-    # worksheets.
-    def extract_sheets_in_order(entries, sheet_ids, sheets, tmpdir)
-      (sheet_ids & sheets.keys).each_with_index do |id, i|
-        name = sheets[id]
-        entry = name && entries.find { |e| "/#{e.name}".end_with?(name) }
-        path = "#{tmpdir}/roo_sheet#{i + 1}"
-        sheet_files << path
-        @sheet_files << path
-        entry.extract(File.basename(path), destination_directory: File.dirname(path))
-      end
-    end
-
-    def extract_images(entries, tmpdir)
-      img_entries = entries.select { |e| e.name[/media\/image([0-9]+)/] }
-      img_entries.each do |entry|
-        path = "#{@tmpdir}/roo#{entry.name.gsub(/xl\/|\//, "_")}"
+        path = "#{tmpdir}/roo#{entry_name.gsub(/xl\/|\//, '_')}"
         image_files << path
-        entry.extract(File.basename(path), destination_directory: File.dirname(path))
+        File.binwrite(path, content)
       end
     end
 
@@ -395,86 +388,90 @@ module Roo
     def process_zipfile(zipfilename_or_stream)
       @sheet_files = []
 
-      unless is_stream?(zipfilename_or_stream)
-        zip_file = Zip::File.open(zipfilename_or_stream)
-      else
+      if is_stream?(zipfilename_or_stream)
         zip_file = Zip::CentralDirectory.new
         zip_file.read_from_stream zipfilename_or_stream
+      else
+        zip_file = Zip::File.open(zipfilename_or_stream)
       end
 
-      process_zipfile_entries zip_file.entries.sort_by(&:name)
+      @package = Package.new(zip_file)
+      process_zipfile_entries
     end
 
-    def process_zipfile_entries(entries)
+    def process_zipfile_entries
       # NOTE: When Google or Numbers 3.1 exports to xlsx, the worksheet filenames
       #       are not in order. With Numbers 3.1, the first sheet is always
       #       sheet.xml, not sheet1.xml. With Google, the order of the worksheets is
       #       independent of a worksheet's filename (i.e. sheet6.xml can be the
       #       first worksheet).
       #
-      #       workbook.xml lists the correct order of worksheets and
-      #       workbook.xml.rels lists the filenames for those worksheets.
-      #
-      #       workbook.xml:
-      #         <sheet state="visible" name="IS" sheetId="1" r:id="rId3"/>
-      #         <sheet state="visible" name="BS" sheetId="2" r:id="rId4"/>
-      #       workbook.xml.rel:
-      #         <Relationship Id="rId4" Target="worksheets/sheet5.xml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/>
-      #         <Relationship Id="rId3" Target="worksheets/sheet4.xml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"/>
-      sheet_ids = extract_worksheet_ids(entries, "#{@tmpdir}/roo_workbook.xml")
-      sheets = extract_worksheet_rels(entries, "#{@tmpdir}/roo_workbook.xml.rels")
-      extract_sheets_in_order(entries, sheet_ids, sheets, @tmpdir)
-      extract_images(entries, @tmpdir)
+      #       Every part is resolved through the relationship graph: workbook.xml
+      #       names each sheet and workbook.xml.rels names its part; that sheet's
+      #       own .rels then names its comments and drawing. Filename numbers and
+      #       sheet positions are never used as a fallback.
+      @sheet_kinds = []
+      workbook_part = @package.workbook_part
 
-      entries.each do |entry|
-        path =
-        case entry.name.downcase
-        when /richdata/
-          # FIXME: Ignore richData as parsing is not implemented yet and can cause
-          # Zip::DestinationFileExistsError when including a second "styles.xml" entry
-          # see http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2
-          nil
-        when /sharedstrings.xml$/
-          "#{@tmpdir}/roo_sharedStrings.xml"
-        when /styles.xml$/
-          "#{@tmpdir}/roo_styles.xml"
-        when /comments([0-9]+).xml$/
-          # FIXME: Most of the time, The order of the comment files are the same
-          #       the sheet order, i.e. sheet1.xml's comments are in comments1.xml.
-          #       In some situations, this isn't true. The true location of a
-          #       sheet's comment file is in the sheet1.xml.rels file. SEE
-          #       ECMA-376 12.3.3 in "Ecma Office Open XML Part 1".
-          nr = Regexp.last_match[1].to_i
-          comments_files[nr - 1] = "#{@tmpdir}/roo_comments#{nr}"
-        when %r{chartsheets/_rels/sheet([0-9]+).xml.rels$}
-          # NOTE: Chart sheet relationship files were interfering with
-          #       worksheets.
-          nil
-        when /sheet([0-9]+).xml.rels$/
-          # FIXME: Roo seems to use sheet[\d].xml.rels for hyperlinks only, but
-          #        it also stores the location for sharedStrings, comments,
-          #        drawings, etc.
-          nr = Regexp.last_match[1].to_i
-          rels_files[nr - 1] = "#{@tmpdir}/roo_rels#{nr}"
-        when /drawing([0-9]+).xml.rels$/
-          # Extracting drawing relationships to make images lists for each sheet
-          nr = Regexp.last_match[1].to_i
-          image_rels[nr - 1] = "#{@tmpdir}/roo_image_rels#{nr}"
+      extract_package_part(workbook_part, "#{@tmpdir}/roo_workbook.xml")
+      extract_package_part(@package.relationships_part_name(workbook_part), "#{@tmpdir}/roo_workbook.xml.rels")
+
+      workbook_relationships = @package.relationships(workbook_part)
+      shared_strings = workbook_relationships.find { |relationship| relationship.type_name == "sharedStrings" }
+      styles = workbook_relationships.find { |relationship| relationship.type_name == "styles" }
+
+      extract_package_part(shared_strings.resolved_target, "#{@tmpdir}/roo_sharedStrings.xml") if shared_strings
+      extract_package_part(styles.resolved_target, "#{@tmpdir}/roo_styles.xml") if styles
+
+      @package.sheets.each_with_index do |sheet, index|
+        @sheet_kinds[index] = sheet.kind
+        next unless sheet.part && sheet.relationship && !sheet.relationship.external?
+
+        sheet_path = "#{@tmpdir}/roo_sheet#{index + 1}"
+        extract_package_part(sheet.part, sheet_path)
+        sheet_files[index] = sheet_path
+        @sheet_files << sheet_path
+
+        sheet_rels_part = @package.relationships_part_name(sheet.part)
+        rels_path = "#{@tmpdir}/roo_rels#{index + 1}"
+        extract_package_part(sheet_rels_part, rels_path)
+        rels_files[index] = rels_path if @package.exist?(sheet_rels_part)
+
+        sheet_relationships = @package.relationships(sheet.part)
+
+        comments = sheet_relationships.find { |relationship| relationship.type_name == "comments" }
+        if comments && !comments.external?
+          comments_path = "#{@tmpdir}/roo_comments#{index + 1}"
+          extract_package_part(comments.resolved_target, comments_path)
+          comments_files[index] = comments_path
         end
 
-        entry.extract(File.basename(path), destination_directory: File.dirname(path)) if path
+        drawing = sheet_relationships.find { |relationship| relationship.type_name == "drawing" }
+        next unless drawing && !drawing.external?
+
+        drawing_rels = @package.relationships_part_name(drawing.resolved_target)
+        next unless @package.exist?(drawing_rels)
+
+        image_rels_path = "#{@tmpdir}/roo_image_rels#{index + 1}"
+        extract_package_part(drawing_rels, image_rels_path)
+        image_rels[index] = image_rels_path
       end
+
+      extract_images(@package.names, @tmpdir)
+    end
+
+    def extract_package_part(part_name, destination)
+      return nil unless part_name
+
+      content = @package.read(part_name)
+      return nil unless content
+
+      File.binwrite(destination, content)
+      destination
     end
 
     def safe_send(object, method, *args)
       object.send(method, *args) if object&.respond_to?(method)
-    end
-
-    def worksheet_types
-      [
-        'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet', # OOXML Transitional
-        'http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet' # OOXML Strict
-      ]
     end
   end
 end
