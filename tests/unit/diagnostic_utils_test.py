@@ -1,0 +1,82 @@
+"""Test of `pika.diagnostic_utils`"""
+
+import logging
+import unittest
+
+from pika import diagnostic_utils
+
+
+class DiagnosticUtilsTest(unittest.TestCase):
+
+    def test_args_and_return_value_propagation(self):
+
+        bucket = []
+
+        log_exception = diagnostic_utils.create_log_exception_decorator(
+            logging.getLogger(__name__))
+
+        return_value = (1, 2, 3)
+
+        @log_exception
+        def my_func(*args, **kwargs):
+            bucket.append((args, kwargs))
+            return return_value
+
+        # Test with args and kwargs
+        expected_args = ('a', 2, 'B', Exception('oh-oh'))
+        expected_kwargs = {
+            'hello': 'world',
+            'bye': 'hello',
+            'error': RuntimeError()
+        }
+
+        result = my_func(*expected_args, **expected_kwargs)
+
+        self.assertIs(result, return_value)
+        self.assertEqual(bucket, [(expected_args, expected_kwargs)])
+
+        # Make sure that the original instances were passed through, not copies
+        for i in range(len(expected_args)):
+            self.assertIs(bucket[0][0][i], expected_args[i])
+
+        for key, expected_value in expected_kwargs.items():
+            self.assertIs(bucket[0][1][key], expected_value)
+
+        # Now, repeat without any args/kwargs
+        expected_args = ()
+        expected_kwargs = {}
+        bucket.clear()
+
+        result = my_func()
+
+        self.assertIs(result, return_value)
+        self.assertEqual(bucket, [(expected_args, expected_kwargs)])
+
+    def test_exception_propagation(self):
+        logger = logging.getLogger(__name__)
+        log_exception = diagnostic_utils.create_log_exception_decorator(logger)
+
+        # Suppress log output and capture LogRecord
+        log_record_bucket = []
+        logger.handle = log_record_bucket.append
+
+        exception = Exception('Oops!')
+
+        @log_exception
+        def my_func_that_raises():
+            raise exception
+
+        with self.assertRaises(Exception) as ctx:
+            my_func_that_raises()
+
+        # Make sure the expected exception was raised
+        self.assertIs(ctx.exception, exception)
+
+        # Check log message
+        self.assertEqual(len(log_record_bucket), 1)
+        log_record = log_record_bucket[0]  # type: logging.LogRecord
+        self.assertIs(log_record.exc_info[1], exception)
+        formatted = logging.Formatter().format(log_record)
+        self.assertEqual(formatted.count('Traceback (most recent call last)'),
+                         1)
+        self.assertTrue(formatted.endswith('Exception: Oops!'), formatted)

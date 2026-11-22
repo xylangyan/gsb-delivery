@@ -1,0 +1,25 @@
+# Usage Examples
+
+These examples cover each way of using Pika: `Connection`, which is thread-safe and runs its own IOLoop on a background thread; the asynchronous adapters, which attach to an event loop you already have; and `BlockingConnection`, which is procedural and deprecated in favour of `Connection`.
+
+- [URLParameters](examples/using_urlparameters.md)
+- [Connecting asynchronously](examples/connecting_async.md)
+- [Blocking basic get](examples/blocking_basic_get.md)
+- [Blocking consume](examples/blocking_consume.md)
+- [Blocking consume with multiple hosts](examples/blocking_consume_recover_multiple_hosts.md)
+- [Blocking consumer generator](examples/blocking_consumer_generator.md)
+- [Publishing with BlockingConnection and SelectConnection](examples/comparing_publishing_sync_async.md)
+- [Delivery confirmations](examples/blocking_delivery_confirmations.md)
+- [Mandatory publishing](examples/blocking_publish_mandatory.md)
+- [Asynchronous consumer](examples/asynchronous_consumer_example.md)
+- [Asynchronous publisher](examples/asynchronous_publisher_example.md)
+- [Asyncio consumer](examples/asyncio_consumer.md)
+- [Twisted consumer](examples/twisted_example.md)
+- [Tornado consumer](examples/tornado_consumer.md)
+- [TLS mutual authentication](examples/tls_mutual_authentication.md)
+- [Thread-safe consumer](examples/threaded_consumer.md)
+- [Thread-safe publisher](examples/threaded_publisher.md)
+- [Thread-safe publisher confirms](examples/publisher_confirms_threaded.md)
+- [Thread-safe long-running publisher](examples/long_running_publisher_threaded.md)
+- [Heartbeat and blocked-connection timeouts](examples/heartbeat_and_blocked_timeouts.md)
+- [Direct reply-to](examples/direct_reply_to.md)

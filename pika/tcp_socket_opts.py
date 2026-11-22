@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import logging
+import socket
+
+import pika._utils
+
+LOGGER = logging.getLogger(__name__)
+
+_SUPPORTED_TCP_OPTIONS: dict[str, int] = {}
+
+# Looked up by name for the same reason as the keepalive constants below.
+try:
+    _SUPPORTED_TCP_OPTIONS['TCP_USER_TIMEOUT'] = getattr(  # noqa: B009
+        socket, 'TCP_USER_TIMEOUT')
+except AttributeError:
+    if pika._utils.LINUX_VERSION and pika._utils.LINUX_VERSION >= (2, 6, 37):
+        # this is not the timeout value, but the number corresponding
+        # to the constant in tcp.h
+        # https://github.com/torvalds/linux/blob/master/include/uapi/linux/tcp.h#
+        # #define TCP_USER_TIMEOUT	18	/* How long for loss retry before timeout */
+        _SUPPORTED_TCP_OPTIONS['TCP_USER_TIMEOUT'] = 18
+
+# Looked up by name because these are platform-conditional (macOS spells
+# TCP_KEEPIDLE as TCP_KEEPALIVE); a direct `socket.TCP_*` reference fails type
+# checking on platforms lacking them.
+try:
+    tcp_keepidle = getattr(socket, 'TCP_KEEPIDLE')  # noqa: B009
+    tcp_keepcnt = getattr(socket, 'TCP_KEEPCNT')  # noqa: B009
+    tcp_keepintvl = getattr(socket, 'TCP_KEEPINTVL')  # noqa: B009
+except AttributeError:
+    pass
+else:
+    _SUPPORTED_TCP_OPTIONS['TCP_KEEPIDLE'] = tcp_keepidle
+    _SUPPORTED_TCP_OPTIONS['TCP_KEEPCNT'] = tcp_keepcnt
+    _SUPPORTED_TCP_OPTIONS['TCP_KEEPINTVL'] = tcp_keepintvl
+
+
+def socket_requires_keepalive(tcp_options: dict[str, int]) -> bool:
+    return ('TCP_KEEPIDLE' in tcp_options or 'TCP_KEEPCNT' in tcp_options or
+            'TCP_KEEPINTVL' in tcp_options)
+
+
+def set_sock_opts(tcp_options: dict[str, int] | None,
+                  sock: socket.socket) -> None:
+    if not tcp_options:
+        return
+
+    if socket_requires_keepalive(tcp_options):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+    for key, value in tcp_options.items():
+        option = _SUPPORTED_TCP_OPTIONS.get(key)
+        if option:
+            sock.setsockopt(pika._utils.SOL_TCP, option, value)
+        else:
+            LOGGER.warning('Unsupported TCP option %s:%s', key, value)
