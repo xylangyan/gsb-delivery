@@ -1,0 +1,12 @@
+*.pyc
+build
+dist
+MANIFEST
+*.so
+.tox
+.coverage
+*.egg-info
+.*.swp
+*~
+\#*#
+bottleneck/src/bn_config.h

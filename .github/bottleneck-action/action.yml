@@ -1,0 +1,19 @@
+name: build-test-bottleneck
+description: "checkout repo, build, and test bottleneck"
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install
+      shell: bash
+      run: |
+        uv sync --no-editable --group test ${{ case( endsWith(matrix.python-version, 't'), '--group concurrency', '' ) }}
+
+    - name: Test with pytest
+      shell: bash
+      run: |
+        cd doc  # avoid picking up bottleneck from the source dir
+        uv run --no-sync pytest --pyargs bottleneck ${{ case( endsWith(matrix.python-version, 't'), '--parallel-threads=auto', '' ) }}
