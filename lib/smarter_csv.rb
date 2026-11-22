@@ -18,6 +18,7 @@ require "smarter_csv/hash_transformations"
 require "smarter_csv/parser"
 require "smarter_csv/writer"
 require "smarter_csv/reader"
+require "smarter_csv/segmented_stream"
 
 # load the C-extension:
 case RUBY_ENGINE
