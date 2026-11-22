@@ -1,0 +1,10 @@
+#!/usr/bin/env ruby
+require "bundler/setup"
+require "irb"
+begin
+  require "debug"
+rescue StandardError, LoadError
+end
+require "marcel"
+
+IRB.start

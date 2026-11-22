@@ -1,0 +1,707 @@
+require "test_helper"
+require "open3"
+require "rbconfig"
+require "tmpdir"
+
+class Marcel::GenerateTablesTest < Marcel::TestCase
+  test "serializes XML data as inert Ruby source" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-bzip2">
+          <magic>
+            <match type="regex" value="#{raise(&quot;regex interpolation executed&quot;)}" />
+          </magic>
+        </mime-type>
+        <mime-type type="application/x-generated">
+          <_comment>Generated comment&#10;raise "comment injection executed"</_comment>
+          <glob pattern="*.safe" />
+          <sub-class-of type="application/zip" />
+          <root-XML localName="generated" namespaceURI="urn:x#{raise(&quot;namespace-interpolation-executed&quot;)}" />
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      tables_path = File.join(directory, "tables.rb")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+      assert status.success?, errors
+      assert_includes generated, "Regexp.new("
+      File.binwrite(tables_path, generated)
+
+      verification = "load ARGV.fetch(0); abort unless Marcel::EXTENSIONS.key?(ARGV.fetch(1)); " \
+        "abort unless Marcel::ROOT_XML.key?(['urn:x\#{raise(\"namespace-interpolation-executed\")}', 'generated'])"
+      _output, errors, status = Open3.capture3(
+        RbConfig.ruby, "-e", verification, tables_path, "safe"
+      )
+      assert status.success?, errors
+    end
+  end
+
+  test "rejects code-shaped MIME fields" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-pwn&apos;]; raise(&quot;type interpolation executed&quot;); #">
+          <glob pattern="*.safe" />
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      refute status.success?
+      assert_empty generated
+      assert_includes errors, "Invalid MIME type"
+    end
+  end
+
+  test "rejects malformed XML instead of recovering it" do
+    xml = '<mime-info><mime-type type="text/plain"><glob pattern="*.txt" /></mime-info>'
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      refute status.success?
+      assert_empty generated
+      assert_includes errors, "Nokogiri::XML::SyntaxError"
+    end
+  end
+
+  test "normalizes surrounding MIME type whitespace" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/vnd.java.hprof ">
+          <glob pattern="*.hprof" />
+        </mime-type>
+        <mime-type type="application/x-example; version=1">
+          <glob pattern="*.example" />
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      tables_path = File.join(directory, "tables.rb")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+      assert status.success?, errors
+      File.binwrite(tables_path, generated)
+
+      verification = <<~'RUBY'
+        load ARGV.fetch(0)
+        abort unless Marcel::EXTENSIONS.fetch("hprof") == "application/vnd.java.hprof"
+        abort if Marcel::TYPE_EXTS.key?("application/vnd.java.hprof ")
+        abort unless Marcel::EXTENSIONS.fetch("example") == "application/x-example; version=1"
+      RUBY
+      _output, errors, status = Open3.capture3(RbConfig.ruby, "-e", verification, tables_path)
+      assert status.success?, errors
+    end
+  end
+
+  test "rejects control characters before normalizing MIME fields" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="&#xA;application/x-hidden">
+          <glob pattern="*.hidden" />
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      refute status.success?
+      assert_empty generated
+      assert_includes errors, "Invalid MIME type"
+    end
+  end
+
+  test "bounds offsets, ranges, and priorities before converting them" do
+    invalid_values = [
+      [ "offset", "65537", "Magic offset exceeds 65536" ],
+      [ "offset", "0:65536", "Magic range exceeds 65536 bytes" ],
+      [ "offset", "2:1", "Descending magic offset" ],
+      [ "offset", "1#{'0' * 100}", "Invalid magic offset" ],
+      [ "priority", "101", "Magic priority exceeds 100" ],
+      [ "priority", "1#{'0' * 100}", "Invalid magic priority" ],
+    ]
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      invalid_values.each_with_index do |(attribute, value, message), index|
+        magic_attribute = attribute == "priority" ? %( priority="#{value}") : ""
+        match_attribute = attribute == "offset" ? %( offset="#{value}") : ""
+        xml = <<~XML
+          <mime-info>
+            <mime-type type="application/x-bounded">
+              <magic#{magic_attribute}>
+                <match type="string" value="BOUND"#{match_attribute} />
+              </magic>
+            </mime-type>
+          </mime-info>
+        XML
+        xml_path = File.join(directory, "invalid-#{index}.xml")
+        File.binwrite(xml_path, xml)
+
+        generated, errors, status = Open3.capture3(
+          RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+        )
+
+        refute status.success?, "accepted #{attribute}=#{value.inspect}"
+        assert_empty generated
+        assert_includes errors, message
+      end
+    end
+  end
+
+  test "accepts the bounded offset range and priority limits" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-bounded">
+          <magic priority="100">
+            <match type="string" value="FIXED" offset="65536" />
+            <match type="string" value="RANGE" offset="1:65536" />
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      assert status.success?, errors
+      assert_includes generated, "65536"
+      assert_includes generated, "1..65536"
+    end
+  end
+
+  test "uses source order to break equal magic priority ties" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-ordered">
+          <magic priority="50"><match type="string" value="FIRST" /></magic>
+          <magic priority="50"><match type="string" value="SECOND" /></magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      assert status.success?, errors
+      assert_operator generated.index("FIRST"), :<, generated.index("SECOND")
+    end
+  end
+
+  test "pins the reviewed unsupported Tika rule set" do
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      tables_path = File.join(directory, "tables.rb")
+      _generated, errors, status = Open3.capture3(
+        RbConfig.ruby,
+        File.expand_path("../script/generate_tables.rb", __dir__),
+        "--output", tables_path,
+        File.expand_path("../data/tika.xml", __dir__),
+        File.expand_path("../data/custom.xml", __dir__)
+      )
+
+      assert status.success?, errors
+      warning_lines = errors.lines
+      assert_equal "Skipped 77 unsupported magic rules\n", warning_lines.pop
+      assert_equal 189, warning_lines.size
+      assert File.exist?(tables_path)
+    end
+  end
+
+  test "verifies the committed Tika source against its pinned checksum" do
+    _output, errors, status = Open3.capture3(
+      RbConfig.ruby,
+      File.expand_path("../script/download_tika_data.rb", __dir__),
+      "--verify", File.expand_path("../data/tika.xml", __dir__)
+    )
+
+    assert status.success?, errors
+  end
+
+  test "rejects altered committed Tika source data" do
+    tika_data = File.binread(File.expand_path("../data/tika.xml", __dir__))
+    alterations = [
+      tika_data.sub("<!-- Downloaded from ", "<!-- Copied from "),
+      tika_data.sub('pattern="*.ez"', 'pattern="*.unexpected-ez"'),
+    ]
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      alterations.each_with_index do |altered_data, index|
+        refute_equal tika_data, altered_data
+        xml_path = File.join(directory, "altered-#{index}.xml")
+        File.binwrite(xml_path, altered_data)
+
+        output, errors, status = Open3.capture3(
+          RbConfig.ruby,
+          File.expand_path("../script/download_tika_data.rb", __dir__),
+          "--verify", xml_path
+        )
+
+        refute status.success?
+        assert_empty output
+        assert_includes errors, "Unexpected Tika"
+      end
+    end
+  end
+
+  test "rejects an unreviewed unsupported rule without emitting output" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-unsupported">
+          <magic>
+            <match type="regex" value="UNREVIEWED" />
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      refute status.success?
+      assert_empty generated
+      assert_includes errors, "Unsupported magic rules changed"
+      assert_includes errors, "got 1"
+    end
+  end
+
+  test "buffers stdout until every rule has serialized" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-bzip2">
+          <magic>
+            <match type="regex" value="[" />
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      refute status.success?
+      assert_empty generated
+      assert_match(/premature end of char-class|unterminated character class/, errors)
+    end
+  end
+
+  test "preserves an existing output file when direct generation fails" do
+    malformed_xml = '<mime-info><mime-type type="text/plain"></mime-info>'
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      tables_path = File.join(directory, "tables.rb")
+      File.binwrite(xml_path, malformed_xml)
+      File.binwrite(tables_path, "existing artifact\n")
+
+      generated, _errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__),
+        "--output", tables_path, xml_path
+      )
+
+      refute status.success?
+      assert_empty generated
+      assert_equal "existing artifact\n", File.binread(tables_path)
+    end
+  end
+
+  test "emits root element rules, resolving collisions by type name like Tika" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/onix-message-short+xml">
+          <root-XML localName="ONIXMessage" />
+          <root-XML localName="ONIXMessage" namespaceURI="http://ns.editeur.org/onix/3.0/reference" />
+        </mime-type>
+        <mime-type type="application/onix-message+xml">
+          <root-XML localName="ONIXMessage" />
+          <root-XML localName="ONIXmessage" namespaceURI="http://ns.editeur.org/onix/3.0/short" />
+        </mime-type>
+        <mime-type type="application/dita+xml;format=map">
+          <root-XML localName="map" namespaceURI="" />
+        </mime-type>
+        <mime-type type="application/x-globbed">
+          <glob pattern="*.globbed" />
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      tables_path = File.join(directory, "tables.rb")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+      assert status.success?, errors
+      File.binwrite(tables_path, generated)
+
+      verification = <<~'RUBY'
+        load ARGV.fetch(0)
+        abort unless Marcel::ROOT_XML.size == 4
+        abort unless Marcel::ROOT_XML.fetch([nil, "ONIXMessage"]) == "application/onix-message+xml"
+        abort unless Marcel::ROOT_XML.fetch(["http://ns.editeur.org/onix/3.0/reference", "ONIXMessage"]) == "application/onix-message-short+xml"
+        abort unless Marcel::ROOT_XML.fetch(["http://ns.editeur.org/onix/3.0/short", "ONIXmessage"]) == "application/onix-message+xml"
+        abort unless Marcel::ROOT_XML.fetch([nil, "map"]) == "application/dita+xml;format=map"
+        abort unless Marcel::TYPE_EXTS.keys == ["application/x-globbed"]
+      RUBY
+      _output, errors, status = Open3.capture3(RbConfig.ruby, "-e", verification, tables_path)
+      assert status.success?, errors
+    end
+  end
+
+  test "rejects code-shaped root element names and namespaces" do
+    rules = {
+      '<root-XML localName="x&apos;]; raise(&quot;name interpolation executed&quot;); #" />' => "Invalid root-XML localName",
+      '<root-XML localName="x" namespaceURI="urn:x&apos;]; raise(&quot;namespace interpolation executed&quot;); #" />' => "Invalid root-XML namespaceURI",
+    }
+
+    rules.each do |rule, message|
+      xml = "<mime-info><mime-type type=\"application/x-pwn\">#{rule}</mime-type></mime-info>"
+
+      Dir.mktmpdir("marcel-generator-test") do |directory|
+        xml_path = File.join(directory, "input.xml")
+        File.binwrite(xml_path, xml)
+
+        generated, errors, status = Open3.capture3(
+          RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+        )
+
+        refute status.success?
+        assert_empty generated
+        assert_includes errors, message
+      end
+    end
+  end
+
+  test "keeps extensions but omits broad generated HTML magic" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="text/html">
+          <glob pattern="*.html" />
+          <magic><match type="string" value="&lt;html" offset="0:8192" /></magic>
+        </mime-type>
+        <mime-type type="application/xhtml+xml">
+          <glob pattern="*.xhtml" />
+          <magic><match type="string" value="&lt;html xmlns=" offset="0:8192" /></magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      tables_path = File.join(directory, "tables.rb")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+      assert status.success?, errors
+      File.binwrite(tables_path, generated)
+
+      verification = <<~'RUBY'
+        load ARGV.fetch(0)
+        abort unless Marcel::EXTENSIONS.fetch("html") == "text/html"
+        abort unless Marcel::EXTENSIONS.fetch("xhtml") == "application/xhtml+xml"
+        abort unless Marcel::MAGIC.none? { |type, _| type == "text/html" || type == "application/xhtml+xml" }
+      RUBY
+      _output, errors, status = Open3.capture3(RbConfig.ruby, "-e", verification, tables_path)
+      assert status.success?, errors
+    end
+  end
+
+  test "probes common types first, behind higher-priority matchers for their own subtypes" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="image/x-other">
+          <magic priority="50"><match type="string" value="OTHER" offset="0" /></magic>
+        </mime-type>
+        <mime-type type="application/x-unrelated">
+          <magic priority="60"><match type="string" value="UNREL" offset="0" /></magic>
+        </mime-type>
+        <mime-type type="image/x-tiff-flavour">
+          <sub-class-of type="image/x-tiff-family" />
+          <magic priority="60"><match type="string" value="II*\000CR" offset="0" /></magic>
+        </mime-type>
+        <mime-type type="image/x-tiff-family">
+          <sub-class-of type="image/tiff" />
+        </mime-type>
+        <mime-type type="image/tiff">
+          <magic priority="50"><match type="string" value="II*\000" offset="0" /></magic>
+        </mime-type>
+        <mime-type type="image/jpeg">
+          <magic priority="50"><match type="string" value="\377\330\377" offset="0" /></magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      tables_path = File.join(directory, "tables.rb")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+      assert status.success?, errors
+      File.binwrite(tables_path, generated)
+
+      verification = <<~'RUBY'
+        load ARGV.fetch(0)
+        expected = %w( image/jpeg image/x-tiff-flavour image/tiff application/x-unrelated image/x-other )
+        abort Marcel::MAGIC.map(&:first).inspect unless Marcel::MAGIC.map(&:first) == expected
+      RUBY
+      _output, errors, status = Open3.capture3(RbConfig.ruby, "-e", verification, tables_path)
+      assert status.success?, errors
+    end
+  end
+
+  test "decodes typeless matches as Tika's default string type" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-typeless">
+          <magic>
+            <match value="0x5A494D04" offset="0"/>
+            <match value="\x90plain" offset="3"/>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    verification = <<~'RUBY'
+      load ARGV.fetch(0)
+      matches = Marcel::MAGIC.to_h.fetch("application/x-typeless")
+      expected = [[0, "ZIM\x04".b], [3, "\x90plain".b]]
+      abort matches.inspect unless matches == expected
+    RUBY
+
+    assert_generates xml, verification
+  end
+
+  test "passes structural minShouldMatch containers through with no value" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-structural">
+          <magic>
+            <match minShouldMatch="2">
+              <match value="alpha" type="string" offset="0"/>
+              <match value="beta" type="string" offset="4"/>
+            </match>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    verification = <<~'RUBY'
+      load ARGV.fetch(0)
+      matches = Marcel::MAGIC.to_h.fetch("application/x-structural")
+      expected = [[0, nil, [[0, "alpha".b], [4, "beta".b]]]]
+      abort matches.inspect unless matches == expected
+    RUBY
+
+    assert_generates xml, verification
+  end
+
+  test "anchors mask segments at the match's own offset" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-masked">
+          <magic>
+            <match value="ABCD1234WXYZ" type="string" mask="0xFFFFFFFF00000000FFFFFFFF" offset="16"/>
+            <match value="0x060B2A864886F70D0109100100" type="string" mask="0xFFFFFFFFFFFFFFFFFFFFFFFF00" offset="2:6"/>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    verification = <<~'RUBY'
+      load ARGV.fetch(0)
+      matches = Marcel::MAGIC.to_h.fetch("application/x-masked")
+      expected = [
+        [16, "ABCD".b, [[24, "WXYZ".b]]],
+        [2..6, "\x06\x0B\x2A\x86\x48\x86\xF7\x0D\x01\x09\x10\x01".b],
+      ]
+      abort matches.inspect unless matches == expected
+    RUBY
+
+    assert_generates xml, verification
+  end
+
+  test "skips multi-segment masks at range offsets and their orphaned parents, recursively" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-unsupported-children">
+          <magic>
+            <match value="0x31" offset="0">
+              <match value="0x30" offset="1">
+                <match value="0x06092a864886f70d0107FFa0" type="string" mask="0xFFFFFFFFFFFFFFFFFFFF00FF" offset="2:6"/>
+              </match>
+            </match>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      # The synthetic unsupported rules fail the pinned-manifest check, and by then the
+      # generator has warned about the whole skipped chain: the inexpressible masked leaf,
+      # its parent, and its grandparent in turn.
+      refute status.success?
+      assert_empty generated
+      assert_includes errors, "unsupported multi-segment mask at range offset"
+      assert_includes errors, %(match with no supported children: <match value="0x30" offset="1">)
+      assert_includes errors, %(match with no supported children: <match value="0x31" offset="0">)
+    end
+  end
+
+  test "rejects mask segments shifted past the maximum magic offset" do
+    fixed = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-overflow">
+          <magic>
+            <match value="ABC" type="string" mask="0x00FFFF" offset="65536"/>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+    range = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-overflow">
+          <magic>
+            <match value="AB" type="string" mask="0x00FF" offset="65535:65536"/>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    [fixed, range].each do |xml|
+      Dir.mktmpdir("marcel-generator-test") do |directory|
+        xml_path = File.join(directory, "input.xml")
+        File.binwrite(xml_path, xml)
+
+        generated, errors, status = Open3.capture3(
+          RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+        )
+
+        refute status.success?
+        assert_empty generated
+        assert_includes errors, "Masked segment offset exceeds 65536"
+      end
+    end
+  end
+
+  test "skips all-zero masks and their orphaned parents" do
+    xml = <<-'XML'
+      <mime-info>
+        <mime-type type="application/x-zero-mask">
+          <magic>
+            <match value="AB" type="string" offset="0">
+              <match value="CD" type="string" mask="0x0000" offset="2"/>
+            </match>
+          </magic>
+        </mime-type>
+      </mime-info>
+    XML
+
+    Dir.mktmpdir("marcel-generator-test") do |directory|
+      xml_path = File.join(directory, "input.xml")
+      File.binwrite(xml_path, xml)
+
+      generated, errors, status = Open3.capture3(
+        RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+      )
+
+      # Fails the pinned-manifest check after warning about the whole skipped chain.
+      refute status.success?
+      assert_empty generated
+      assert_includes errors, "unsupported all-zero mask"
+      assert_includes errors, %(match with no supported children: <match value="AB" type="string" offset="0">)
+    end
+  end
+
+  test "retains supported siblings when a parent loses only some children" do
+    # From the shipped data: Tika's DER-encoded pkcs7-signature rule needs a two-segment
+    # mask at a range offset, which is inexpressible here, so the 0x30 parent is skipped.
+    # Its supported PEM sibling must survive alone.
+    signature_magics = Marcel::MAGIC.select { |type, _| type == "application/pkcs7-signature" }.map(&:last)
+    assert_equal [[[0, "-----BEGIN PKCS7".b]]], signature_magics
+
+    # audio/mpeg's priority-50 rule loses its ID3 parent (regex child) but keeps the frame
+    # sync siblings, while Tika's deliberate priority-10 bare ID3 fallback survives whole.
+    mpeg_magics = Marcel::MAGIC.select { |type, _| type == "audio/mpeg" }.map(&:last)
+    assert_includes mpeg_magics, [[0, "ID3".b]]
+    assert mpeg_magics.any? { |matches| matches.include?([0, "\xFF\xFB".b]) && matches.none? { |match| match[1] == "ID3".b } },
+      "expected audio/mpeg frame-sync rule without a bare ID3 alternative"
+  end
+
+  private
+    def assert_generates(xml, verification)
+      Dir.mktmpdir("marcel-generator-test") do |directory|
+        xml_path = File.join(directory, "input.xml")
+        tables_path = File.join(directory, "tables.rb")
+        File.binwrite(xml_path, xml)
+
+        generated, errors, status = Open3.capture3(
+          RbConfig.ruby, File.expand_path("../script/generate_tables.rb", __dir__), xml_path
+        )
+        assert status.success?, errors
+        File.binwrite(tables_path, generated)
+
+        _output, errors, status = Open3.capture3(RbConfig.ruby, "-e", verification, tables_path)
+        assert status.success?, errors
+      end
+    end
+end

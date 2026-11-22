@@ -1,0 +1,98 @@
+require 'test_helper'
+require 'rack'
+
+class Marcel::MimeTypeTest < Marcel::TestCase
+  def setup
+    @path = files("image.gif").to_s
+  end
+
+  test "gets content type from Files" do
+    content_type = File.open @path do |file|
+      Marcel::MimeType.for file
+    end
+    assert_equal "image/gif", content_type
+  end
+
+  test "gets content type from Pathnames" do
+    content_type = Marcel::MimeType.for Pathname.new(@path)
+    assert_equal "image/gif", content_type
+  end
+
+  test "opens Pathnames in binary mode" do
+    pathname = Pathname.new(@path)
+    opened_mode = nil
+    pathname.define_singleton_method(:open) do |mode, &block|
+      opened_mode = mode
+      File.open(to_path, mode, &block)
+    end
+
+    assert_equal "image/gif", Marcel::MimeType.for(pathname)
+    assert_equal "rb", opened_mode
+  end
+
+  test "closes Pathname files after use" do
+    skip if RUBY_ENGINE == "jruby"
+    open_files = ObjectSpace.each_object(File).reject(&:closed?)
+    assert open_files.none? { |f| f.path == @path }
+  end
+
+  test "gets content type from Tempfiles" do
+    Tempfile.open("Marcel") do |tempfile|
+      tempfile.write(File.read(@path))
+      content_type = Marcel::MimeType.for tempfile
+      assert_equal "image/gif", content_type
+    end
+  end
+
+  test "gets content type from IOs" do
+    io = StringIO.new(File.read(@path))
+    content_type = Marcel::MimeType.for io
+    assert_equal "image/gif", content_type
+  end
+
+  test "reads IOs from the beginning" do
+    io = StringIO.new(File.read(@path))
+    io.read(10)
+
+    assert_equal "image/gif", Marcel::MimeType.for(io)
+  end
+
+  test "gets content type from sources that conform to Rack RewindableInput" do
+    io = StringIO.new(File.read(@path))
+    wrapper = Rack::RewindableInput.new(io)
+    content_type = Marcel::MimeType.for wrapper
+    assert_equal "image/gif", content_type
+  end
+
+  if Rack::Lint.const_defined?(:InputWrapper)
+    test "gets content type from sources that conform to Rack 2's Rack::Lint::InputWrapper" do
+      io = StringIO.new(File.read(@path))
+      wrapper = Rack::Lint::InputWrapper.new(io)
+      content_type = Marcel::MimeType.for wrapper
+      assert_equal "image/gif", content_type
+    end
+  end
+
+  test "does not mutate the source IO's encoding" do
+    io = StringIO.new("hello world")
+    original_encoding = io.external_encoding
+
+    Marcel::MimeType.for(io)
+
+    assert_equal original_encoding, io.external_encoding
+  end
+
+  test "extending a mixed-case alias redirects to the canonical type" do
+    _output, errors = capture_io do
+      Marcel::MimeType.extend "Application/Javascript", extensions: %w( extendtestjs )
+    end
+
+    assert_match(/alias/, errors)
+    assert_equal "text/javascript", Marcel::MimeType.for(extension: "extendtestjs")
+    refute Marcel::TYPE_EXTS.key?("Application/Javascript")
+    refute Marcel::TYPE_EXTS.key?("application/javascript")
+  ensure
+    Marcel::EXTENSIONS.delete("extendtestjs")
+    Marcel::TYPE_EXTS["text/javascript"]&.delete("extendtestjs")
+  end
+end

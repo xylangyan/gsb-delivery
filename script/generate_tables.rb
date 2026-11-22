@@ -1,0 +1,724 @@
+#!/usr/bin/env ruby
+
+# Code in this file adapted from the mimemagic gem, released under the MIT License.
+# Copyright (c) 2011 Daniel Mendler. Available at https://github.com/mimemagicrb/mimemagic.
+
+require 'nokogiri'
+require 'digest'
+require 'open3'
+require 'optparse'
+require 'rbconfig'
+require 'stringio'
+require 'tempfile'
+
+module TikaRegex
+  # Apache Tika uses Java regex syntax, which has some differences from Ruby:
+  # - (?s) flag in Java is a mode which makes . match newlines
+  #   In Ruby, this is equivalent to the multiline flag
+  # - Java uses double-escaped sequences like \\d, \\x00, \\u0041 in XML
+  #   These need to be converted to Ruby's single-escaped format: \d, \x00, \u0041
+  # - Naturally, some Java regex features are not supported in Ruby (e.g., variable-length lookbehinds)
+  #
+  # This method handles the conversion and gracefully returns nil for incompatible patterns.
+  #
+  # @param pattern [String] The Tika regex pattern string
+  # @return [Regexp, nil] The compiled Ruby Regexp, or nil if the pattern is incompatible
+  def self.to_ruby_regexp(pattern)
+    return nil if pattern.nil? || pattern.empty?
+
+    processed = pattern.dup
+    flags = 0
+
+    # Converting Java's (?s) dotall flag to Ruby's multiline
+    if processed.include?('(?s)')
+      processed = processed.gsub('(?s)', '')
+      flags |= Regexp::MULTILINE
+    end
+
+    # Convert Java-style double-escaped sequences to Ruby single-escaped format
+    # This is more complex than a simple gsub because we need to handle:
+    # - \\xHH -> \xHH (hex byte)
+    # - \\uHHHH -> \uHHHH (unicode)
+    # - \\OOO -> \xHH (convert octal to hex to avoid backreference ambiguity in TruffleRuby)
+    # - \\d, \\w, \\s, etc. -> \d, \w, \s (character classes)
+    # - \\[, \\], \\{, \\}, etc. -> \[, \], \{, \} (literal characters)
+    #
+    # We process these specifically to avoid breaking the regex structure
+    processed = processed.gsub(/\\\\(x[0-9a-fA-F]{2})/, '\\\\\1')     # \\xHH -> \xHH
+                         .gsub(/\\\\(u[0-9a-fA-F]{4})/, '\\\\\1')     # \\uHHHH -> \uHHHH
+                         .gsub(/\\\\([0-7]{1,3})/) { "\\x#{$1.to_i(8).to_s(16).rjust(2, '0')}" } # \\OOO -> \xHH (octal to hex so that TruffleRuby doesn't think it's a backreference)
+                         .gsub(/\\\\([WDS])/i, '\\\\\1')              # \\d etc. -> \d
+                         .gsub(/\\\\([farbentv])/, '\\\\\1')          # \\n etc. -> \n
+                         .gsub(/\\\\([()\[\]{}|*+?.^$\\])/, '\\\\\1') # \\[ etc. -> \[
+
+    # Force binary encoding to handle binary escape sequences like \xff
+    processed = processed.force_encoding(Encoding::BINARY)
+
+    Regexp.new(processed, flags).freeze
+  end
+end
+
+module RubySource
+  def self.string(value)
+    source = value.b.dump.gsub(/(\\+)x([0-9a-f]{2})/i) do |escape|
+      slashes = $1
+      if slashes.length.odd?
+        slashes[0...-1] + ('\\%03o' % $2.to_i(16))
+      else
+        escape
+      end
+    end
+    source.tr!('"', '\'') unless source.match?(/[\\']/)
+    source
+  end
+
+  def self.words(values)
+    if values.all? { |value| safe_word?(value) }
+      "%w(#{values.join(' ')})"
+    else
+      "[#{values.map { |value| string(value) }.join(', ')}]"
+    end
+  end
+
+  def self.comment(value)
+    value.gsub(/[\x00-\x1f\x7f]|\u0085|\u2028|\u2029/, " ")
+  end
+
+  def self.safe_word?(value)
+    !value.empty? && value.each_byte.all? do |byte|
+      byte > 0x20 && byte < 0x7f && byte != 0x28 && byte != 0x29 && byte != 0x5c
+    end
+  end
+end
+
+module MimeData
+  TOKEN = "[!#$%&'*+\\-.^_`|~0-9A-Za-z]+".freeze
+  TYPE = %r{\A#{TOKEN}/#{TOKEN}(?:;[ \t]*#{TOKEN}=#{TOKEN})*\z}.freeze
+  EXTENSION = /\A[0-9A-Za-z][0-9A-Za-z.+_~-]*\z/.freeze
+  OFFSET = /\A\d+(?::\d+)?\z/.freeze
+  PRIORITY = /\A\d+\z/.freeze
+  # Root element names are matched by exact equality against ASCII table keys; restricting the
+  # data to the ASCII subset of XML Name keeps the generated keys plain string literals.
+  LOCAL_NAME = /\A[A-Za-z_][A-Za-z0-9._-]*\z/.freeze
+  NAMESPACE_URI = /\A[\x21-\x7E]+\z/.freeze
+  MAX_MAGIC_OFFSET = 64 * 1024
+  MAX_MAGIC_RANGE_BYTES = 64 * 1024
+  MAX_MAGIC_PRIORITY = 100
+
+  def self.type(value, source)
+    if value&.match?(/[\x00-\x08\x0A-\x1F\x7F]/)
+      raise ArgumentError, "Invalid MIME type in #{source}: #{value.inspect}"
+    end
+
+    normalized = value&.strip
+    unless normalized&.match?(TYPE)
+      raise ArgumentError, "Invalid MIME type in #{source}: #{value.inspect}"
+    end
+
+    normalized
+  end
+
+  def self.extension(value, source)
+    unless value&.match?(EXTENSION)
+      raise ArgumentError, "Invalid extension in #{source}: #{value.inspect}"
+    end
+
+    value.downcase
+  end
+
+  def self.offset(value, source)
+    maximum_length = "#{MAX_MAGIC_OFFSET}:#{MAX_MAGIC_OFFSET}".bytesize
+    unless value && value.bytesize <= maximum_length && value.match?(OFFSET)
+      raise ArgumentError, "Invalid magic offset in #{source}: #{value.inspect}"
+    end
+
+    bounds = value.split(":").map { |bound| Integer(bound, 10) }
+    if bounds.any? { |bound| bound > MAX_MAGIC_OFFSET }
+      raise ArgumentError, "Magic offset exceeds #{MAX_MAGIC_OFFSET} in #{source}: #{value.inspect}"
+    end
+    if bounds.size == 2 && bounds.first > bounds.last
+      raise ArgumentError, "Descending magic offset in #{source}: #{value.inspect}"
+    end
+    if bounds.size == 2 && bounds.last - bounds.first + 1 > MAX_MAGIC_RANGE_BYTES
+      raise ArgumentError, "Magic range exceeds #{MAX_MAGIC_RANGE_BYTES} bytes in #{source}: #{value.inspect}"
+    end
+
+    bounds.size == 2 ? bounds[0]..bounds[1] : bounds[0]
+  end
+
+  def self.priority(value, source)
+    unless value && value.bytesize <= MAX_MAGIC_PRIORITY.to_s.bytesize && value.match?(PRIORITY)
+      raise ArgumentError, "Invalid magic priority in #{source}: #{value.inspect}"
+    end
+
+    priority = Integer(value, 10)
+    if priority > MAX_MAGIC_PRIORITY
+      raise ArgumentError, "Magic priority exceeds #{MAX_MAGIC_PRIORITY} in #{source}: #{value.inspect}"
+    end
+
+    priority
+  end
+
+  def self.local_name(value, source)
+    unless value&.match?(LOCAL_NAME)
+      raise ArgumentError, "Invalid root-XML localName in #{source}: #{value.inspect}"
+    end
+
+    value
+  end
+
+  # An absent or empty namespaceURI means the root element must be in no namespace.
+  def self.namespace_uri(value, source)
+    return nil if value.nil? || value.empty?
+
+    unless value.match?(NAMESPACE_URI)
+      raise ArgumentError, "Invalid root-XML namespaceURI in #{source}: #{value.inspect}"
+    end
+
+    value
+  end
+end
+
+class UnsupportedRules
+  # Tika currently contains 77 unsupported XML rules: 76 magic matches plus one root-XML
+  # rule. Relative to the pre-propagation set of 60: 15 newly recorded parents whose
+  # children were all unsupported, 2 multi-segment masks at range offsets, and 2 regex
+  # parents reclassified as no-supported-children (17 children-kind entries in all).
+  # Pretty-printed warnings span multiple physical lines per rule, so pin the canonical
+  # rule set rather than stderr layout.
+  EXPECTED_COUNT = 77
+  EXPECTED_SHA256 = "146db7b1c0ccf9f095140912b6514c999528eb0b696403b7832d5e0182239c16"
+
+  def initialize
+    @signatures = []
+  end
+
+  def count
+    @signatures.size
+  end
+
+  def skip(kind, mime_type, element, message)
+    @signatures << [kind, mime_type, canonical_element(element)].inspect
+    warn message
+  end
+
+  def verify!
+    return if count.zero?
+
+    digest = Digest::SHA256.hexdigest(@signatures.sort.join("\0"))
+    return if count == EXPECTED_COUNT && digest == EXPECTED_SHA256
+
+    raise ArgumentError,
+      "Unsupported magic rules changed: expected #{EXPECTED_COUNT} " \
+      "(sha256 #{EXPECTED_SHA256}), got #{count} (sha256 #{digest})"
+  end
+
+  private
+    def canonical_element(element)
+      attributes = element.attribute_nodes.sort_by(&:name).map { |attribute| [attribute.name, attribute.value] }
+      children = element.element_children.map { |child| canonical_element(child) }
+      [element.name, attributes, children]
+    end
+end
+
+class BinaryString
+  def initialize(string)
+    @string = string
+  end
+
+  def inspect
+    "b[#{RubySource.string(@string)}]"
+  end
+end
+
+class RegexString
+  def initialize(pattern)
+    @pattern = pattern
+  end
+
+  def inspect
+    regexp = TikaRegex.to_ruby_regexp(@pattern)
+    if regexp
+      "Regexp.new(#{regexp.source.b.dump}.b, #{regexp.options}).freeze"
+    else
+      "nil"
+    end
+  end
+end
+
+def str2int(s)
+  return s.to_i(16) if s[0..1].downcase == '0x'
+  return s.to_i(8) if s[0..0].downcase == '0'
+  s.to_i(10)
+end
+
+ESCAPED_CHARACTERS = {
+  'a' => "\a",
+  'b' => "\b",
+  'e' => "\e",
+  'f' => "\f",
+  'n' => "\n",
+  'r' => "\r",
+  's' => " ",
+  't' => "\t",
+  'v' => "\v",
+}.freeze
+
+def decode_string_escape(escape)
+  case escape
+  when /\Ax([0-9a-f]{1,2})\z/i
+    $1.to_i(16).chr
+  when /\A0?([0-7]{1,3})\z/
+    $1.to_i(8).chr
+  else
+    ESCAPED_CHARACTERS.fetch(escape, escape)
+  end
+end
+
+def binary_strings(object)
+  case object
+  when Array
+    object.map { |o| binary_strings(o) }
+  when String
+    BinaryString.new(object)
+  when RegexString
+    object
+  when Numeric, Range, nil
+    object
+  else
+    raise TypeError, "unexpected #{object.class}"
+  end
+end
+
+WELL_KNOWN_REGEX_TYPES = %w(
+  application/x-bzip2
+  text/html
+  application/vnd.java.hprof
+  application/vnd.java.hprof.text
+)
+
+def get_matches(mime_type, parent, unsupported_rules)
+  parent.elements.map {|match|
+    children = get_matches(mime_type, match, unsupported_rules)
+
+    # A match with children requires some child to match alongside it, so a parent that
+    # lost every child to an unsupported rule must be skipped too: emitting it alone would
+    # broaden the rule to the bare parent (e.g. classifying every DER SEQUENCE as
+    # application/pkcs7-signature). Surviving siblings elsewhere are unaffected.
+    if children.empty? && !match.elements.empty?
+      unsupported_rules.skip "children", mime_type, match,
+        "#{mime_type}: match with no supported children: #{match.to_s}"
+      next nil
+    end
+
+    type = match['type']
+    value = match['value']
+    offset = match['offset'] || '0'
+    offset = MimeData.offset(offset, mime_type)
+
+    mask = match['mask']
+
+    # Tika defaults an absent type to string, hex-decoding 0x… values and unescaping
+    # backslash escapes. Structural containers (minShouldMatch) carry no value at all
+    # and keep their nil type: they pass through the nil branch below unchanged.
+    type = 'string' if type.nil? && value
+
+    # We only support masks of whole bytes against a string type
+    if mask && (!mask.match?(/\A0x(FF|00)*\z/) || type != 'string')
+      unsupported_rules.skip "mask", mime_type, match, "#{mime_type}: unsupported mask #{match.to_s}"
+      next nil
+    end
+
+    case type
+      when 'unicodeLE', 'unicodeBE' # Unicode string types (UTF-16 Little/Big Endian)
+        value.gsub!(/\A0x([0-9a-f]+)\z/i) { [$1].pack('H*') }
+        encoding = type == 'unicodeLE' ? Encoding::UTF_16LE : Encoding::UTF_16BE
+        value = value.encode(encoding).force_encoding(Encoding::BINARY)
+    when 'regex'
+      unless WELL_KNOWN_REGEX_TYPES.include?(mime_type)
+        unsupported_rules.skip "regex", mime_type, match,
+          "#{mime_type}: unsupported #{type} match: #{match.to_s}"
+        next nil
+      end
+
+      value = RegexString.new(value)
+    when 'string', 'stringignorecase'
+      value.gsub!(/\A0x([0-9a-f]+)\z/i) { [$1].pack('H*') }
+      value.gsub!(/\\(x[\dA-Fa-f]{1,2}|0\d{1,3}|\d{1,3}|.)/) { decode_string_escape($1) }
+
+      if mask
+        segments = []
+        mask.scan(/(?:FF)+/) do
+          scan = $~
+          scan_offset = scan.offset(0)
+          mask_offset = (scan_offset[0] - 2) / 2
+          mask_length = (scan_offset[1] - scan_offset[0]) / 2
+          segments << [mask_offset, mask_length]
+        end
+
+        # An all-zero mask matches any content, which can't be a deliberate rule.
+        if segments.empty?
+          unsupported_rules.skip "mask", mime_type, match, "#{mime_type}: unsupported all-zero mask #{match.to_s}"
+          next nil
+        end
+
+        # A range offset slides the whole match, but each emitted segment anchors at an
+        # absolute offset, so segments can't stay mutually aligned while sliding. A single
+        # segment simply shifts the range; more than one is inexpressible.
+        if Range === offset && segments.size > 1
+          unsupported_rules.skip "mask", mime_type, match,
+            "#{mime_type}: unsupported multi-segment mask at range offset #{match.to_s}"
+          next nil
+        end
+
+        chain = children
+        segments.reverse_each do |(mask_offset, mask_length)|
+          masked_value = value[mask_offset, mask_length]
+          segment_offset = if Range === offset
+            (offset.begin + mask_offset)..(offset.end + mask_offset)
+          else
+            offset + mask_offset
+          end
+
+          # The match's own offset was validated, but shifting by the mask position can
+          # push a segment past the bound the offset validation enforces.
+          segment_bound = Range === segment_offset ? segment_offset.end : segment_offset
+          if segment_bound > MimeData::MAX_MAGIC_OFFSET
+            raise ArgumentError,
+              "Masked segment offset exceeds #{MimeData::MAX_MAGIC_OFFSET} in #{mime_type}: #{match.to_s}"
+          end
+          if chain.empty?
+            chain = [[segment_offset, masked_value]]
+          else
+            chain = [[segment_offset, masked_value, chain]]
+          end
+        end
+        next chain[0]
+      end
+    when 'big16'
+      value = str2int(value)
+      value = ((value >> 8).chr + (value & 0xFF).chr)
+    when 'big32'
+      value = str2int(value)
+      value = (((value >> 24) & 0xFF).chr + ((value >> 16) & 0xFF).chr + ((value >> 8) & 0xFF).chr + (value & 0xFF).chr)
+    when 'little16'
+      value = str2int(value)
+      value = ((value & 0xFF).chr + (value >> 8).chr)
+    when 'little32'
+      value = str2int(value)
+      value = ((value & 0xFF).chr + ((value >> 8) & 0xFF).chr + ((value >> 16) & 0xFF).chr + ((value >> 24) & 0xFF).chr)
+    when 'host16' # use little endian
+      value = str2int(value)
+      value = ((value & 0xFF).chr + (value >> 8).chr)
+    when 'host32' # use little endian
+      value = str2int(value)
+      value = ((value & 0xFF).chr + ((value >> 8) & 0xFF).chr + ((value >> 16) & 0xFF).chr + ((value >> 24) & 0xFF).chr)
+    when 'byte'
+      value = str2int(value)
+      value = value.chr
+    when nil
+      nil
+    else
+      unsupported_rules.skip "type", mime_type, match,
+        "#{mime_type}: unsupported #{type} match: #{match.to_s}"
+      next nil
+    end
+
+    children.empty? ? [offset, value] : [offset, value, children]
+  }.compact
+end
+
+options = {}
+option_parser = OptionParser.new do |parser|
+  parser.banner = "Usage: #{$0} [--output path/to/tables.rb] path/to/data.xml [...]"
+  parser.on("-o", "--output PATH", "Atomically write generated Ruby to PATH") do |path|
+    options[:output] = path
+  end
+end
+option_parser.parse!(ARGV)
+abort option_parser.to_s if ARGV.empty?
+
+TYPE_RENAMES = {
+  "image/bmp;format=compressed" => "image/bmp",
+}.freeze
+
+# Tika aliases these, but Marcel deliberately keeps them as distinct types.
+# application/x-x509-ca-cert: reused as the PEM-format certificate type, a subtype of
+# application/x-x509-cert;format=pem registered in lib/marcel/mime_type/definitions.rb.
+# application/oxps: IANA registers OpenXPS as its own type and notes it is not directly
+# interoperable with Microsoft XPS, so it must not resolve to application/vnd.ms-xpsdocument.
+ALIAS_SKIPS = %w(
+  application/x-x509-ca-cert
+  application/oxps
+).freeze
+
+# Globs Tika files under a type other than Marcel's choice for that extension. The extension
+# is dropped from every other type's globs and must be claimed by its assigned type (declared
+# in data/custom.xml), which the generator verifies after parsing.
+# oxps: OpenXPS is its own IANA-registered type, not Microsoft XPS (see ALIAS_SKIPS above).
+GLOB_REASSIGNMENTS = {
+  "oxps" => "application/oxps",
+}.freeze
+
+# Marcel registers stricter, bounded HTML and XHTML rules at runtime. Keeping Tika's broad
+# generated rules would make `require "marcel/magic"` alone retain the unsafe legacy matches.
+RUNTIME_DEFINED_MAGIC_TYPES = %w(
+  application/xhtml+xml
+  text/html
+).freeze
+
+extensions = {}
+type_parents = Hash.new { |hash, key| hash[key] = [] }
+types = {}
+aliases = {}
+defined_types = {}
+reassigned_globs = {}
+magics = []
+root_xml = {}
+unsupported_rules = UnsupportedRules.new
+
+ARGV.each do |path|
+  doc = File.open(path, "rb") do |file|
+    Nokogiri::XML(file) { |config| config.strict.nonet }
+  end
+  unless doc.root&.name == "mime-info"
+    raise ArgumentError, "Expected mime-info root in #{path}"
+  end
+
+  (doc/'mime-info/mime-type').each do |mime|
+    comments = Hash[*(mime/'_comment').map {|comment| [comment['xml:lang'], comment.inner_text] }.flatten]
+    type = MimeData.type(mime['type'], path)
+    type = TYPE_RENAMES[type] || type
+    defined_types[type] = path
+
+    (mime/'alias').each do |element|
+      # Downcased: lookups are lowercase-normalized, and Tika data has mixed-case aliases.
+      aliased = MimeData.type(element['type'], path).downcase
+      aliases[aliased] = type.downcase unless aliased == type.downcase || ALIAS_SKIPS.include?(aliased)
+    end
+
+    subclass = (mime/'sub-class-of').map { |element| MimeData.type(element['type'], path) }
+    type_parents[type] |= subclass
+    exts = (mime/'glob').map do |element|
+      if element['pattern'] =~ /^\*\.([^\[\]]+)$/
+        MimeData.extension($1, path)
+      end
+    end.compact
+    exts.reject! do |ext|
+      next false unless GLOB_REASSIGNMENTS.key?(ext)
+
+      reassigned_globs[ext] = true
+      GLOB_REASSIGNMENTS[ext] != type
+    end
+    unless RUNTIME_DEFINED_MAGIC_TYPES.include?(type)
+      (mime/'magic').each do |magic|
+        priority = MimeData.priority(magic['priority'] || '50', type)
+        matches = get_matches(type, magic, unsupported_rules)
+        magics << [priority, type, matches]
+      end
+    end
+    if !exts.empty?
+      exts.each{|x|
+        extensions[x] = type if !extensions.include?(x)
+      }
+      types[type] = [exts,subclass,comments[nil]]
+    end
+
+    # Root element rules refine an application/xml magic match by the root's [namespace, name].
+    # Tika matches them by exact two-way equality (MimeType.RootXML#matches), so a rule with no
+    # localName can never match a real root element and is skipped as unsupported. Where rules
+    # collide, Tika takes the first match over types sorted by name (MimeTypes#init), which a
+    # per-key minimum reproduces exactly since each document matches at most one key.
+    (mime/'root-XML').each do |element|
+      if element['localName'].to_s.empty?
+        unsupported_rules.skip "root-XML", type, element, "#{type}: unsupported root-XML rule without localName: #{element.to_s}"
+        next
+      end
+
+      key = [MimeData.namespace_uri(element['namespaceURI'], path), MimeData.local_name(element['localName'], path)]
+      root_xml[key] = type unless root_xml.key?(key) && root_xml[key] <= type
+    end
+  end
+end
+
+# An alias that shadows a defined type would make the tables disagree with themselves:
+# lookups keyed on the type would answer while canonical resolution redirected elsewhere.
+aliases.each do |aliased, type|
+  if source = defined_types[aliased]
+    raise ArgumentError, "Alias #{aliased} (of #{type}) is also a MIME type defined in #{source}"
+  end
+end
+
+# A reassigned glob present in the data that its assigned type doesn't claim
+# would silently vanish from the tables.
+reassigned_globs.each_key do |ext|
+  unless extensions[ext] == GLOB_REASSIGNMENTS[ext]
+    raise ArgumentError, "Reassigned glob #{ext} must be declared under #{GLOB_REASSIGNMENTS[ext]}, " \
+      "but resolved to #{extensions[ext].inspect}"
+  end
+end
+
+magics = magics.each_with_index.sort_by do |(priority, type), source_index|
+  [ -priority, type, source_index ]
+end.map(&:first)
+
+# The most commonly seen types are probed first, ahead of the priority order. A common type's
+# fast path carries along the matchers Tika ranks above it for that type's own subtypes, so
+# promoting it cannot preempt a more specific verdict for the same content: image/x-canon-cr2
+# (priority 60) still probes before the image/tiff (50) matcher that matches every CR2 file's
+# TIFF header, and the MP4 and HEIF family before video/quicktime's broad ftyp match.
+common_types = [
+  "image/jpeg",                                                                # .jpg
+  "image/png",                                                                 # .png
+  "image/gif",                                                                 # .gif
+  "image/tiff",                                                                # .tiff
+  "image/bmp",                                                                 # .bmp
+  "image/vnd.adobe.photoshop",                                                 # .psd
+  "image/webp",                                                                # .webp
+  "text/html",                                                                 # .html
+  "image/svg+xml",                                                             # .svg
+
+  "video/x-msvideo",                                                           # .avi
+  "video/x-ms-wmv",                                                            # .wmv
+  "video/mp4",                                                                 # .mp4, .m4v
+  "audio/mp4",                                                                 # .m4a
+  "video/quicktime",                                                           # .mov
+  "video/mpeg",                                                                # .mpeg
+  "video/ogg",                                                                 # .ogv
+  "video/webm",                                                                # .webm
+  "video/x-matroska",                                                          # .mkv
+  "video/x-flv",                                                               # .flv
+
+  "audio/mpeg",                                                                # .mp3
+  "audio/x-wav",                                                               # .wav
+  "audio/aac",                                                                 # .aac
+  "audio/flac",                                                                # .flac
+  "audio/ogg",                                                                 # .ogg
+
+  "application/pdf",                                                           # .pdf
+  "application/msword",                                                        # .doc
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",   # .docx
+  "application/vnd.ms-powerpoint",                                             # .pps
+  "application/vnd.openxmlformats-officedocument.presentationml.slideshow",    # .ppsx
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", # .pptx
+  "application/vnd.ms-excel",                                                  # .xls
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",         # .xlsx
+]
+
+def descendant?(type, ancestor, type_parents)
+  pending = [type]
+  visited = {}
+  until pending.empty?
+    candidate = pending.pop
+    next if visited[candidate]
+
+    visited[candidate] = true
+    return true if candidate != type && candidate == ancestor
+
+    pending.concat(type_parents[candidate])
+  end
+  false
+end
+
+common_magics = common_types.flat_map do |common_type|
+  common_magic = magics.find { |_, type, _| type == common_type }
+  next [] unless common_magic
+
+  specific_magics = magics.select do |priority, type, _|
+    priority > common_magic[0] && descendant?(type, common_type, type_parents)
+  end
+  specific_magics + [common_magic]
+end
+
+magics = (common_magics + magics).uniq
+
+def emit_tables(output, extensions, types, aliases, root_xml, magics)
+  output.puts "# frozen_string_literal: true"
+  output.puts ""
+  output.puts "# This file is auto-generated. Instead of editing this file, please"
+  output.puts "# add MIMEs to data/custom.xml or the definitions files under lib/marcel."
+  output.puts ""
+  output.puts "module Marcel"
+  output.puts "  # @private"
+  output.puts "  # :nodoc:"
+  output.puts "  EXTENSIONS = {"
+  extensions.keys.sort.each do |key|
+    output.puts "    #{RubySource.string(key.strip)} => #{RubySource.string(extensions[key])},"
+  end
+  output.puts "  }"
+  output.puts "  # @private"
+  output.puts "  # :nodoc:"
+  output.puts "  TYPE_EXTS = {"
+  types.keys.sort.each do |key|
+    exts = types[key][0]
+    comment = types[key][2]
+    comment = " # #{RubySource.comment(comment)}" if comment
+    output.puts "    #{RubySource.string(key.strip)} => #{RubySource.words(exts)},#{comment}"
+  end
+  output.puts "  }"
+  output.puts "  # @private"
+  output.puts "  # :nodoc:"
+  output.puts "  TYPE_ALIASES = {"
+  aliases.keys.sort.each do |key|
+    output.puts "    #{RubySource.string(key.strip)} => #{RubySource.string(aliases[key])},"
+  end
+  output.puts "  }"
+  output.puts "  TYPE_PARENTS = {"
+  types.keys.sort.each do |key|
+    parents = types[key][1].sort
+    unless parents.empty?
+      output.puts "    #{RubySource.string(key.strip)} => #{RubySource.words(parents)},"
+    end
+  end
+  output.puts "  }"
+  output.puts "  # @private"
+  output.puts "  # :nodoc:"
+  output.puts "  ROOT_XML = {"
+  # Keys mix [nil, name] and [namespace, name]; nil is not comparable, so sort by an explicit key.
+  root_xml.keys.sort_by { |namespace, name| [namespace.to_s, name] }.each do |key|
+    namespace, name = key
+    namespace = namespace ? RubySource.string(namespace) : "nil"
+    output.puts "    [#{namespace}, #{RubySource.string(name)}] => #{RubySource.string(root_xml[key].strip)},"
+  end
+  output.puts "  }"
+  output.puts "  b = Hash.new { |h, k| h[k] = k.b.freeze }"
+  output.puts "  # @private"
+  output.puts "  # :nodoc:"
+  output.puts "  MAGIC = ["
+  magics.each do |priority, type, matches|
+    next if matches.nil? || matches.empty?
+
+    output.puts "    [#{RubySource.string(type.strip)}, #{binary_strings(matches).inspect}],"
+  end
+  output.puts "  ]"
+  output.puts "end"
+end
+
+def write_tables(output_path, contents)
+  return $stdout.write(contents) unless output_path
+
+  destination = File.expand_path(output_path)
+  directory = File.dirname(destination)
+  mode = File.exist?(destination) ? File.stat(destination).mode & 0o777 : 0o644
+
+  Tempfile.create([File.basename(destination), ".tmp"], directory) do |temporary|
+    temporary.binmode
+    temporary.write(contents)
+    temporary.flush
+    temporary.fsync
+    temporary.close
+
+    syntax_output, status = Open3.capture2e(RbConfig.ruby, "-c", temporary.path)
+    raise "Generated table syntax is invalid:\n#{syntax_output}" unless status.success?
+
+    File.chmod(mode, temporary.path)
+    File.rename(temporary.path, destination)
+  end
+end
+
+unsupported_rules.verify!
+
+buffer = StringIO.new
+emit_tables(buffer, extensions, types, aliases, root_xml, magics)
+write_tables(options[:output], buffer.string)
+warn "Skipped #{unsupported_rules.count} unsupported magic rules" if unsupported_rules.count > 0
