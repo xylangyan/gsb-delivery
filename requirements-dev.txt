@@ -1,0 +1,7 @@
+coverage
+mock
+mypy-protobuf
+ordereddict
+pytest
+pytest-benchmark[histogram]
+types-protobuf
