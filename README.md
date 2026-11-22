@@ -235,6 +235,324 @@ URL list, `tldextract` uses its bundled snapshot.
 over strict validation, extracting domains from any string, even partial URLs or
 non-URLs.
 
+## Migrating from `registered_domain`
+
+The `registered_domain` property is deprecated since 5.3.0 and will be removed
+in the next major version:
+
+```text
+DeprecationWarning: The 'registered_domain' property is deprecated and will be
+removed in the next major version. Use 'top_domain_under_public_suffix'
+instead, which has the same behavior but a more accurate name.
+```
+
+### Same configuration, same values
+
+`top_domain_under_public_suffix` returns exactly what `registered_domain`
+returned under the same suffix list and `include_psl_private_domains` setting,
+so migrating is a pure rename as long as the configuration is unchanged. Teams
+that keep their historical per-tenant grouping should swap the property name,
+keep the same suffix list snapshot and `include_psl_private_domains` flag, and
+continue validating the same field they already use. If you instead need a
+grouping that does not vary with the private-domains flag, consider
+`top_domain_under_registry_suffix`.
+
+### When the historical configuration was not recorded
+
+Some old reports stored only the grouped values, not which suffix-list
+snapshot or `include_psl_private_domains` flag produced them. The candidate
+configurations are then the historical suffix lists crossed with the flag, and
+the only way to confirm a report's organization grouping is to re-check
+original URLs from the log archive — often at a per-lookup cost.
+
+Two rules keep the cost down:
+
+- **Group candidates into equivalence classes first.** Candidates whose
+  sources differ but which produce identical groupings on every report row are
+  a single historical explanation. Never spend a lookup separating candidates
+  inside a class.
+- **A match on an ordinary public domain is not evidence.** Every candidate
+  returns `bbc.co.uk` for `forums.bbc.co.uk`, because no historical list or
+  flag setting changes that result. Such matches say nothing about which
+  configuration was used; only rows on private suffixes, or on suffixes that
+  moved between lists, discriminate.
+
+### Runnable reconciliation example
+
+The following script runs offline against two fixed local suffix lists and
+reproduces the three situations you will meet: one lookup that cannot
+distinguish the candidates, a second lookup that determines the organization
+grouping, and a report that no further lookup can decide. It also prints a
+provably minimal evidence plan.
+
+```python
+"""Reconcile an old report's `registered_domain` grouping with candidate configs.
+
+Scenario: a daily report was grouped by the deprecated `registered_domain`
+property, but nobody recorded which suffix-list snapshot or
+`include_psl_private_domains` flag produced it. The archive can still return a
+few original URLs, each lookup billed separately. This script finds the
+cheapest set of URL lookups that proves which grouping the report used.
+
+Runs offline against two fixed local suffix lists. Requires only `tldextract`.
+"""
+
+import itertools
+import tempfile
+from pathlib import Path
+
+import tldextract
+
+# Two historical suffix lists. They differ only in whether "github.io" is a
+# private suffix. Everything below uses the migration-target property
+# `top_domain_under_public_suffix`, which returns exactly what the deprecated
+# `registered_domain` returned under the same configuration.
+LIST_2023 = """\
+// Snapshot 2023: github.io not yet listed
+com
+co.uk
+io
+// ===BEGIN PRIVATE DOMAINS===
+blogspot.com
+"""
+
+LIST_2024 = """\
+// Snapshot 2024: github.io added as a private suffix
+com
+co.uk
+io
+// ===BEGIN PRIVATE DOMAINS===
+blogspot.com
+github.io
+"""
+
+
+def make_extractor(list_path, include_private):
+    return tldextract.TLDExtract(
+        cache_dir=None,  # no cache writes; the lists above are fixed
+        suffix_list_urls=[Path(list_path).as_uri()],
+        fallback_to_snapshot=False,  # never silently use another list
+        include_psl_private_domains=include_private,
+    )
+
+
+def grouping(extractor, urls):
+    """The report's organization grouping: one grouped value per report URL."""
+    return tuple(extractor(url).top_domain_under_public_suffix for url in urls)
+
+
+def consistent_classes(classes, evidence):
+    """Classes whose grouping reproduces every logged value in `evidence`."""
+    return {
+        key: names
+        for key, names in classes.items()
+        if all(key[url_index[url]] == value for url, value in evidence.items())
+    }
+
+
+def show(label, classes):
+    print(label)
+    for key, names in classes.items():
+        print(f"    {', '.join(names)}")
+        print(f"        grouping: {key}")
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    list_2023 = Path(tmp, "list_2023.dat")
+    list_2023.write_text(LIST_2023, encoding="utf-8")
+    list_2024 = Path(tmp, "list_2024.dat")
+    list_2024.write_text(LIST_2024, encoding="utf-8")
+
+    candidates = {
+        "2023 list, private=False": make_extractor(list_2023, False),
+        "2023 list, private=True": make_extractor(list_2023, True),
+        "2024 list, private=False": make_extractor(list_2024, False),
+        "2024 list, private=True": make_extractor(list_2024, True),
+    }
+
+    # The daily report: original URL -> grouped value the report stored.
+    report = {
+        "http://forums.bbc.co.uk/": "bbc.co.uk",
+        "http://waiterrant.blogspot.com/": "blogspot.com",
+        "http://alice.github.io/": "github.io",
+    }
+    urls = list(report)
+    url_index = {url: i for i, url in enumerate(urls)}
+
+    # Merge candidates that produce identical groupings on every report row.
+    # They are one historical explanation; never spend a lookup separating
+    # candidates inside a class, even if their suffix-list sources differ.
+    classes = {}
+    for name, extractor in candidates.items():
+        classes.setdefault(grouping(extractor, urls), []).append(name)
+
+    show("Equivalence classes over the report rows:", classes)
+
+    # --- Situation 1: one lookup is not enough -------------------------------
+    evidence = {"http://alice.github.io/": report["http://alice.github.io/"]}
+    remaining = consistent_classes(classes, evidence)
+    show(
+        "\nSituation 1: after re-checking only alice.github.io, "
+        f"{len(remaining)} explanations still fit:",
+        remaining,
+    )
+
+    # --- Situation 2: two lookups determine the grouping ---------------------
+    evidence["http://waiterrant.blogspot.com/"] = report[
+        "http://waiterrant.blogspot.com/"
+    ]
+    remaining = consistent_classes(classes, evidence)
+    show(
+        "\nSituation 2: after also re-checking waiterrant.blogspot.com, "
+        f"{len(remaining)} explanation fits:",
+        remaining,
+    )
+
+    # --- Proof that 2 lookups is the minimum ---------------------------------
+    # A lookup set distinguishes all classes iff it gives every class a unique
+    # signature of grouped values. Enumerate subsets, smallest first.
+    print("\nMinimal evidence plan:")
+    for size in range(len(urls) + 1):
+        for subset in itertools.combinations(urls, size):
+            signatures = {
+                tuple(key[url_index[url]] for url in subset) for key in classes
+            }
+            if len(signatures) == len(classes):
+                print(f"    sufficient ({size} lookups): {list(subset)}")
+                for url in urls:
+                    values = {key[url_index[url]] for key in classes}
+                    if url not in subset and len(values) == 1:
+                        print(
+                            f"    {url} is in no minimal plan: every candidate "
+                            "returns the same value here, so a match proves "
+                            "nothing"
+                        )
+                break
+        else:
+            continue
+        break
+
+    # --- Situation 3: undecidable, no matter what else you check -------------
+    # A different daily report. Only two original URLs are still retrievable;
+    # its "github.io" aggregate row has no retrievable URL behind it.
+    report2_retrievable = {
+        "http://forums.bbc.co.uk/": "bbc.co.uk",
+        "http://waiterrant.blogspot.com/": "waiterrant.blogspot.com",
+    }
+    remaining = consistent_classes(classes, report2_retrievable)
+    show(
+        f"\nSituation 3: all retrievable evidence checked, "
+        f"{len(remaining)} explanations still fit:",
+        remaining,
+    )
+    separable = [
+        url
+        for url in report2_retrievable
+        if len({key[url_index[url]] for key in remaining}) > 1
+    ]
+    print(f"    further lookups that could separate them: {separable}")
+    print(
+        "    Display loss: under '2023 list, private=True' the report's "
+        '"github.io"\n    row folds every *.github.io site into one '
+        "organization; under\n    '2024 list, private=True' each site would "
+        "have been its own row, so the\n    stored row can only be the bare "
+        "domain. Both explanations reproduce the\n    stored report exactly, "
+        "so the row's organization attribution cannot be\n    proven and must "
+        "be flagged as unverifiable in the migrated report."
+    )
+```
+
+Output:
+
+```text
+Equivalence classes over the report rows:
+    2023 list, private=False, 2024 list, private=False
+        grouping: ('bbc.co.uk', 'blogspot.com', 'github.io')
+    2023 list, private=True
+        grouping: ('bbc.co.uk', 'waiterrant.blogspot.com', 'github.io')
+    2024 list, private=True
+        grouping: ('bbc.co.uk', 'waiterrant.blogspot.com', 'alice.github.io')
+
+Situation 1: after re-checking only alice.github.io, 2 explanations still fit:
+    2023 list, private=False, 2024 list, private=False
+        grouping: ('bbc.co.uk', 'blogspot.com', 'github.io')
+    2023 list, private=True
+        grouping: ('bbc.co.uk', 'waiterrant.blogspot.com', 'github.io')
+
+Situation 2: after also re-checking waiterrant.blogspot.com, 1 explanation fits:
+    2023 list, private=False, 2024 list, private=False
+        grouping: ('bbc.co.uk', 'blogspot.com', 'github.io')
+
+Minimal evidence plan:
+    sufficient (2 lookups): ['http://waiterrant.blogspot.com/', 'http://alice.github.io/']
+    http://forums.bbc.co.uk/ is in no minimal plan: every candidate returns the same value here, so a match proves nothing
+
+Situation 3: all retrievable evidence checked, 2 explanations still fit:
+    2023 list, private=True
+        grouping: ('bbc.co.uk', 'waiterrant.blogspot.com', 'github.io')
+    2024 list, private=True
+        grouping: ('bbc.co.uk', 'waiterrant.blogspot.com', 'alice.github.io')
+    further lookups that could separate them: []
+    Display loss: under '2023 list, private=True' the report's "github.io"
+    row folds every *.github.io site into one organization; under
+    '2024 list, private=True' each site would have been its own row, so the
+    stored row can only be the bare domain. Both explanations reproduce the
+    stored report exactly, so the row's organization attribution cannot be
+    proven and must be flagged as unverifiable in the migrated report.
+```
+
+Note the first equivalence class: the 2023 and 2024 lists with
+`include_psl_private_domains=False` come from different sources but produce
+identical groupings on every row of this report, so the plan spends no lookup
+separating them.
+
+### Why the evidence plan is provably minimal
+
+A set of URL lookups distinguishes all candidate explanations if and only if
+it assigns each equivalence class a unique signature of grouped values. The
+script enumerates every subset of retrievable URLs, smallest first, so the
+first sufficient subset found is minimal by construction. In the example, each
+single URL is agreed upon by at least two classes — `forums.bbc.co.uk` by all
+of them, `waiterrant.blogspot.com` by the two `private=True` classes, and
+`alice.github.io` by the two classes that fold `github.io` — so no one-lookup
+plan can work, and the two-lookup plan
+`{waiterrant.blogspot.com, alice.github.io}` is the cheapest that
+distinguishes every explanation that would change the target report.
+
+### Undecidable reports and display loss
+
+Situation 3 shows the failure mode: two different historical explanations —
+`2023 list, private=True` and `2024 list, private=True` — both reproduce every
+retrievable logged value, yet imply different organization groupings for the
+report's `github.io` row. No remaining lookup can separate them, because they
+differ only on `github.io` URLs and none are retrievable. The display loss is
+concrete: under the first explanation the `github.io` row folds every
+`*.github.io` site into one organization, while under the second each site
+would have been its own row and the stored row can only be the bare domain.
+Both reproduce the stored report exactly, so the migrated report must flag the
+row's organization attribution as unverifiable rather than pick one
+explanation silently.
+
+### Migrating reports that only kept aggregates
+
+When no original URLs survive at all, whether a report can migrate depends on
+which suffixes its rows touch:
+
+- **Rows on ordinary public suffixes keep the old grouping for free.** A row
+  like `bbc.co.uk` or `cnn.com` is produced identically by every candidate
+  list and flag setting, so the rename to `top_domain_under_public_suffix` is
+  value-preserving with no log lookups. The same applies to any report whose
+  evidence plan above confirmed a single explanation.
+- **Rows on private or relocated suffixes cannot prove a new grouping.** A
+  stored aggregate like `blogspot.com` or `github.io` hides which hostnames
+  were folded into it. Without a retrievable URL you cannot restate the row
+  under a new configuration — keep the old grouping and mark it as produced by
+  an unverified configuration.
+- **Do not treat matching values on ordinary public domains as evidence of a
+  matching historical configuration.** Agreement on `bbc.co.uk` is guaranteed
+  across all candidates and says nothing about the rows that actually
+  discriminate.
+
 ## FAQ
 
 ### Can you add/remove suffix \_\_\_\_?
