@@ -1,0 +1,40 @@
+sudo: false
+language: python
+python:
+- '3.5'
+- '3.6'
+- '3.7'
+- '3.8'
+- nightly
+matrix:
+  allow_failures:
+  - python: nightly
+  include:
+  - python: '3.7'
+    env: TOXENV=lint
+  - python: '3.7'
+    env: TOXENV=scan
+install: make travis-install
+before_script: make travis-before-script
+script: make travis-script
+after_success: make travis-after-success
+deploy:
+- provider: pypi
+  server: https://upload.pypi.org/legacy/
+  user: Andrew.Hawker
+  password:
+    secure: E5vxK/i2YF7Y9VK6vkVzv0B/p6VEuH4OE8346gnpqTxopJfuqV3ev6Bu9p7djRbrGyrSnDrdp52P80MQFQ5E+FZVGUVCC7X3ju/E7ThFQgom9io1Q2xdM6EX+sKdcfUtiuDmcBnd2b+4dkNTYBOXm1pNjSQQ2w1cQNWwYCA/Y1UNczuwRIPFU2U/7Id3gp+Tq8LN35WA9j8LfzaWwrSI7CmMMeuZ7+MV28EKz95WVss+PlUavTyXEVjM9QVoBD+hPv8J/yF3GPZ+UJpz15htg29V7IbK2r4WZ5mvRgB3YygpyaBpyTBjpG5uRH8XsmEe/qvr13RLxNuW9TmLNRscKYpszPh5TeNacm+azpvJ/+PDKC22wVcjICNHiNO6Vp84K8N3jT2wbpiJrvg6YZ40RR7pg2Itk1bwRxPIIlPIeT1lJlKnWlctjS3haixwe9gqww/NQkGxxP6WD0Scv/bRBw9rBjdrZ21teNHycgedKgZ3o05aQ6rpo1WLmNi7Hza8TCb2mQN9JMgssZ9s/9nlICf33FikSBZq1ripVRcD7QfndUPMFCqPeITWl2w9SGh7e5RWl1pkewYmUoqSDz75PQth4Kupiu/wE+G5T4uYXZSRjDjlsFFzRMetdOPynBrqKMBnSZhQ0GPpg/xRsq8VFwPkGE0un30w4y2mIAhlHVs=
+  distributions: sdist bdist_wheel
+  skip_cleanup: true
+  on:
+    branch: master
+    tags: true
+    condition: $TRAVIS_PYTHON_VERSION = "3.7"
+notifications:
+  slack:
+    secure: LiRVoggt16ZNgzVw7zuTejrTPF8s2LZUw6gKeqIlw8b6q/kyY+i94PVgFDT0qSugfUjq4L5/r48rJ7Vpd2coHDimmMx6OTyhTv2P0iCLTP9x5OdltEBsIV/4lsyKl5IHVaM4gjUIpfsDRJohGjccAa4XAIzWguojn2Ea2dVXjw3oYpGSMye4GKQfkbkUwz0PqumppniLE1LkwK9ing5kin5DQtqBIBu3bcuv1a956e3KODPvMfkaOlhHOXZjITBuqo8H2gcajmnH/U7d6fioVQKUKGS4/RwrEmZgiFhSsRiZJXJ/jal9RPpVAfIN81/Ke3PsWBZs/JBxQx2hcUpJKhO1Uyz/Nt0Ph6SiufO97H6MindN5+90PxU+a6eTfMY8vrtSPmfreo39TyjQWB58AZ5SoJ5jAq5ldbF/E6E+tLtRWNKdeY8iPzLSwACaxj5clxRPOGOgmmgmkJUomUXVKQe2EIa+MZtTcQGg6bU391vdfMGmSeMQxW76gsifGF5m1kKM+rw9arddN7MnbvXwPdQ7so/ZYiWnlGgh/mestiKpAPf7WUHhrBMQ5L9sSLbEwETPbZehs1kYk4GS2tZ566b8pR6kejEvS0HpSIawtxdTfRy7DWcatRbuiTkynW028HDqEuNJrf1RDP1onaYBArGji1sP8DT+QQV2nLssddI=
+env:
+  global:
+  - VIRTUALENV_NO_DOWNLOAD=1
+  - secure: AiyZUELj6vVrnyVdCqVQD7pdV6IzS43zfcsJA6UudVe+z9PPcfBNyJe+92cBfASPR0Pg/FkbeUQmhHCDS+IvMIabips55k6N4b4vOz6Qu8dYGT28hy8PNZEeyTMt/Y8fF5hjW9UXoduHgnniPSJIctt+33/hNjq+ZNrc76KlwLzEFI63JqMjpGKT4nGWXzIN1Wfu7GE8ezVNUcfpYJeRiPXvBNOc6f9VdJDotxivOw3pclSGlYdogQfD5TeVOou/okIq+H9bUpIF2X4mAfBD18glT+caCBimJGcf0NnU7QeZSQPzbZEUpnaYzv6TJ9Awxt0rNmUuQHgPBz4SHniRGs/0UBRO/XqsDIyvSCYQHMle/AKG50U5M7DrCJby5ztqz0NvSlzFWdWIfJFa4n6Q6y5nLMpFDHvmCQ1gxaVeqGx7E5ZK2wH0+9C9me7P5euKPoDYpjesxaECzhhBypi3uKKuqDvsGhw7PkWM2ZCPmi07XxChSNYO2L3rd2pcA89KBfq3kXWXJQxfKhF5gNLjFdB5PWIeE0VoexP734WXDSRJVmNZhel3rLt3UbRVBPQv9FGnAe0JPR+2V0fh7P8l/IN8NpACvzWxyaL2BKe8YckcdSemwl4wkS+9ZipX+uc0/E/77YNEue2595hNRVqAH7BHaG7mag2eK64kmjaIb+w=
+  - secure: H01VDr34Vv+qQxTq3KZhFalHKl1OemtBXUl1QVwwhD11GyxT/Qi2KXFxJ3nGVAR6x2BN7Eq4k14NvF6mWs2wkEsNMveHj7V/NiMJBzJoU4nSpFIeljMcXB21D+qvie2w1YIzkRqC00P926BH32dN17/KOOyEYs5Q4+U5ESXujhrS0P27HF/TW94D/MIC5CroTUrHVa7N8nI1wjdh/wo+yDYrYwsTKSdXsG2dRvavgLViRlgZ/nPODK9AscQL3+PTDu8jNMuyZCng9+5Yen6fxrW8B+RrqB8h02vV8+2vaHBSo8C2nHOVVCOgv0ZvvSoLtJ5Opw3iz5oPO9lKpLvWhFj6EOWUG6UzCOxLFMrsltJI5gTt+sr8sjEoHnJ82Ms+tdxGx45Qi8gTZ80DRRHn8oZ5O4XSYA89rbC2zXb34hKbUdqcen1BXh5FlbAwEcMeWf+FWfZ7J48t9drgO6cVhaSnUoyijIP6JbVGUn8unpbPMZdvNWfafV+icZHh2zmpKFsdC/DYuOSi+favSrPMV8znJZ1M+tj0ftZTqhCkphNqqEgaHNtMwvVm2xiWAwFOAwdf+lhwyncUk4dfml6iwKMj0EBgHmZe11sXY5X1knLEgD+pVJ/qZ/2Dcm6K4XukS7Xzt6pJ6McZGURfZrnTGRcAF1g0EeQH89/mnMBjfs8=
