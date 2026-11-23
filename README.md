@@ -139,6 +139,7 @@ Here's the current list of available topics:
 - [Geometry validity handling](https://github.com/rgeo/rgeo/blob/main/doc/Geometry-Validity.md)
 - [Upgrading to Version 3](https://github.com/rgeo/rgeo/blob/main/doc/Upgrading-to-v3.md)
 - [Examples](https://github.com/rgeo/rgeo/blob/main/doc/Examples.md)
+- [WKB Exchange](https://github.com/rgeo/rgeo/blob/main/doc/WKB-Exchange.md)
 - [Who uses `rgeo`?](https://github.com/rgeo/rgeo/blob/main/doc/Gallery.md)
 
 You can see an exhaustive and up to date list at https://rubydoc.info/gems/rgeo/index.

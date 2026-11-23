@@ -1,5 +1,12 @@
 ### Unreleased
 
+**Minor Changes**
+
+* Add `RGeo::WKRep::WKBExchange` for byte-preserving routing of WKB/EWKB atomic
+  members to readers with different dialect, dimension, and SRID contracts. It
+  includes a raw archive, a business manifest, a cost-optimal packet planner,
+  and independent packet re-reading via `Plan#verify!`.
+
 **Bug Fixes**
 
 * Add a `:precision` option for `simple_factory` instances to reduce invalid self-intersection issues
