@@ -258,6 +258,118 @@ class AddOp(Operation):
         return hash(self.asLDIF())
 
 
+class MoveOp(Operation):
+    """
+    Rename an entry and/or move it, together with its subtree, to a new
+    superior.
+
+    Mirrors the LDAP ModifyDN operation (LDIF ``changetype: modrdn`` /
+    ``moddn``). The operation targets the entry as it exists in the base
+    tree; ``newDN`` is its full distinguished name after the operation.
+    """
+
+    def __init__(self, dn, newDN, deleteOldRDN=True):
+        if not isinstance(dn, distinguishedname.DistinguishedName):
+            dn = distinguishedname.DistinguishedName(stringValue=dn)
+        if not isinstance(newDN, distinguishedname.DistinguishedName):
+            newDN = distinguishedname.DistinguishedName(stringValue=newDN)
+        self.dn = dn
+        self.newDN = newDN
+        self.deleteOldRDN = deleteOldRDN
+
+    @property
+    def newRDN(self):
+        return self.newDN.split()[0]
+
+    def asLDIF(self):
+        r = []
+        r.append(ldif.attributeAsLDIF("dn", self.dn.getText()))
+        if self.newDN.up() == self.dn.up():
+            changeType = "modrdn"
+        else:
+            changeType = "moddn"
+        r.append(ldif.attributeAsLDIF("changetype", changeType))
+        r.append(ldif.attributeAsLDIF("newrdn", self.newRDN.getText()))
+        r.append(
+            ldif.attributeAsLDIF(
+                "deleteoldrdn", "1" if self.deleteOldRDN else "0"
+            )
+        )
+        if self.newDN.up() != self.dn.up():
+            r.append(
+                ldif.attributeAsLDIF("newsuperior", self.newDN.up().getText())
+            )
+        r.append(b"\n")
+        return b"".join(r)
+
+    def asLDAP(self):
+        kwargs = dict(
+            entry=self.dn.getText().encode("utf-8"),
+            newrdn=self.newRDN.getText().encode("utf-8"),
+            deleteoldrdn=1 if self.deleteOldRDN else 0,
+        )
+        if self.newDN.up() != self.dn.up():
+            kwargs["newSuperior"] = self.newDN.up().getText().encode("utf-8")
+        return pureldap.LDAPModifyDNRequest(**kwargs)
+
+    def patch(self, root):
+        d = root.lookup(self.dn)
+
+        def gotEntry(entry):
+            d = entry.move(self.newDN, deleteOldRDN=self.deleteOldRDN)
+            d.addCallback(self._fixDescendantDNs)
+            return d
+
+        d.addCallback(gotEntry)
+        return d
+
+    def _fixDescendantDNs(self, movedEntry):
+        # Backends only update the moved entry's own DN; every descendant
+        # keeps a stale DN. Recompute each descendant's DN from its position
+        # in the tree. Parents are always visited before their children.
+        d = movedEntry.subtree()
+
+        def gotSubtree(entries):
+            for entry in entries:
+                if entry is movedEntry:
+                    continue
+                parent = entry.parent()
+                entry.dn = distinguishedname.DistinguishedName(
+                    listOfRDNs=(entry.dn.split()[0],) + parent.dn.split()
+                )
+            return movedEntry
+
+        d.addCallback(gotSubtree)
+        return d
+
+    def __repr__(self):
+        return (
+            self.__class__.__name__
+            + "("
+            + "dn=%r" % self.dn.getText()
+            + ", "
+            + "newDN=%r" % self.newDN.getText()
+            + ", "
+            + "deleteOldRDN=%r" % self.deleteOldRDN
+            + ")"
+        )
+
+    def __eq__(self, other):
+        if not isinstance(other, self.__class__):
+            return NotImplemented
+        return (
+            self.dn == other.dn
+            and self.newDN == other.newDN
+            and self.deleteOldRDN == other.deleteOldRDN
+        )
+
+    def __ne__(self, other):
+        return not self == other
+
+    def __hash__(self):
+        return hash(self.asLDIF())
+
+
 class DeleteOp(Operation):
     def __init__(self, dn):
         """

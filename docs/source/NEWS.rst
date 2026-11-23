@@ -35,6 +35,26 @@ Tooling
   is not affected by the setuptools NFC/NFD-normalization advisory,
   but keeping the build toolchain modern is cheap.
 
+Features
+~~~~~~~~
+
+- Added an LDIF change set merge preview. ``ldaptor-ldifmerge`` and the
+  new ``ldaptor.changeset`` module replay two change sets built on the
+  same LDIF base in both order-preserving interleavings and report every
+  entry whose effective content depends on which change set is applied
+  first. People are tracked by a stable identity attribute (default
+  ``employeeNumber``); only configured member attributes (default
+  ``member`` / ``uniqueMember``) are treated as DN references that follow
+  entries when subtrees move, while other DN-shaped attributes stay plain
+  values. The report lists the competing changes and the person each
+  outcome points at, plus an uncontested, re-readable safe subset that can
+  be loaded before the contested entries are confirmed.
+- Added ``delta.MoveOp`` and LDIF delta parsing for ``changetype:
+  modrdn`` / ``moddn`` (``newrdn``, ``deleteoldrdn`` and optional
+  ``newsuperior``). Applying a move now also recomputes the distinguished
+  names of descendants, which previously kept stale DNs after a subtree
+  move.
+
 Fixes
 ~~~~~
 

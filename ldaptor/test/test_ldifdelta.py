@@ -344,27 +344,80 @@ foo: bar
 
     def testMODRDN(self):
         """
-        modrdn is not yet supported.
+        A modrdn change without a new superior produces a MoveOp that
+        keeps the entry under its current superior.
         """
         proto = LDIFDeltaDriver()
-
-        with self.assertRaises(NotImplementedError):
-            proto.dataReceived(b"""version: 1
+        proto.dataReceived(b"""version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: modrdn
+newrdn: cn=bar
+deleteoldrdn: 1
 
 """)
+        proto.connectionLost()
+        self.assertEqual(
+            proto.listOfCompleted,
+            [
+                delta.MoveOp(
+                    dn="cn=foo,dc=example,dc=com",
+                    newDN="cn=bar,dc=example,dc=com",
+                    deleteOldRDN=True,
+                )
+            ],
+        )
 
     def testMODDN(self):
         """
-        moddn is not yet supported.
+        A moddn change with a new superior produces a MoveOp that places
+        the entry under the new superior.
+        """
+        proto = LDIFDeltaDriver()
+        proto.dataReceived(b"""version: 1
+dn: cn=foo,dc=example,dc=com
+changetype: moddn
+newrdn: cn=foo
+deleteoldrdn: 0
+newsuperior: ou=people,dc=example,dc=com
+
+""")
+        proto.connectionLost()
+        self.assertEqual(
+            proto.listOfCompleted,
+            [
+                delta.MoveOp(
+                    dn="cn=foo,dc=example,dc=com",
+                    newDN="cn=foo,ou=people,dc=example,dc=com",
+                    deleteOldRDN=False,
+                )
+            ],
+        )
+
+    def testMODRDN_missingNewRDN(self):
+        """
+        A modrdn change without newrdn is a parse error.
         """
         proto = LDIFDeltaDriver()
 
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(ldifdelta.LDIFDeltaModDNMissingNewRDNError):
+            proto.dataReceived(b"""version: 1
+dn: cn=foo,dc=example,dc=com
+changetype: modrdn
+deleteoldrdn: 1
+
+""")
+
+    def testMODDN_missingDeleteOldRDN(self):
+        """
+        A moddn change without deleteoldrdn is a parse error.
+        """
+        proto = LDIFDeltaDriver()
+
+        with self.assertRaises(ldifdelta.LDIFDeltaModDNMissingDeleteOldRDNError):
             proto.dataReceived(b"""version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: moddn
+newrdn: cn=bar
 
 """)
 

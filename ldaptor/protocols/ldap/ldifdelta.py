@@ -1,6 +1,6 @@
 from twisted.python.failure import Failure
 from twisted.internet import error
-from ldaptor.protocols.ldap import ldifprotocol
+from ldaptor.protocols.ldap import ldifprotocol, distinguishedname
 from ldaptor import delta, entry
 
 WAIT_FOR_CHANGETYPE = b"WAIT_FOR_CHANGETYPE"
@@ -8,6 +8,7 @@ WAIT_FOR_MOD_SPEC = b"WAIT_FOR_MOD_SPEC"
 IN_MOD_SPEC = b"IN_MOD_SPEC"
 IN_ADD_ENTRY = b"IN_ADD_ENTRY"
 IN_DELETE = b"IN_DELETE"
+IN_MODDN = b"IN_MODDN"
 
 
 class LDIFDeltaMissingChangeTypeError(ldifprotocol.LDIFParseError):
@@ -38,6 +39,14 @@ class LDIFDeltaDeleteHasJunkAfterChangeTypeError(ldifprotocol.LDIFParseError):
     """Delete operation takes no attribute types or values."""
 
 
+class LDIFDeltaModDNMissingNewRDNError(ldifprotocol.LDIFParseError):
+    """modrdn/moddn operation is missing the required newrdn line."""
+
+
+class LDIFDeltaModDNMissingDeleteOldRDNError(ldifprotocol.LDIFParseError):
+    """modrdn/moddn operation is missing the required deleteoldrdn line."""
+
+
 class LDIFDelta(ldifprotocol.LDIF):
     def state_WAIT_FOR_DN(self, line):
         super().state_WAIT_FOR_DN(line)
@@ -64,7 +73,10 @@ class LDIFDelta(ldifprotocol.LDIF):
         elif val == b"delete":
             self.mode = IN_DELETE
         elif val == b"modrdn" or val == b"moddn":
-            raise NotImplementedError()  # TODO
+            self.moddn_newrdn = None
+            self.moddn_deleteoldrdn = None
+            self.moddn_newsuperior = None
+            self.mode = IN_MODDN
         else:
             raise LDIFDeltaUnknownChangeTypeError()
 
@@ -153,6 +165,57 @@ class LDIFDelta(ldifprotocol.LDIF):
             return
 
         raise LDIFDeltaDeleteHasJunkAfterChangeTypeError(self.dn, line)
+
+    def state_IN_MODDN(self, line):
+        assert self.dn is not None, "self.dn must be set when in entry"
+
+        if line == b"":
+            # end of entry
+            if self.moddn_newrdn is None:
+                raise LDIFDeltaModDNMissingNewRDNError(self.dn)
+            if self.moddn_deleteoldrdn is None:
+                raise LDIFDeltaModDNMissingDeleteOldRDNError(self.dn)
+
+            newrdn = distinguishedname.RelativeDistinguishedName(
+                stringValue=self.moddn_newrdn
+            )
+            if self.moddn_newsuperior is None:
+                superior = distinguishedname.DistinguishedName(self.dn).up()
+            else:
+                superior = distinguishedname.DistinguishedName(
+                    stringValue=self.moddn_newsuperior
+                )
+            newDN = distinguishedname.DistinguishedName(
+                listOfRDNs=(newrdn,) + superior.split()
+            )
+            o = delta.MoveOp(
+                dn=self.dn,
+                newDN=newDN,
+                deleteOldRDN=self.moddn_deleteoldrdn,
+            )
+            self.mode = ldifprotocol.WAIT_FOR_DN
+            self.dn = None
+            self.data = None
+            del self.moddn_newrdn
+            del self.moddn_deleteoldrdn
+            del self.moddn_newsuperior
+            self.gotEntry(o)
+            return
+
+        key, val = self._parseLine(line)
+
+        if key == b"newrdn":
+            self.moddn_newrdn = val
+        elif key == b"deleteoldrdn":
+            if val not in (b"0", b"1"):
+                raise ldifprotocol.LDIFParseError(
+                    "deleteoldrdn must be 0 or 1, got %r" % val
+                )
+            self.moddn_deleteoldrdn = val == b"1"
+        elif key == b"newsuperior":
+            self.moddn_newsuperior = val
+        else:
+            raise LDIFDeltaUnknownModificationError(self.dn, key)
 
 
 def fromLDIFFile(f):

@@ -4,6 +4,7 @@ Test cases for ldaptor.protocols.ldap.delta
 
 from twisted.trial import unittest
 from ldaptor import delta, entry, attributeset, inmemory
+from ldaptor.protocols import pureldap
 from ldaptor.protocols.ldap import ldapsyntax, distinguishedname, ldaperrors
 
 
@@ -671,3 +672,160 @@ class TestModifyOpRoundtrip(unittest.TestCase):
         )
         parsed = delta.ModifyOp.fromLDAP(original.asLDAP())
         self.assertEqual(parsed, original)
+
+
+class TestMoveOp(OperationTestCase):
+    """
+    Unit tests for MoveOp (LDIF modrdn/moddn).
+    """
+
+    def testAsLDIF_renameSameSuperior(self):
+        sut = delta.MoveOp(
+            "cn=foo,dc=example,dc=com",
+            "cn=bar,dc=example,dc=com",
+            deleteOldRDN=True,
+        )
+        self.assertEqual(
+            b"""dn: cn=foo,dc=example,dc=com
+changetype: modrdn
+newrdn: cn=bar
+deleteoldrdn: 1
+
+""",
+            sut.asLDIF(),
+        )
+
+    def testAsLDIF_moveWithNewSuperior(self):
+        sut = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+            deleteOldRDN=False,
+        )
+        self.assertEqual(
+            b"""dn: ou=dept,dc=example,dc=com
+changetype: moddn
+newrdn: ou=dept
+deleteoldrdn: 0
+newsuperior: ou=archive,dc=example,dc=com
+
+""",
+            sut.asLDIF(),
+        )
+
+    def testAsLDAP_renameHasNoNewSuperior(self):
+        sut = delta.MoveOp(
+            "cn=foo,dc=example,dc=com", "cn=bar,dc=example,dc=com"
+        )
+        request = sut.asLDAP()
+        self.assertIsInstance(request, pureldap.LDAPModifyDNRequest)
+        self.assertEqual(request.entry, b"cn=foo,dc=example,dc=com")
+        self.assertEqual(request.newrdn, b"cn=bar")
+        self.assertEqual(request.deleteoldrdn, 1)
+        self.assertIsNone(request.newSuperior)
+
+    def testAsLDAP_moveCarriesNewSuperior(self):
+        sut = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+        )
+        request = sut.asLDAP()
+        self.assertEqual(
+            request.newSuperior, b"ou=archive,dc=example,dc=com"
+        )
+
+    def testEquality(self):
+        first = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+        )
+        second = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(hash(first), hash(second))
+
+    def testInequalityDifferentNewDN(self):
+        first = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+        )
+        second = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=other,dc=example,dc=com",
+        )
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, "ou=dept,dc=example,dc=com")
+
+    def _buildTree(self):
+        root = self.getRoot()
+        archive = root.addChild(
+            "ou=archive",
+            {"objectClass": ["organizationalUnit"], "ou": ["archive"]},
+        )
+        dept = root.addChild(
+            "ou=dept",
+            {"objectClass": ["organizationalUnit"], "ou": ["dept"]},
+        )
+        person = dept.addChild(
+            "cn=alice",
+            {
+                "objectClass": ["person"],
+                "cn": ["alice"],
+                "employeeNumber": ["E-1"],
+            },
+        )
+        return root, archive, dept, person
+
+    def testPatch_movesSubtreeAndFixesDescendantDNs(self):
+        root, archive, dept, person = self._buildTree()
+        sut = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+        )
+
+        d = sut.patch(root)
+
+        def check(_):
+            moved_person_d = root.lookup(
+                "cn=alice,ou=dept,ou=archive,dc=example,dc=com"
+            )
+            moved_person_d.addCallback(self.assertIdentical, person)
+
+            def gotMovedPerson(moved_person):
+                # The backend alone leaves descendants with stale DNs;
+                # MoveOp must recompute them from the tree position.
+                self.assertEqual(
+                    moved_person.dn,
+                    distinguishedname.DistinguishedName(
+                        "cn=alice,ou=dept,ou=archive,dc=example,dc=com"
+                    ),
+                )
+                return root.lookup(
+                    "ou=dept,ou=archive,dc=example,dc=com"
+                )
+
+            moved_person_d.addCallback(gotMovedPerson)
+            moved_person_d.addCallback(self.assertIdentical, dept)
+            return moved_person_d
+
+        d.addCallback(check)
+        return d
+
+    def testPatch_oldAddressIsGone(self):
+        root, archive, dept, person = self._buildTree()
+        sut = delta.MoveOp(
+            "ou=dept,dc=example,dc=com",
+            "ou=dept,ou=archive,dc=example,dc=com",
+        )
+
+        d = sut.patch(root)
+
+        def check(_):
+            return self.assertFailure(
+                root.lookup("ou=dept,dc=example,dc=com"),
+                ldaperrors.LDAPNoSuchObject,
+            )
+
+        d.addCallback(check)
+        return d
