@@ -58,8 +58,18 @@ class _COMMAND_TYPE:
     NO_OP = 1
     MEMBERSHIP = 2
     VERSION = 3
+    # Regular command encoded with stable consumer identities instead of the
+    # numeric method IDs of a particular consumer registration order.
+    REGULAR_IDENTITY = 4
 
 _bchr = functools.partial(struct.pack, 'B')
+
+#: Marker used by snapshots that store consumer state by business identity
+#: instead of by position in the `consumers` list.
+_CONSUMER_SNAPSHOT_MAGIC = '__pysyncobj_consumer_snapshot_v1__'
+
+#: Reserved owner name for methods implemented directly on SyncObj.
+_SELF_OWNER = '__syncobj__'
 
 
 class SyncObjException(Exception):
@@ -72,9 +82,23 @@ class SyncObjExceptionWrongVer(SyncObjException):
         SyncObjException.__init__(self, 'wrongVer')
         self.ver = ver
 
+class SyncObjExceptionAmbiguousOwnership(SyncObjException):
+    """Raised when the owner of legacy snapshot data / log entries cannot be
+    determined unambiguously (missing or conflicting legacy manifests)."""
+    def __init__(self, message):
+        SyncObjException.__init__(self, 'AmbiguousConsumerOwnership', message)
+
 class SyncObjConsumer(object):
-    def __init__(self):
+    def __init__(self, consumerID=None, **kwargs):
+        if consumerID is None:
+            consumerID = kwargs.get('consumerId', kwargs.get('consumerIdentity'))
         self._syncObj = None
+        #: Stable business identity of this consumer. It may also be supplied
+        #: through SyncObj(consumers=[(identity, consumer)]), SyncObjConf.consumerIDs,
+        #: or by setting the attribute before the SyncObj is created.
+        self._consumerID = consumerID
+        #: Optional alias kept for integrations that use the ``consumerId`` name.
+        self.consumerId = consumerID
         self.__properies = set()
         for key in self.__dict__:
             self.__properies.add(key)
@@ -92,6 +116,130 @@ class SyncObjConsumer(object):
 
 # https://github.com/bakwc/PySyncObj
 
+
+def _normalizeConsumerID(consumerID):
+    """Return a hashable, stable business identity or raise on ambiguity."""
+    if isinstance(consumerID, (str, int)) and not isinstance(consumerID, bool):
+        return consumerID
+    if isinstance(consumerID, bytes):
+        return consumerID.decode('utf-8')
+    raise SyncObjException('Consumer identity must be a string or an integer, got %r' % (consumerID,))
+
+
+def _replicatedMethods(obj):
+    return sorted([m for m in dir(obj) if callable(getattr(obj, m)) and
+                   getattr(getattr(obj, m), 'replicated', False) and
+                   m != getattr(getattr(obj, m), 'origName')])
+
+
+def _legacyManifestFromConf(conf):
+    """Normalize the legacy consumer/method manifests into a single dict.
+
+    Accepted layouts::
+
+        legacyConsumers: ['sites', 'failedBatches']        # old positions -> identity
+        legacyMethods: {0: ('sites', 'set'),
+                        5: (None, 'addValue'),
+                        7: ('failedBatches', 'set', 1)}
+        legacyManifest: {'consumers': [...], 'methods': {...},
+                         'registryVersion': 1}
+
+    Returns None when no legacy information was configured.
+    """
+    manifest = conf.legacyManifest
+    if manifest is None:
+        consumers = conf.legacyConsumers
+        methods = conf.legacyMethods
+        registryVersion = conf.consumerRegistryVersion
+        if consumers is None and methods is None:
+            return None
+    else:
+        if not isinstance(manifest, dict):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacyManifest must be a dict, got %r' % (type(manifest),))
+        manifestConsumers = manifest.get('consumers', manifest.get('consumerIDs',
+                              manifest.get('consumerIds', None)))
+        manifestMethods = manifest.get('methods', manifest.get('methodIDs',
+                            manifest.get('methodIds', None)))
+        if manifestConsumers is not None and conf.legacyConsumers is not None and \
+                list(manifestConsumers) != list(conf.legacyConsumers):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy manifest and SyncObjConf.legacyConsumers disagree about the old '
+                'consumer order')
+        if manifestMethods is not None and conf.legacyMethods is not None and \
+                dict(manifestMethods) != dict(conf.legacyMethods):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy manifest and SyncObjConf.legacyMethods disagree about the old '
+                'method IDs')
+        consumers = manifestConsumers if manifestConsumers is not None else conf.legacyConsumers
+        methods = manifestMethods if manifestMethods is not None else conf.legacyMethods
+        registryVersion = manifest.get('registryVersion',
+                          manifest.get('version', conf.consumerRegistryVersion))
+
+    if registryVersion is None:
+        registryVersion = 1
+
+    normalizedConsumers = None
+    if consumers is not None:
+        if isinstance(consumers, dict):
+            # {position: identity} - positions must be exactly 0..n-1.
+            positions = sorted(consumers)
+            if positions != list(range(len(positions))):
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy consumer positions must be dense 0..n-1, got %r' % (positions,))
+            consumers = [consumers[p] for p in positions]
+        normalizedConsumers = [_normalizeConsumerID(c) for c in consumers]
+        seen = set()
+        for identity in normalizedConsumers:
+            if identity in seen:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy consumer manifest lists identity %r more than once' % (identity,))
+            seen.add(identity)
+
+    normalizedMethods = {}
+    if methods is not None:
+        for methodID, description in methods.items():
+            if not isinstance(methodID, int) or isinstance(methodID, bool):
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy method ID must be an integer, got %r' % (methodID,))
+            normalizedMethods[methodID] = _normalizeLegacyMethodDescription(description, methodID)
+
+    return {
+        'consumers': normalizedConsumers,
+        'methods': normalizedMethods,
+        'registryVersion': int(registryVersion),
+    }
+
+
+def _normalizeLegacyMethodDescription(description, methodID):
+    """Normalize one legacy method entry to ``(owner, name, ver)``.
+
+    ``owner`` is ``None`` for methods implemented on SyncObj itself; a string /
+    integer business identity for a consumer; or an integer position into the
+    legacy consumer list (resolved later by the caller).
+    """
+    if isinstance(description, dict):
+        owner = description.get('consumer', description.get('owner', description.get('id', None)))
+        if owner is None:
+            owner = description.get('self', None) and _SELF_OWNER
+        name = description.get('name', description.get('method'))
+        ver = description.get('ver', description.get('version', None))
+        if isinstance(owner, bool):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy method %d has an invalid owner %r' % (methodID, owner))
+        if isinstance(owner, str) and owner in ('self', _SELF_OWNER):
+            owner = None
+        return owner, name, ver
+    if isinstance(description, (tuple, list)):
+        if len(description) == 2:
+            owner, name = description
+            return owner, name, None
+        if len(description) == 3:
+            return description[0], description[1], description[2]
+    raise SyncObjExceptionAmbiguousOwnership(
+        'legacy method %d has an unsupported description %r' % (methodID, description))
+
+
 class SyncObj(object):
     def __init__(self, selfNode, otherNodes, conf=None, consumers=None, nodeClass = TCPNode, transport = None, transportClass = TCPTransport):
         """
@@ -103,7 +251,9 @@ class SyncObj(object):
         :type otherNodes: iterable of Node or iterable of str
         :param conf: configuration object
         :type conf: SyncObjConf
-        :param consumers: objects to be replicated
+        :param consumers: objects to be replicated. Each item may be a consumer or an
+            ``(identity, consumer)`` pair; identities decouple snapshots and log
+            ownership from the position of the consumer in this list.
         :type consumers: list of SyncObjConsumer inherited objects
         :param nodeClass: class used for representation of nodes
         :type nodeClass: class
@@ -127,18 +277,11 @@ class SyncObj(object):
         else:
             self.__encryptor = None
 
-        consumers = consumers or []
-        newConsumers = []
-        for c in consumers:
-            if not isinstance(c, SyncObjConsumer) and getattr(c, '_consumer', None):
-                c = c._consumer()
-            if not isinstance(c, SyncObjConsumer):
-                raise SyncObjException('Consumers must be inherited from SyncObjConsumer')
-            newConsumers.append(c)
-        consumers = newConsumers
-
+        consumers, consumerIDs, identityModeEnabled = self.__normalizeConsumers(
+            consumers, self.__conf.consumerIDs)
         self.__consumers = consumers
-
+        self.__consumerIDs = consumerIDs
+        self.__identityModeEnabled = identityModeEnabled
         origSelfNode = selfNode
         if not isinstance(selfNode, Node) and selfNode is not None:
             selfNode = nodeClass(selfNode)
@@ -223,37 +366,69 @@ class SyncObj(object):
         self._idToMethod = {}
         self._idToConsumer = {}
 
-        methods = [m for m in dir(self) if callable(getattr(self, m)) and \
-                   getattr(getattr(self, m), 'replicated', False) and \
-                   m != getattr(getattr(self, m), 'origName')]
-        currMethodID = 0
         self.__selfCodeVersion = 0
         self.__currentVersionFuncNames = {}
 
+        # Stable identity registry. Method IDs are still enumerated in the
+        # historical order (version, self before consumers by list position,
+        # method name) so that a node which keeps the old registration order
+        # produces byte-for-byte compatible log entries.
+        self.__consumerByIdentity = {}
+        self.__consumerIdentityById = {}
+        self.__methodKeyToID = {}
+        self.__idToOwnerKey = {}
+        self.__idToMethodName = {}
+        self.__legacyManifest = _legacyManifestFromConf(self.__conf)
+        self.__registryVersion = self.__legacyManifest['registryVersion'] \
+            if self.__legacyManifest is not None else 0
+
         methodsToEnumerate = []
 
-        for method in methods:
+        for method in _replicatedMethods(self):
             ver = getattr(getattr(self, method), 'ver')
             methodsToEnumerate.append((ver, 0, method, self))
 
         for consumerNum, consumer in enumerate(consumers):
-            consumerMethods = [m for m in dir(consumer) if callable(getattr(consumer, m)) and\
-                               getattr(getattr(consumer, m), 'replicated', False) and \
-                               m != getattr(getattr(consumer, m), 'origName')]
+            consumerMethods = _replicatedMethods(consumer)
             for method in consumerMethods:
                 ver = getattr(getattr(consumer, method), 'ver')
                 methodsToEnumerate.append((ver, consumerNum + 1, method, consumer))
-            consumer._syncObj = self
 
-        for ver, _, method, obj in sorted(methodsToEnumerate):
+        currMethodID = 0
+        for ver, ownerNum, method, obj in sorted(methodsToEnumerate):
             self.__selfCodeVersion = max(self.__selfCodeVersion, ver)
             if obj is self:
+                ownerKey = _SELF_OWNER
                 self._methodToID[method] = currMethodID
             else:
+                ownerKey = consumerIDs[ownerNum - 1]
                 self._methodToID[(id(obj), method)] = currMethodID
+            self.__methodKeyToID[(ownerKey, method)] = currMethodID
             self._idToMethod[currMethodID] = getattr(obj, method)
+            self.__idToOwnerKey[currMethodID] = ownerKey
+            self.__idToMethodName[currMethodID] = method
             currMethodID += 1
 
+        for consumerNum, consumer in enumerate(consumers):
+            identity = consumerIDs[consumerNum]
+            self.__consumerByIdentity[identity] = consumer
+            self.__consumerIdentityById[id(consumer)] = identity
+            consumer._syncObj = self
+
+        for identity, consumer in iteritems(self.__consumerByIdentity):
+            if self.__identityModeEnabled and consumer._consumerID is None:
+                consumer._consumerID = identity
+                consumer.consumerId = identity
+        self._idToConsumer.update(self.__consumerByIdentity)
+
+        self.__validateLegacyManifest()
+        self.__buildLegacyRegistry()
+
+        # A registry switch has no dedicated method of its own; allow activating
+        # it even when no replicated method uses that version number.
+        self.__selfCodeVersion = max(self.__selfCodeVersion, self.__registryVersion)
+
+        self.__enabledCodeVersion = 0
         self.__onSetCodeVersion(0)
 
         self.__thread = None
@@ -275,8 +450,6 @@ class SyncObj(object):
         for key in self.__dict__:
             self.__properies.add(key)
 
-        self.__enabledCodeVersion = 0
-
         if self.__conf.autoTick:
             self.__mainThread = threading.current_thread()
             self.__initialised = threading.Event()
@@ -292,6 +465,147 @@ class SyncObj(object):
             except TransportNotReadyError:
                 logger.exception('failed to perform initialization')
                 raise SyncObjException('BindError') # Backwards compatibility
+
+    def __normalizeConsumers(self, consumers, configuredIDs):
+        """Normalize consumer objects and their stable business identities.
+
+        Returns ``(consumers, identities, identityModeEnabled)``. When no identity
+        is configured anywhere, identities are derived internally from positions
+        and identity mode is disabled, preserving the historical behaviour.
+        """
+        if isinstance(consumers, dict):
+            # Mapping of identity -> consumer; order is not meaningful, so sort
+            # deterministically for a stable default enumeration.
+            consumers = [consumers[key] for key in sorted(consumers, key=str)]
+        consumers = consumers or []
+        pairs = []
+        for c in consumers:
+            identity = None
+            if isinstance(c, (tuple, list)) and len(c) == 2 and isinstance(c[1], SyncObjConsumer):
+                identity, c = c
+                identity = _normalizeConsumerID(identity)
+            if not isinstance(c, SyncObjConsumer) and getattr(c, '_consumer', None):
+                c = c._consumer()
+            if not isinstance(c, SyncObjConsumer):
+                raise SyncObjException('Consumers must be inherited from SyncObjConsumer')
+            pairs.append([identity, c])
+
+        if configuredIDs is not None:
+            if len(configuredIDs) != len(pairs):
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'SyncObjConf.consumerIDs has %d entries but %d consumers were supplied' %
+                    (len(configuredIDs), len(pairs)))
+            for i, identity in enumerate(configuredIDs):
+                identity = _normalizeConsumerID(identity)
+                if pairs[i][0] is not None and pairs[i][0] != identity:
+                    raise SyncObjExceptionAmbiguousOwnership(
+                        'conflicting identities for consumer %d: %r vs %r' %
+                        (i, pairs[i][0], identity))
+                pairs[i][0] = identity
+
+        identityMode = configuredIDs is not None
+        for identity, consumer in pairs:
+            if identity is None:
+                attrID = getattr(consumer, '_consumerID', None)
+                if attrID is None:
+                    attrID = getattr(consumer, 'consumerId', None)
+                if attrID is not None:
+                    identity = _normalizeConsumerID(attrID)
+                    try:
+                        consumer._consumerID = identity
+                        consumer.consumerId = identity
+                    except AttributeError:
+                        pass
+            if identity is not None:
+                identityMode = True
+
+        if not identityMode:
+            identities = list(range(len(pairs)))
+        else:
+            missing = [i for i, pair in enumerate(pairs) if pair[0] is None]
+            if missing:
+                # Falling back to a position here would collide with the old
+                # business identities the whole migration is meant to preserve.
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'consumer identities are enabled, but consumers at positions %r have '
+                    'no identity; pass (identity, consumer) pairs or set '
+                    'SyncObjConsumer._consumerID' % (missing,))
+            identities = [pair[0] for pair in pairs]
+            seen = set()
+            for identity in identities:
+                if identity in seen:
+                    raise SyncObjExceptionAmbiguousOwnership(
+                        'duplicate consumer identity %r' % (identity,))
+                seen.add(identity)
+
+        return [pair[1] for pair in pairs], identities, identityMode
+
+    def __requireLegacyManifest(self, what):
+        if self.__legacyManifest is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'cannot determine consumer ownership for %s: legacy consumer identity '
+                'manifest is missing (set SyncObjConf.consumerIDs and '
+                'SyncObjConf.legacyConsumers / legacyMethods)' % (what,))
+        return self.__legacyManifest
+
+    def __legacyConsumerIdentity(self, owner):
+        """Resolve a legacy method owner to a business identity."""
+        manifest = self.__requireLegacyManifest('legacy method owner %r' % (owner,))
+        if owner is None or owner == _SELF_OWNER:
+            return _SELF_OWNER
+        if isinstance(owner, bool):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'invalid legacy method owner %r' % (owner,))
+        if isinstance(owner, int):
+            positions = manifest['consumers']
+            if positions is None:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy method owner refers to consumer position %d but the legacy '
+                    'consumer identity manifest is missing' % (owner,))
+            if owner < 0 or owner >= len(positions):
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy method owner position %d is outside the legacy consumer '
+                    'manifest of %d entries' % (owner, len(positions)))
+            return positions[owner]
+        return _normalizeConsumerID(owner)
+
+    def __validateLegacyManifest(self):
+        """Reject ambiguous legacy manifests before any state is touched."""
+        manifest = self.__legacyManifest
+        if manifest is None:
+            return
+        if not self.__identityModeEnabled:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'a legacy consumer manifest was supplied, but the current consumers have '
+                'no business identities; pass (identity, consumer) pairs or set '
+                'SyncObjConsumer._consumerID so old data can be attributed')
+        owners = {}
+        for methodID, (owner, name, ver) in iteritems(manifest['methods']):
+            identity = self.__legacyConsumerIdentity(owner)
+            if not isinstance(name, str) or not name:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy method %d does not specify a method name' % (methodID,))
+            key = (identity, name)
+            if key in owners and owners[key] != methodID:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy method %d and %d both claim %s.%s' %
+                    (owners[key], methodID, identity, name))
+            owners[key] = methodID
+            if identity not in self.__consumerByIdentity and identity != _SELF_OWNER:
+                # The manifest may legitimately describe the old release only.
+                # Applying such an entry will fail loudly; construction proceeds.
+                continue
+            if ver is not None:
+                expected = name + '_v' + str(ver)
+                if (identity, expected) not in self.__methodKeyToID and \
+                        (identity, name) not in self.__methodKeyToID:
+                    logger.warning('legacy method %d (%s.%s ver=%r) is not present in '
+                                   'the current registry', methodID, identity, name, ver)
+        if manifest['consumers'] is not None:
+            for identity in manifest['consumers']:
+                if identity not in self.__consumerByIdentity:
+                    logger.warning('legacy consumer identity %r is not present in the '
+                                   'current consumers list', identity)
 
     def destroy(self):
         """
@@ -457,9 +771,7 @@ class SyncObj(object):
         self.transferLeadership(args[0] if args and args[0] else None, callback)
 
     def __onSetCodeVersion(self, newVersion):
-        methods = [m for m in dir(self) if callable(getattr(self, m)) and\
-                   getattr(getattr(self, m), 'replicated', False) and \
-                   m != getattr(getattr(self, m), 'origName')]
+        methods = _replicatedMethods(self)
 
         self.__currentVersionFuncNames = {}
 
@@ -469,14 +781,15 @@ class SyncObj(object):
             origFuncName = getattr(getattr(self, method), 'origName')
             funcVersions[origFuncName].add(ver)
 
-        for consumer in self.__consumers:
-            consumerID = id(consumer)
+        for consumerNum, consumer in enumerate(self.__consumers):
+            consumerKey = self.__consumerIDs[consumerNum]
             consumerMethods = [m for m in dir(consumer) if callable(getattr(consumer, m)) and \
                                getattr(getattr(consumer, m), 'replicated', False)]
             for method in consumerMethods:
                 ver = getattr(getattr(consumer, method), 'ver')
                 origFuncName = getattr(getattr(consumer, method), 'origName')
-                funcVersions[(consumerID, origFuncName)].add(ver)
+                funcVersions[(consumerKey, origFuncName)].add(ver)
+                funcVersions[(id(consumer), origFuncName)].add(ver)
 
         for funcName, versions in iteritems(funcVersions):
             versions = sorted(list(versions))
@@ -488,6 +801,311 @@ class SyncObj(object):
 
     def _getFuncName(self, funcName):
         return self.__currentVersionFuncNames[funcName]
+
+    def _identityForConsumer(self, consumer):
+        identity = self.__consumerIdentityById.get(id(consumer))
+        if identity is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'consumer %r is not registered with this SyncObj' % (consumer,))
+        return identity
+
+    # ------------------------------------------------------------------
+    # Stable-identity registry and legacy compatibility
+    # ------------------------------------------------------------------
+
+    def __resolveLegacyOwnerIdentity(self, owner):
+        return self.__legacyConsumerIdentity(owner)
+
+    def __resolveMethod(self, ownerIdentity, name, ver=None):
+        """Find the versioned callable registered for ``ownerIdentity``."""
+        if not isinstance(name, str):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy method name for %r must be a string, got %r' % (ownerIdentity, name))
+        if ownerIdentity != _SELF_OWNER and ownerIdentity not in self.__consumerByIdentity:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy method owner identity %r is not one of the configured consumers' %
+                (ownerIdentity,))
+        keys = [key for key in self.__methodKeyToID if key[0] == ownerIdentity]
+        exact = None
+        variants = []
+        for key in keys:
+            methodName = key[1]
+            if methodName == name:
+                exact = key
+            elif methodName.startswith(name + '_v'):
+                suffix = methodName[len(name) + 2:]
+                if suffix.isdigit():
+                    variants.append((int(suffix), key))
+        if ver is not None:
+            for variantVer, key in variants:
+                if variantVer == ver:
+                    return key
+            if exact is not None:
+                return exact
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy manifest references %s.%s version %r, which is not registered' %
+                (ownerIdentity, name, ver))
+        if exact is not None and not variants:
+            return exact
+        if len(variants) == 1 and exact is None:
+            return variants[0][1]
+        if exact is not None and variants:
+            # Prefer the newest registered variant for an unqualified legacy call.
+            return max(variants)[1]
+        if len(variants) > 1:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy manifest references %s.%s without a version, but versions %r are '
+                'registered' % (ownerIdentity, name, sorted(v for v, _ in variants)))
+        raise SyncObjExceptionAmbiguousOwnership(
+            'legacy manifest references unknown method %s.%s' % (ownerIdentity, name))
+
+    def __buildLegacyRegistry(self):
+        """Build numeric-ID -> callable and call -> numeric-ID maps.
+
+        The maps come exclusively from the deployment-provided legacy method
+        manifest. Numeric IDs are never reconstructed from the current class
+        layout: a method added in the new release would otherwise silently take
+        over an old ID. Snapshot recovery only needs the legacy consumer order,
+        so a deployment that supplies just that can still restore old snapshots;
+        old numeric log entries are then rejected until the method manifest is
+        supplied.
+        """
+        self.__legacyIdToMethod = {}
+        self.__legacyKeyToID = {}
+        self.__legacyUnresolved = {}
+        manifest = self.__legacyManifest
+        if manifest is None:
+            return
+
+        resolved = {}
+        for methodID, (owner, name, ver) in iteritems(manifest['methods']):
+            identity = self.__resolveLegacyOwnerIdentity(owner)
+            if identity != _SELF_OWNER and identity not in self.__consumerByIdentity:
+                # The manifest may describe consumers that this release no longer
+                # has. Applying such an entry must fail loudly, so register a
+                # placeholder instead of guessing a current owner.
+                self.__legacyUnresolved[methodID] = identity
+                continue
+            key = self.__resolveMethod(identity, name, ver)
+            resolved[methodID] = key
+
+        for methodID, key in iteritems(resolved):
+            identity, methodKey = key
+            if key in self.__legacyKeyToID:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy method %d and %d both describe %s.%s' %
+                    (self.__legacyKeyToID[key], methodID, identity, methodKey))
+            self.__legacyKeyToID[key] = methodID
+            self.__legacyIdToMethod[methodID] = self._idToMethod[self.__methodKeyToID[key]]
+
+    def __usesLegacyEncoding(self):
+        """Should outgoing regular commands use the old numeric encoding?"""
+        return self.__legacyManifest is not None and \
+            self.__enabledCodeVersion < self.__registryVersion
+
+    def _makeReplicatedCommand(self, ownerIdentity, methodName, args, kwargs):
+        """Encode a replicated call together with its command type.
+
+        Before the registry switch the historical numeric encoding is used so
+        that old nodes can still read operations sent by new nodes. After the
+        switch the command carries the stable business identity instead.
+        """
+        resolvedName = self._getFuncName(methodName if ownerIdentity == _SELF_OWNER
+                                         else (ownerIdentity, methodName))
+        if self.__usesLegacyEncoding():
+            key = (ownerIdentity, resolvedName)
+            methodID = self.__legacyKeyToID.get(key)
+            if methodID is None:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'cannot encode operation %s.%s with the old registry: no matching '
+                    'legacy method ID was provided' % (ownerIdentity, resolvedName))
+            payload = (methodID, args) if args else methodID
+            if kwargs:
+                payload = (methodID, args, kwargs)
+            return pickle.dumps(payload), _COMMAND_TYPE.REGULAR
+
+        if self.__identityModeEnabled:
+            payload = (ownerIdentity, resolvedName, args, kwargs)
+            return pickle.dumps(payload), _COMMAND_TYPE.REGULAR_IDENTITY
+
+        if ownerIdentity == _SELF_OWNER:
+            methodID = self._methodToID[resolvedName]
+        else:
+            methodID = self.__methodKeyToID[(ownerIdentity, resolvedName)]
+        payload = (methodID, args) if args else methodID
+        if kwargs:
+            payload = (methodID, args, kwargs)
+        return pickle.dumps(payload), _COMMAND_TYPE.REGULAR
+
+    def __resolveIdentityCommand(self, command):
+        ownerIdentity, methodName, args, kwargs = command
+        if ownerIdentity != _SELF_OWNER and ownerIdentity not in self.__consumerByIdentity:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'log entry refers to consumer identity %r, which is not configured' %
+                (ownerIdentity,))
+        key = (ownerIdentity, methodName)
+        methodID = self.__methodKeyToID.get(key)
+        if methodID is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'log entry refers to unknown method %s.%s' % (ownerIdentity, methodName))
+        return self._idToMethod[methodID](*args, **dict(kwargs, _doApply=True))
+
+    def __resolveLegacyNumericCommand(self, funcID, args, kwargs):
+        if self.__legacyManifest is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'cannot determine ownership of legacy numeric log command %r: legacy '
+                'consumer identity manifest is missing' % (funcID,))
+        if funcID in self.__legacyUnresolved:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy numeric log command %r belongs to consumer %r, which is not '
+                'configured in this release' % (funcID, self.__legacyUnresolved[funcID]))
+        method = self.__legacyIdToMethod.get(funcID)
+        if method is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'cannot determine ownership of legacy numeric log command %r: it is not '
+                'described by the legacy method manifest' % (funcID,))
+        return method(*args, **dict(kwargs, _doApply=True))
+
+    def __snapshotLegacyOrder(self):
+        manifest = self.__requireLegacyManifest('legacy snapshot positions')
+        if manifest['consumers'] is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'cannot write a snapshot readable by old nodes: the legacy consumer '
+                'position manifest is missing')
+        return list(manifest['consumers'])
+
+    def __usesLegacySnapshotFormat(self):
+        return self.__identityModeEnabled and self.__legacyManifest is not None and \
+            self.__enabledCodeVersion < self.__registryVersion
+
+    def __serializeConsumers(self):
+        """Return the consumer portion of a snapshot.
+
+        The result is always a list appended after the SyncObj state:
+
+        * legacy / no-identity mode: one positional entry per consumer;
+        * identity mode, switched: ``[identityStateDict]``;
+        * identity mode, before the registry switch: the legacy positional
+          entries followed by ``[identityStateDict]``. Old nodes read only the
+          leading positions (and ignore the extra trailing entry), while new
+          nodes use the identity map.
+        """
+        if not self.__consumers:
+            return []
+        states = dict((identity, self.__consumerByIdentity[identity]._serialize())
+                      for identity in self.__consumerIDs)
+        if not self.__identityModeEnabled:
+            return [self.__consumerByIdentity[identity]._serialize()
+                    for identity in self.__consumerIDs]
+
+        identityPayload = {
+            _CONSUMER_SNAPSHOT_MAGIC: 1,
+            'consumers': states,
+            'enabledVersion': self.__enabledCodeVersion,
+        }
+        if not self.__usesLegacySnapshotFormat():
+            return [identityPayload]
+
+        legacyStates = []
+        for identity in self.__snapshotLegacyOrder():
+            consumer = self.__consumerByIdentity.get(identity)
+            if consumer is None:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'cannot write a snapshot readable by old nodes: legacy consumer '
+                    'identity %r is not configured' % (identity,))
+            legacyStates.append(consumer._serialize())
+        return legacyStates + [identityPayload]
+
+    def __planSnapshotConsumers(self, consumersData):
+        """Validate a snapshot payload and return ``(consumerStates, enabledVersion)``.
+
+        ``consumerStates`` maps business identity to stored state. Nothing is
+        applied here: all ambiguity is reported before any state is touched.
+        """
+        if not self.__consumers:
+            return {}, None
+
+        # Switched format: a single identity map.
+        if len(consumersData) == 1 and isinstance(consumersData[0], dict) and \
+                consumersData[0].get(_CONSUMER_SNAPSHOT_MAGIC) is not None:
+            return self.__validateIdentitySnapshot(consumersData[0])
+
+        # Hybrid format: legacy positions followed by one identity map.
+        if consumersData and isinstance(consumersData[-1], dict) and \
+                consumersData[-1].get(_CONSUMER_SNAPSHOT_MAGIC) is not None:
+            identityStates, enabledVersion = self.__validateIdentitySnapshot(consumersData[-1])
+            legacyStates = list(consumersData[:-1])
+            # The positional section intentionally covers only the consumers that
+            # existed in the old release; the identity map may contain more. Verify
+            # the overlap so the two representations cannot disagree.
+            try:
+                positionalStates, _ = self.__planPositionalConsumers(legacyStates)
+            except SyncObjExceptionAmbiguousOwnership:
+                return identityStates, enabledVersion
+            for identity, state in iteritems(positionalStates):
+                if identity in identityStates and identityStates[identity] != state:
+                    raise SyncObjExceptionAmbiguousOwnership(
+                        'snapshot consumer identity map conflicts with its positional '
+                        'legacy state for %r' % (identity,))
+            return identityStates, enabledVersion
+
+        return self.__planPositionalConsumers(consumersData)
+
+    def __validateIdentitySnapshot(self, payload):
+        states = payload.get('consumers')
+        if not isinstance(states, dict):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'snapshot identity map is malformed')
+        for identity in states:
+            if identity not in self.__consumerByIdentity:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'snapshot contains consumer identity %r, which is not configured '
+                    'in this release' % (identity,))
+        return dict(states), payload.get('enabledVersion')
+
+    def __planPositionalConsumers(self, legacyStates):
+        legacyStates = list(legacyStates) if legacyStates is not None else []
+        if not self.__identityModeEnabled:
+            if len(legacyStates) != len(self.__consumers):
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy snapshot contains %d consumer states but %d consumers are '
+                    'configured' % (len(legacyStates), len(self.__consumers)))
+            return dict((identity, state) for identity, state in
+                        zip(self.__consumerIDs, legacyStates)), None
+
+        manifest = self.__requireLegacyManifest('positional consumer state in snapshot')
+        legacyOrder = manifest['consumers']
+        if legacyOrder is None:
+            raise SyncObjExceptionAmbiguousOwnership(
+                'cannot map positional consumer state in a legacy snapshot: the legacy '
+                'consumer identity manifest is missing')
+        if len(legacyStates) != len(legacyOrder):
+            raise SyncObjExceptionAmbiguousOwnership(
+                'legacy snapshot contains %d consumer states but the legacy consumer '
+                'manifest describes %d consumers' % (len(legacyStates), len(legacyOrder)))
+        states = {}
+        for identity, state in zip(legacyOrder, legacyStates):
+            if identity not in self.__consumerByIdentity:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy snapshot consumer identity %r is not configured in this '
+                    'release' % (identity,))
+            if identity in states:
+                raise SyncObjExceptionAmbiguousOwnership(
+                    'legacy snapshot maps two positions to consumer identity %r' %
+                    (identity,))
+            states[identity] = state
+        return states, None
+
+    def _getRegistryInfo(self):
+        """Introspection helper used by tests and deployment tooling."""
+        return {
+            'identities': list(self.__consumerIDs),
+            'identityMode': self.__identityModeEnabled,
+            'registryVersion': self.__registryVersion,
+            'legacy': self.__legacyManifest is not None,
+            'legacyMethodIDs': sorted(self.__legacyIdToMethod.keys()),
+            'methodKeys': dict(self.__methodKeyToID),
+        }
 
     def _applyCommand(self, command, callback, commandType = None):
         try:
@@ -705,12 +1323,45 @@ class SyncObj(object):
 
         self._poller.poll(timeToWait)
 
+    def __preflightLogEntries(self, entries):
+        """Reject entries whose owner cannot be determined before applying any.
+
+        The check is intentionally side-effect free: a missing or conflicting
+        legacy manifest must be reported before the first entry mutates state.
+        """
+        for entry in entries:
+            command = entry[0]
+            commandType = ord(command[:1])
+            if commandType == _COMMAND_TYPE.REGULAR_IDENTITY:
+                ownerIdentity, methodName = pickle.loads(command[1:])[:2]
+                if ownerIdentity != _SELF_OWNER and \
+                        ownerIdentity not in self.__consumerByIdentity:
+                    raise SyncObjExceptionAmbiguousOwnership(
+                        'log entry refers to consumer identity %r, which is not '
+                        'configured' % (ownerIdentity,))
+                if (ownerIdentity, methodName) not in self.__methodKeyToID:
+                    raise SyncObjExceptionAmbiguousOwnership(
+                        'log entry refers to unknown method %s.%s' %
+                        (ownerIdentity, methodName))
+            elif commandType == _COMMAND_TYPE.REGULAR:
+                if not self.__identityModeEnabled:
+                    continue
+                parsed = pickle.loads(command[1:])
+                funcID = parsed if not isinstance(parsed, tuple) else parsed[0]
+                if funcID not in self.__legacyIdToMethod and \
+                        funcID not in self.__legacyUnresolved:
+                    raise SyncObjExceptionAmbiguousOwnership(
+                        'cannot determine ownership of numeric log command %r: the '
+                        'legacy method manifest does not describe it (a positional '
+                        'guess is not allowed)' % (funcID,))
+
     def __applyLogEntries(self):
         needSendAppendEntries = False
 
         if self.__raftCommitIndex > self.__raftLastApplied:
             count = self.__raftCommitIndex - self.__raftLastApplied
             entries = self.__getEntries(self.__raftLastApplied + 1, count)
+            self.__preflightLogEntries(entries)
             for entry in entries:
                 try:
                     currentTermID = entry[2]
@@ -889,13 +1540,16 @@ class SyncObj(object):
              self.__doChangeCluster(clusterChangeRequest)
              return
 
-        if commandType != _COMMAND_TYPE.REGULAR:
+        if commandType != _COMMAND_TYPE.REGULAR and \
+                commandType != _COMMAND_TYPE.REGULAR_IDENTITY:
             return
         command = pickle.loads(command[1:])
+
+        if commandType == _COMMAND_TYPE.REGULAR_IDENTITY:
+            return self.__resolveIdentityCommand(command)
+
         args = []
-        kwargs = {
-            '_doApply': True,
-        }
+        kwargs = {}
         if not isinstance(command, tuple):
             funcID = command
         elif len(command) == 2:
@@ -904,7 +1558,21 @@ class SyncObj(object):
             funcID, args, newKwArgs = command
             kwargs.update(newKwArgs)
 
-        return self._idToMethod[funcID](*args, **kwargs)
+        if funcID not in self._idToMethod:
+            # The numeric ID is meaningless without the registry it was produced
+            # under. Resolve it through the legacy manifest, never by position.
+            return self.__resolveLegacyNumericCommand(funcID, args, kwargs)
+
+        if not self.__identityModeEnabled:
+            # Historical path: the numeric registry is the authority.
+            return self._idToMethod[funcID](*args, **dict(kwargs, _doApply=True))
+
+        # Identity mode: every numeric ID in the log was produced under the old
+        # registration order (this node encodes identity commands after the
+        # registry switch, and old nodes never emit identity commands). Its owner
+        # therefore comes exclusively from the legacy manifest, not from where a
+        # similarly-typed consumer happens to sit in the new list.
+        return self.__resolveLegacyNumericCommand(funcID, args, kwargs)
 
     def __onMessageReceived(self, node, message):
 
@@ -1370,6 +2038,7 @@ class SyncObj(object):
 
     def __setCodeVersion(self, newVersion):
         self.__enabledCodeVersion = newVersion
+        self.__onSetCodeVersion(newVersion)
 
     def __doChangeCluster(self, request, reverse = False):
         requestType = request[0]
@@ -1461,9 +2130,7 @@ class SyncObj(object):
             selfData = dict([(k, v) for k, v in iteritems(self.__dict__) if k not in self.__properies])
             data = selfData
             if self.__consumers:
-                data = [selfData]
-                for consumer in self.__consumers:
-                    data.append(consumer._serialize())
+                data = [selfData] + self.__serializeConsumers()
         else:
             data = None
         cluster = self.__otherNodes | {self.__selfNode}
@@ -1472,19 +2139,43 @@ class SyncObj(object):
     def __loadDumpFile(self, clearJournal):
         try:
             data = self.__serializer.deserialize()
+        except Exception:
+            logger.exception('failed to load full dump')
+            return
+
+        # Plan every consumer restore before touching any state. A snapshot whose
+        # ownership is ambiguous must be rejected as a whole, not partially
+        # applied to whichever dictionary happens to sit at the new position.
+        try:
             if data[0] is not None:
                 if self.__consumers:
+                    if not isinstance(data[0], (list, tuple)):
+                        raise SyncObjExceptionAmbiguousOwnership(
+                            'snapshot is missing the consumer state section')
                     selfData = data[0][0]
-                    consumersData = data[0][1:]
+                    consumerStates, enabledVersion = self.__planSnapshotConsumers(
+                        data[0][1:])
                 else:
                     selfData = data[0]
-                    consumersData = []
+                    consumerStates = {}
+                    enabledVersion = None
+            else:
+                selfData = None
+                consumerStates = {}
+                enabledVersion = None
+        except SyncObjExceptionAmbiguousOwnership:
+            logger.exception('refusing to load full dump: consumer ownership is ambiguous')
+            raise
+        except Exception:
+            logger.exception('failed to load full dump')
+            return
 
+        try:
+            if data[0] is not None:
                 for k, v in iteritems(selfData):
                     self.__dict__[k] = v
-
-                for i, consumer in enumerate(self.__consumers):
-                    consumer._deserialize(consumersData[i])
+                for identity, state in iteritems(consumerStates):
+                    self.__consumerByIdentity[identity]._deserialize(state)
 
             if clearJournal or \
                     len(self.__raftLog) < 2 or \
@@ -1506,8 +2197,25 @@ class SyncObj(object):
 
             if self.__conf.dynamicMembershipChange:
                 self.__updateClusterConfiguration([node for node in data[3] if node != self.__selfNode])
-            self.__onSetCodeVersion(0)
-        except:
+            # Snapshots taken after the registry switch record the enabled version
+            # so that switching does not need to be replayed from the truncated log.
+            if enabledVersion is not None and enabledVersion != self.__enabledCodeVersion:
+                oldVer = self.__enabledCodeVersion
+                self.__enabledCodeVersion = enabledVersion
+                callback = self.__conf.onCodeVersionChanged
+                self.__onSetCodeVersion(enabledVersion)
+                if callback is not None:
+                    callback(oldVer, enabledVersion)
+            elif enabledVersion is None:
+                # Legacy snapshot without version metadata: replaying the log tail
+                # restores the actual version. Keep the historical reset here.
+                self.__onSetCodeVersion(0)
+            else:
+                self.__onSetCodeVersion(enabledVersion)
+        except SyncObjExceptionAmbiguousOwnership:
+            logger.exception('refusing to load full dump: consumer ownership is ambiguous')
+            raise
+        except Exception:
             logger.exception('failed to load full dump')
 
     def __updateClusterConfiguration(self, newNodes):
@@ -1569,24 +2277,21 @@ def replicated(*decArgs, **decKwargs):
                 return func(self, *args, **kwargs)
             else:
                 if isinstance(self, SyncObj):
-                    applier = self._applyCommand
-                    funcName = self._getFuncName(func.__name__)
-                    funcID = self._methodToID[funcName]
+                    syncObj = self
+                    ownerIdentity = _SELF_OWNER
                 elif isinstance(self, SyncObjConsumer):
-                    consumerId = id(self)
-                    funcName = self._syncObj._getFuncName((consumerId, func.__name__))
-                    funcID = self._syncObj._methodToID[(consumerId, funcName)]
-                    applier = self._syncObj._applyCommand
+                    syncObj = self._syncObj
+                    if syncObj is None:
+                        raise SyncObjException(
+                            'consumer is not attached to a SyncObj')
+                    # The registry is authoritative: a stale _consumerID on the
+                    # instance must not override the identity it was registered
+                    # under.
+                    ownerIdentity = syncObj._identityForConsumer(self)
                 else:
                     raise SyncObjException("Class should be inherited from SyncObj or SyncObjConsumer")
 
                 callback = kwargs.pop('callback', None)
-                if kwargs:
-                    cmd = (funcID, args, kwargs)
-                elif args and not kwargs:
-                    cmd = (funcID, args)
-                else:
-                    cmd = funcID
                 sync = kwargs.pop('sync', False)
                 if callback is not None:
                     sync = False
@@ -1596,7 +2301,9 @@ def replicated(*decArgs, **decKwargs):
                     callback = asyncResult.onResult
 
                 timeout = kwargs.pop('timeout', None)
-                applier(pickle.dumps(cmd), callback, _COMMAND_TYPE.REGULAR)
+                command, commandType = syncObj._makeReplicatedCommand(
+                    ownerIdentity, func.__name__, args, kwargs)
+                syncObj._applyCommand(command, callback, commandType)
 
                 if sync:
                     res = asyncResult.event.wait(timeout)

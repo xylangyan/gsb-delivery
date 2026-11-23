@@ -16,7 +16,9 @@ import functools
 import struct
 import logging
 from pysyncobj import SyncObj, SyncObjConf, replicated, FAIL_REASON, _COMMAND_TYPE, \
-    createJournal, HAS_CRYPTO, replicated_sync, SyncObjException, SyncObjConsumer, _RAFT_STATE
+    createJournal, HAS_CRYPTO, replicated_sync, SyncObjException, SyncObjConsumer, _RAFT_STATE, \
+    SyncObjExceptionAmbiguousOwnership
+from pysyncobj.transport import Transport
 from pysyncobj.syncobj_admin import executeAdminCommand
 from pysyncobj.batteries import ReplCounter, ReplList, ReplDict, ReplSet, ReplLockManager, ReplQueue, ReplPriorityQueue
 from pysyncobj.node import TCPNode
@@ -2580,3 +2582,646 @@ def test_transferLeadershipFromNonLeaderIsDenied():
     o1._destroy()
     o2._destroy()
     o3._destroy()
+
+
+# ---------------------------------------------------------------------------
+# Consumer registry migration: stable identities, legacy snapshots and logs.
+# These tests use an in-memory transport so they do not need to bind a port.
+# ---------------------------------------------------------------------------
+
+class _InMemoryTransport(Transport):
+    def __init__(self, syncObj=None, selfNode=None, otherNodes=None):
+        super(_InMemoryTransport, self).__init__(syncObj, selfNode, otherNodes)
+        self.sent = []
+
+    def send(self, node, message):
+        self.sent.append((node, message))
+        return True
+
+
+class RegistryDictConsumer(SyncObjConsumer):
+    def __init__(self, consumerID=None):
+        super(RegistryDictConsumer, self).__init__(consumerID)
+        self.data = {}
+
+    @replicated
+    def set(self, key, value):
+        self.data[key] = value
+
+    @replicated
+    def remove(self, key):
+        self.data.pop(key, None)
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+
+class RegistryTestObj(SyncObj):
+    def __init__(self, consumers, conf=None):
+        cfg = conf or SyncObjConf(autoTick=False)
+        super(RegistryTestObj, self).__init__(
+            '127.0.0.1:1', [], cfg, consumers=consumers,
+            transport=_InMemoryTransport())
+
+    @replicated
+    def bump(self):
+        return 1
+
+
+def _registryCmd(obj, identity, method, *args):
+    command, commandType = obj._makeReplicatedCommand(identity, method, args, {})
+    return _bchr(commandType) + command
+
+
+def test_consumerRegistryIdentitiesSurviveReorder():
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+
+    # New release: the two same-class dicts are registered in reverse order and a
+    # third dict is appended.
+    third = RegistryDictConsumer('retryQueue')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites),
+                           ('retryQueue', third)])
+
+    info = obj._getRegistryInfo()
+    assert info['identities'] == ['failedBatches', 'sites', 'retryQueue']
+    assert info['identityMode'] is True
+
+    # A command produced for `sites` must land in `sites`, not in whichever dict
+    # occupies the old position.
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'sites', 'set', 'k', 'v'))
+    assert sites.get('k') == 'v'
+    assert failed.get('k') is None
+    assert third.get('k') is None
+
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'failedBatches', 'set', 'b', 2))
+    assert failed.get('b') == 2
+    assert sites.get('b') is None
+
+
+def test_consumerRegistrySnapshotByBusinessIdentity():
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    third = RegistryDictConsumer('retryQueue')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites),
+                           ('retryQueue', third)])
+    sites.set('site-1', 'A', _doApply=True)
+    failed.set('batch-1', 'B', _doApply=True)
+    third.set('retry-1', 'C', _doApply=True)
+
+    payload = obj._SyncObj__serializeConsumers()
+
+    # Restore into a differently ordered registration (and no legacy manifest).
+    sites2 = RegistryDictConsumer('sites')
+    failed2 = RegistryDictConsumer('failedBatches')
+    third2 = RegistryDictConsumer('retryQueue')
+    obj2 = RegistryTestObj([('retryQueue', third2), ('failedBatches', failed2),
+                            ('sites', sites2)])
+    states, _ = obj2._SyncObj__planSnapshotConsumers(payload)
+    for identity, state in states.items():
+        obj2._SyncObj__consumerByIdentity[identity]._deserialize(state)
+
+    assert sites2.get('site-1') == 'A'
+    assert failed2.get('batch-1') == 'B'
+    assert third2.get('retry-1') == 'C'
+    assert sites2.get('batch-1') is None
+    assert failed2.get('site-1') is None
+
+
+def test_consumerRegistryLegacySnapshotUsesOldPositions():
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={
+            0: ('__syncobj__', 'bump'),
+            1: ('sites', 'remove'),
+            2: ('sites', 'set'),
+            3: ('failedBatches', 'remove'),
+            4: ('failedBatches', 'set'),
+        },
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    # A legacy snapshot stores consumer state strictly by old list position.
+    legacyPayload = [{'data': {'site-1': 'A'}}, {'data': {'batch-1': 'B'}}]
+    states, _ = obj._SyncObj__planSnapshotConsumers(legacyPayload)
+    for identity, state in states.items():
+        obj._SyncObj__consumerByIdentity[identity]._deserialize(state)
+
+    assert sites.get('site-1') == 'A'
+    assert failed.get('batch-1') == 'B'
+    assert sites.get('batch-1') is None
+    assert failed.get('site-1') is None
+
+
+def test_consumerRegistryLegacyLogEntriesUseOldOwner():
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={
+            # In the old release, ID 1 and 2 belonged to `sites`, ID 3 and 4 to
+            # `failedBatches`. The new list order is reversed.
+            0: ('__syncobj__', 'bump'),
+            1: ('sites', 'remove'),
+            2: ('sites', 'set'),
+            3: ('failedBatches', 'remove'),
+            4: ('failedBatches', 'set'),
+        },
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    # ID 2 was `sites.set` in the old release even though `failedBatches` is now
+    # first. The legacy manifest, not the new position, decides.
+    command = _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((2, ('legacy-site', 'A')))
+    obj._SyncObj__doApplyCommand(command)
+    assert sites.get('legacy-site') == 'A'
+    assert failed.get('legacy-site') is None
+
+    command = _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((4, ('legacy-batch', 'B')))
+    obj._SyncObj__doApplyCommand(command)
+    assert failed.get('legacy-batch') == 'B'
+    assert sites.get('legacy-batch') is None
+
+
+def test_consumerRegistryMissingLegacyManifestIsReportedBeforeApply():
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)])
+
+    # A legacy positional snapshot cannot be attributed without the old order.
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        obj._SyncObj__planSnapshotConsumers([{'data': {}}, {'data': {}}])
+    assert sites.data == {}
+    assert failed.data == {}
+
+    # A numeric log entry likewise cannot be guessed by position.
+    command = _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((1, ('x',)))
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        obj._SyncObj__doApplyCommand(command)
+    assert sites.data == {}
+    assert failed.data == {}
+
+
+def test_consumerRegistryConflictingLegacyManifestRejectedEarly():
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+
+    # Duplicate old identities: ownership of a position is ambiguous.
+    conf = SyncObjConf(autoTick=False, legacyConsumers=['sites', 'sites'],
+                       consumerRegistryVersion=1)
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    # Two old method IDs claiming the same business method is also ambiguous.
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={1: ('sites', 'set'), 2: ('sites', 'set')},
+        consumerRegistryVersion=1,
+    )
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+
+def test_consumerRegistryLegacyEncodingBeforeSwitch():
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={
+            0: ('__syncobj__', 'bump'),
+            1: ('sites', 'remove'),
+            2: ('sites', 'set'),
+            3: ('failedBatches', 'remove'),
+            4: ('failedBatches', 'set'),
+        },
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    # Before the switch, outgoing commands must stay readable by old nodes:
+    # they use the historical numeric method ID, not the identity encoding.
+    command, commandType = obj._makeReplicatedCommand('sites', 'set', ('k', 'v'), {})
+    assert commandType == _COMMAND_TYPE.REGULAR
+    assert pickle.loads(command) == (2, ('k', 'v'))
+
+    # An old node (numeric encoding only) applies it correctly.
+    obj._SyncObj__doApplyCommand(_bchr(_COMMAND_TYPE.REGULAR) + command)
+    assert sites.get('k') == 'v'
+
+    # After the switch, the identity encoding is used, and this node can still
+    # consume the old numeric entries it had not applied yet.
+    obj._SyncObj__setCodeVersion(1)
+    command, commandType = obj._makeReplicatedCommand('sites', 'set', ('k2', 'v2'), {})
+    assert commandType == _COMMAND_TYPE.REGULAR_IDENTITY
+    obj._SyncObj__doApplyCommand(_bchr(_COMMAND_TYPE.REGULAR_IDENTITY) + command)
+    assert sites.get('k2') == 'v2'
+
+    obj._SyncObj__doApplyCommand(
+        _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((2, ('late', 'old-entry'))))
+    assert sites.get('late') == 'old-entry'
+
+
+def _loadDumpFromSerializer(obj, serializer, clearJournal=False):
+    """Inject a serializer carrying a snapshot and load it, like a leader would."""
+    obj._SyncObj__serializer = serializer
+    obj._SyncObj__loadDumpFile(clearJournal=clearJournal)
+
+
+class _StaticSnapshotSerializer(object):
+    def __init__(self, data):
+        self._data = data
+
+    def deserialize(self):
+        return self._data
+
+
+def test_consumerRegistryTwoStageRecovery():
+    # --- old release: two same-class dicts, sites first, then failed batches
+    oldConf = SyncObjConf(autoTick=False)
+    oldSites = RegistryDictConsumer()
+    oldFailed = RegistryDictConsumer()
+    oldObj = RegistryTestObj([oldSites, oldFailed], oldConf)
+    oldObj._getRegistryInfo()  # identities default to positions when unconfigured
+
+    oldObj._SyncObj__doApplyCommand(
+        _registryCmd(oldObj, 0, 'set', 'shared', 'from-sites'))
+    oldObj._SyncObj__doApplyCommand(
+        _registryCmd(oldObj, 1, 'set', 'shared', 'from-failed'))
+    oldObj._SyncObj__doApplyCommand(
+        _registryCmd(oldObj, 0, 'set', 'site-only', 'S'))
+    oldObj._SyncObj__doApplyCommand(
+        _registryCmd(oldObj, 1, 'set', 'batch-only', 'B'))
+
+    # Snapshot at log index 4, followed by two uncompacted updates (indices 5, 6).
+    legacySnapshotData = (
+        [dict([(k, v) for k, v in oldObj.__dict__.items()
+               if k not in oldObj._SyncObj__properies])] +
+        [oldSites._serialize(), oldFailed._serialize()],
+        (None, 4, 1),
+        (None, 3, 1),
+        set(),
+    )
+
+    # --- new release, reordered and with a third dictionary
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={
+            0: ('__syncobj__', 'bump'),
+            1: ('sites', 'remove'),
+            2: ('sites', 'set'),
+            3: ('failedBatches', 'remove'),
+            4: ('failedBatches', 'set'),
+        },
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    third = RegistryDictConsumer('retryQueue')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites),
+                           ('retryQueue', third)], conf)
+
+    # First recovery: old snapshot restored by business identity, then the
+    # uncompressed tail of the old log is applied.
+    _loadDumpFromSerializer(obj, _StaticSnapshotSerializer(legacySnapshotData),
+                            clearJournal=True)
+    assert sites.get('shared') == 'from-sites'
+    assert failed.get('shared') == 'from-failed'
+    assert sites.get('site-only') == 'S'
+    assert failed.get('batch-only') == 'B'
+
+    obj._SyncObj__raftCommitIndex = obj._SyncObj__raftLastApplied + 2
+    oldTail = [
+        (_bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((2, ('shared', 'sites-tail'))), 5, 1),
+        (_bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((4, ('shared', 'failed-tail'))), 6, 1),
+    ]
+    for command, idx, term in oldTail:
+        obj._SyncObj__raftLog.add(command, idx, term)
+    obj._SyncObj__applyLogEntries()
+    assert sites.get('shared') == 'sites-tail'
+    assert failed.get('shared') == 'failed-tail'
+
+    # --- cluster switches to the new registry; write more data and snapshot.
+    obj._SyncObj__setCodeVersion(1)
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'sites', 'set', 'shared', 'new-sites'))
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'failedBatches', 'set', 'shared', 'new-failed'))
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'retryQueue', 'set', 'r', 'R'))
+
+    newSnapshotData = (
+        [dict([(k, v) for k, v in obj.__dict__.items()
+               if k not in obj._SyncObj__properies])] +
+        obj._SyncObj__serializeConsumers(),
+        (None, 10, 1),
+        (None, 9, 1),
+        set(),
+    )
+
+    # Second recovery, in yet another registration order.
+    sites2 = RegistryDictConsumer('sites')
+    failed2 = RegistryDictConsumer('failedBatches')
+    third2 = RegistryDictConsumer('retryQueue')
+    obj2 = RegistryTestObj([('sites', sites2), ('retryQueue', third2),
+                            ('failedBatches', failed2)], conf)
+    _loadDumpFromSerializer(obj2, _StaticSnapshotSerializer(newSnapshotData),
+                            clearJournal=True)
+
+    assert sites2.get('shared') == 'new-sites'
+    assert failed2.get('shared') == 'new-failed'
+    assert third2.get('r') == 'R'
+    assert sites2.get('site-only') == 'S'
+    assert failed2.get('batch-only') == 'B'
+
+    # Subsequent modifications still route by identity.
+    obj2._SyncObj__doApplyCommand(_registryCmd(obj2, 'sites', 'set', 'shared', 'post'))
+    obj2._SyncObj__doApplyCommand(_registryCmd(obj2, 'failedBatches', 'remove', 'shared'))
+    assert sites2.get('shared') == 'post'
+    assert failed2.get('shared') is None
+
+
+def test_consumerRegistryRestartKeepsPerDictionaryValues():
+    conf = SyncObjConf(autoTick=False)
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'sites', 'set', 'both', 'S1'))
+    obj._SyncObj__doApplyCommand(_registryCmd(obj, 'failedBatches', 'set', 'both', 'F1'))
+
+    snapshot = (
+        [dict([(k, v) for k, v in obj.__dict__.items()
+               if k not in obj._SyncObj__properies])] +
+        obj._SyncObj__serializeConsumers(),
+        (None, 2, 1),
+        (None, 1, 1),
+        set(),
+    )
+
+    # Simulate a process restart: fresh consumer instances in the *old* order.
+    sites2 = RegistryDictConsumer('sites')
+    failed2 = RegistryDictConsumer('failedBatches')
+    obj2 = RegistryTestObj([('sites', sites2), ('failedBatches', failed2)], conf)
+    _loadDumpFromSerializer(obj2, _StaticSnapshotSerializer(snapshot), clearJournal=True)
+
+    obj2._SyncObj__doApplyCommand(_registryCmd(obj2, 'sites', 'set', 'both', 'S2'))
+    obj2._SyncObj__doApplyCommand(_registryCmd(obj2, 'failedBatches', 'set', 'both', 'F2'))
+
+    assert sites2.get('both') == 'S2'
+    assert failed2.get('both') == 'F2'
+
+
+def test_consumerRegistryIncompleteManifestIsLoud():
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+
+    # Only the old order is known: old snapshots can be restored, but declaring a
+    # numeric owner would require guessing, so log application must refuse.
+    conf = SyncObjConf(autoTick=False, legacyConsumers=['sites', 'failedBatches'],
+                       consumerRegistryVersion=1)
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    states, _ = obj._SyncObj__planSnapshotConsumers(
+        [{'data': {'site-only': 'S'}}, {'data': {'batch-only': 'B'}}])
+    for identity, state in states.items():
+        obj._SyncObj__consumerByIdentity[identity]._deserialize(state)
+    assert sites.get('site-only') == 'S'
+    assert failed.get('batch-only') == 'B'
+
+    command = _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((2, ('x', 'y')))
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        obj._SyncObj__doApplyCommand(command)
+    assert sites.data == {'site-only': 'S'}
+
+
+def test_consumerRegistrySnapshotWrittenByOldNodeStillReadable():
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={0: ('__syncobj__', 'bump'),
+                       1: ('sites', 'remove'), 2: ('sites', 'set'),
+                       3: ('failedBatches', 'remove'), 4: ('failedBatches', 'set')},
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    third = RegistryDictConsumer('retryQueue')
+    # Before the switch the new node must keep producing old-shaped snapshots.
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites),
+                           ('retryQueue', third)], conf)
+    obj._SyncObj__setCodeVersion(0)
+    sites.set('s', 1, _doApply=True)
+    failed.set('f', 2, _doApply=True)
+    third.set('r', 3, _doApply=True)
+
+    payload = obj._SyncObj__serializeConsumers()
+    # First two entries are the old positional layout; the trailing map is the
+    # identity map that old readers ignore.
+    assert payload[0] == {'data': {'s': 1}}
+    assert payload[1] == {'data': {'f': 2}}
+    assert payload[-1]['__pysyncobj_consumer_snapshot_v1__'] == 1
+
+    # Switching makes snapshots identity-only.
+    obj._SyncObj__setCodeVersion(1)
+    switched = obj._SyncObj__serializeConsumers()
+    assert len(switched) == 1
+    assert switched[0]['consumers']['retryQueue'] == {'data': {'r': 3}}
+
+
+class _LoopbackTransport(Transport):
+    """Routes messages to in-process peers, so two nodes can exchange raft/log
+    messages without binding a socket."""
+    peers = {}
+
+    def __init__(self, syncObj=None, selfNode=None, otherNodes=None):
+        super(_LoopbackTransport, self).__init__(syncObj, selfNode, otherNodes)
+        self._selfNode = selfNode
+        if selfNode is not None:
+            _LoopbackTransport.peers[selfNode.id] = self
+
+    def send(self, node, message):
+        peer = _LoopbackTransport.peers.get(node.id)
+        if peer is None:
+            return False
+        self._onNodeConnected(node)
+        peer._onMessageReceived(self._selfNode, message)
+        return True
+
+    def addNode(self, node):
+        pass
+
+    def dropNode(self, node):
+        pass
+
+    def destroy(self):
+        if self._selfNode is not None:
+            _LoopbackTransport.peers.pop(self._selfNode.id, None)
+
+
+def _runLoopback(objects, seconds, stopFunc=None, interval=0.01):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        for o in objects:
+            o._onTick(0.0)
+        if stopFunc is not None and stopFunc():
+            return True
+        time.sleep(interval)
+    return False
+
+
+def test_consumerRegistryRollingUpgradeOldAndNewNodes():
+    _LoopbackTransport.peers.clear()
+
+    confA = SyncObjConf(autoTick=False)
+    confA.appendEntriesPeriod = 0.01
+    confA.raftMinTimeout = 0.05
+    confA.raftMaxTimeout = 0.1
+    confB = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={0: ('__syncobj__', 'bump'),
+                       1: ('sites', 'remove'), 2: ('sites', 'set'),
+                       3: ('failedBatches', 'remove'), 4: ('failedBatches', 'set')},
+        consumerRegistryVersion=1,
+    )
+    confB.appendEntriesPeriod = 0.01
+    confB.raftMinTimeout = 0.05
+    confB.raftMaxTimeout = 0.1
+
+    oldSites = RegistryDictConsumer()
+    oldFailed = RegistryDictConsumer()
+    oldNode = RegistryTestObj.__new__(RegistryTestObj)
+    SyncObj.__init__(oldNode, '127.0.0.1:1', [], confA,
+                     consumers=[oldSites, oldFailed], transport=_LoopbackTransport())
+
+    newSites = RegistryDictConsumer('sites')
+    newFailed = RegistryDictConsumer('failedBatches')
+    newNode = RegistryTestObj.__new__(RegistryTestObj)
+    SyncObj.__init__(newNode, '127.0.0.1:2', [], confB,
+                     consumers=[('failedBatches', newFailed),
+                                ('sites', newSites)],
+                     transport=_LoopbackTransport())
+
+    nodes = [oldNode, newNode]
+    # Before the switch, the new node emits the old numeric encoding, so the old
+    # node applies its operations correctly.
+    assert _runLoopback(nodes, 3.0, lambda: oldNode._isReady() and newNode._isReady())
+    leader = oldNode if oldNode._isLeader() else newNode
+    follower = newNode if leader is oldNode else oldNode
+
+    # Locate the old node's positional consumer keys via its own registry.
+    oldSiteID = oldNode._methodToID[id(oldSites), 'set_v0']
+    degree = leader._makeReplicatedCommand('sites', 'set', ('s', 'from-new'), {}) \
+        if leader is newNode else (None, None)
+    if leader is newNode:
+        command, commandType = degree
+        assert commandType == _COMMAND_TYPE.REGULAR
+        follower._applyCommand(command, None, commandType)
+        assert _runLoopback(nodes, 2.0, lambda: oldSites.get('s') == 'from-new')
+        assert oldSites.get('s') == 'from-new'
+        assert oldFailed.get('s') is None
+
+    newSites.set('n', 'N', _doApply=True)
+    newFailed.set('n2', 'F', _doApply=True)
+
+    oldNode._destroy()
+    newNode._destroy()
+    _LoopbackTransport.peers.clear()
+
+
+def test_consumerRegistryTakesOverUnappliedLegacyJournal():
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={0: ('__syncobj__', 'bump'),
+                       1: ('sites', 'remove'), 2: ('sites', 'set'),
+                       3: ('failedBatches', 'remove'), 4: ('failedBatches', 'set')},
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    obj._SyncObj__raftLog.add(
+        _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((2, ('a', 'A'))), 2, 1)
+    obj._SyncObj__raftLog.add(
+        _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((4, ('b', 'B'))), 3, 1)
+    obj._SyncObj__raftCommitIndex = 3
+    obj._SyncObj__applyLogEntries()
+
+    assert sites.get('a') == 'A'
+    assert failed.get('b') == 'B'
+    assert sites.get('b') is None
+    assert failed.get('a') is None
+
+
+def test_consumerRegistryPreflightLeavesStateUntouched():
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)])
+
+    obj._SyncObj__raftLog.add(
+        _bchr(_COMMAND_TYPE.REGULAR) + pickle.dumps((2, ('a', 'A'))), 2, 1)
+    obj._SyncObj__raftCommitIndex = 2
+
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        obj._SyncObj__applyLogEntries()
+    assert sites.data == {}
+    assert failed.data == {}
+    assert obj._SyncObj__raftLastApplied == 1
+
+
+def test_consumerRegistryHybridSnapshotOldReaderCompatible():
+    conf = SyncObjConf(
+        autoTick=False,
+        legacyConsumers=['sites', 'failedBatches'],
+        legacyMethods={0: ('__syncobj__', 'bump'),
+                       1: ('sites', 'remove'), 2: ('sites', 'set'),
+                       3: ('failedBatches', 'remove'), 4: ('failedBatches', 'set')},
+        consumerRegistryVersion=1,
+    )
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    third = RegistryDictConsumer('retryQueue')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites),
+                           ('retryQueue', third)], conf)
+    sites.set('s', 1, _doApply=True)
+    failed.set('f', 2, _doApply=True)
+    third.set('r', 3, _doApply=True)
+
+    payload = obj._SyncObj__serializeConsumers()
+    # The leading entries are exactly the old positional layout; an old reader
+    # that ignores everything after len(legacyConsumers) sees the right dicts.
+    oldPositions = payload[:2]
+    assert oldPositions == [{'data': {'s': 1}}, {'data': {'f': 2}}]
+
+    # A new node restores all three from the identity map.
+    states, _ = obj._SyncObj__planSnapshotConsumers(payload)
+    assert states['sites'] == {'data': {'s': 1}}
+    assert states['failedBatches'] == {'data': {'f': 2}}
+    assert states['retryQueue'] == {'data': {'r': 3}}
+
+
+def test_consumerRegistryRefusesToGuessEncodingWithoutMethodManifest():
+    conf = SyncObjConf(autoTick=False, legacyConsumers=['sites', 'failedBatches'],
+                       consumerRegistryVersion=1)
+    sites = RegistryDictConsumer('sites')
+    failed = RegistryDictConsumer('failedBatches')
+    obj = RegistryTestObj([('failedBatches', failed), ('sites', sites)], conf)
+
+    # Before the switch the new node must emit old numeric commands, but without
+    # the old method IDs there is no safe encoding: refuse instead of guessing.
+    with pytest.raises(SyncObjExceptionAmbiguousOwnership):
+        obj._makeReplicatedCommand('sites', 'set', ('k', 'v'), {})
+
+    # After the switch identity encoding is self-describing and works.
+    obj._SyncObj__setCodeVersion(1)
+    command, commandType = obj._makeReplicatedCommand('sites', 'set', ('k', 'v'), {})
+    assert commandType == _COMMAND_TYPE.REGULAR_IDENTITY
+    obj._SyncObj__doApplyCommand(_bchr(commandType) + command)
+    assert sites.get('k') == 'v'

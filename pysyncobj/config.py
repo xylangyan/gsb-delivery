@@ -163,6 +163,40 @@ class SyncObjConf(object):
         #: onCodeVersionChanged(oldVer, newVer)
         self.onCodeVersionChanged = kwargs.get('onCodeVersionChanged', None)
 
+        #: Stable business identities of consumers, in the same order as `consumers`.
+        #: Consumers may also be passed as `(identity, consumer)` pairs, or carry a
+        #: `consumerID` set via `SyncObjConsumer.__init__`. Identities make snapshots
+        #: independent from the position of a consumer in the list.
+        self.consumerIDs = kwargs.get('consumerIDs', kwargs.get('consumerIds',
+                                   kwargs.get('consumerIdentities', None)))
+
+        #: Ordered identities of consumers in the previous release (old snapshot
+        #: positions). Required to restore a snapshot written before consumer
+        #: identities were introduced.
+        self.legacyConsumers = kwargs.get('legacyConsumers', kwargs.get('legacyConsumerIDs',
+                                      kwargs.get('legacyConsumerIds',
+                                      kwargs.get('previousConsumers', None))))
+
+        #: Mapping of old numeric method ID to its business owner and call:
+        #: {methodID: (consumerIdentity, methodName[, ver])}. Consumer identity may
+        #: also be an old consumer position (int) or None/'self' for the SyncObj.
+        self.legacyMethods = kwargs.get('legacyMethods', kwargs.get('legacyMethodIDs',
+                                    kwargs.get('legacyMethodIds',
+                                    kwargs.get('previousMethods', None))))
+
+        #: Single combined legacy manifest, e.g.
+        #: {'consumers': [...], 'methods': {...}, 'registryVersion': 1}.
+        self.legacyManifest = kwargs.get('legacyManifest', kwargs.get('consumerManifest', None))
+
+        #: First code version that uses the new consumer registry. Versions below it
+        #: use the legacy consumer/method manifests. When no value is configured the
+        #: legacy manifests fully describe the old release and the switch happens at
+        #: version 1; without any legacy manifest the current registry is used
+        #: everywhere.
+        self.consumerRegistryVersion = kwargs.get('consumerRegistryVersion',
+                                      kwargs.get('legacyRegistryVersion',
+                                      kwargs.get('registryVersion', None)))
+
         #: TCP socket keepalive
         #: (keepalive_time_seconds, probe_intervals_seconds, max_fails_count)
         #: Set to None to disable
