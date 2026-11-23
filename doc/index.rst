@@ -171,6 +171,68 @@ API
    :members:
    :inherited-members:
 
+Forensic recovery of interleaved append streams
+================================================
+
+The old :class:`Writer` performs two independent stream writes per record —
+the JSON body and the line feed — and multiple writers may append to the
+same stream. Because each append is atomic but interleaved, a body and its
+line feed need not be adjacent, and a successful-looking prefix (for
+example ``123`` followed by two line feeds) cannot be assumed to be one
+record. The :mod:`jsonlines.recovery` module reconstructs what can be
+proven from the raw bytes plus a *receipt* of remembered write facts,
+without ever modifying the analysed file.
+
+Receipt facts are limited to what is actually known:
+
+* per-source contracts: the JSON type and body byte-length range each
+  source produces;
+* records whose Writer returned success, optionally with remembered body
+  start/length and line feed positions in absolute file coordinates;
+* body writes whose Writer never returned success (the bytes may exist,
+  but no line feed or successful record can be claimed for them);
+* per-source record ordering (the order in the receipt).
+
+Recovery enumerates every byte span that is a canonical default-serialized
+JSON body (so ``01`` or ``1.00`` are never mistaken for writer output),
+then solves the placement constraints: bodies never overlap, line feeds
+are distinct, and each source's writes keep their success order. The
+result distinguishes:
+
+* **confirmed records** — source plus the exact body and line feed byte
+  ranges in every feasible interpretation;
+* **uncertain regions** — exact byte ranges that stay ambiguous, with the
+  concrete placements (including competing source attributions and orphan
+  bodies) that remain possible;
+* **incompatible facts** — receipt entries that no ordering can satisfy.
+
+Coordinates are always absolute byte offsets, so adding a later fact (for
+example a remembered body length and device) re-checks the same bytes with
+stable coordinates::
+
+  from jsonlines.recovery import (
+      JsonType, Receipt, RecordReceipt, SourceSpec, recover,
+  )
+
+  receipt = Receipt(
+      sources={
+          "A": SourceSpec("A", JsonType.INTEGER, 1, 2),
+          "B": SourceSpec("B", JsonType.INTEGER, 1, 2),
+      },
+      records=[RecordReceipt("A"), RecordReceipt("B")],
+  )
+  result = recover(b"123\n\n", receipt)
+  # result.confirmed is empty; result.uncertain lists the exact range and
+  # both splits ("1"+"23" and "12"+"3") as alternatives.
+
+A command line interface is available for read-only analysis::
+
+  python -m jsonlines recover stream.bin --receipt receipt.json --json
+
+.. automodule:: jsonlines.recovery
+   :members:
+   :undoc-members:
+
 .. autoclass:: jsonlines.Error
    :members:
 
