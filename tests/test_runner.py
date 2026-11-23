@@ -6,7 +6,7 @@ from multiprocessing import Queue
 import platform
 from unittest.mock import Mock, patch
 
-from doit.exceptions import BaseFail, InvalidTask
+from doit.exceptions import BaseFail, InvalidTask, InvalidDodoFile
 from doit.dependency import DbmDB, Dependency
 from doit.reporter import ConsoleReporter
 from doit.task import Task, DelayedLoader
@@ -302,6 +302,243 @@ class TestTask_Teardown(DepManagerMixin, unittest.TestCase):
         self.assertEqual(('teardown', t1), self.reporter.log.pop(0))
         self.assertEqual(('cleanup_error',), self.reporter.log.pop(0))
         self.assertFalse(self.reporter.log)
+
+
+class TestSetupSnapshotLifetime(DepManagerMixin, unittest.TestCase):
+    """Shared setup snapshots close once every user is terminal"""
+
+    def setUp(self):
+        super().setUp()
+        self.reporter = FakeReporter()
+
+    def _run(self, tasks, selected):
+        dispatcher = TaskDispatcher(
+            {task.name: task for task in tasks}, [], selected)
+        my_runner = runner.Runner(self.dep_manager, self.reporter)
+        my_runner.run_tasks(dispatcher)
+        my_runner.finish()
+
+    def test_waits_for_delayed_user_still_allowed(self):
+        # A1 finished but A2 may still be created and read, so release
+        # must not happen before the delayed creator had its chance.
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        def read(name):
+            log.append('read ' + name)
+
+        def creator():
+            yield {'name': 'read', 'actions': [(read, ('A2',))],
+                   'setup': ['A']}
+
+        setup = Task('A', [acquire], teardown=[release])
+        a1 = Task('A1', [(read, ('A1',))], setup=['A'])
+        a2 = Task('A2', None, loader=DelayedLoader(creator, executed='A1'))
+        task_b = Task('B', [lambda: log.append('B')], task_dep=['A'])
+
+        self._run([setup, a1, a2, task_b], ['A1', 'A2', 'B'])
+        self.assertEqual(
+            ['acquire A', 'read A1', 'read A2', 'release A', 'B'], log)
+
+    def test_skip_by_manifest_releases_before_next_batch(self):
+        # A2 only needs its manifest to know it is up-to-date, so after A1
+        # the setup can close and B starts without waiting for the run end.
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        def creator():
+            yield {'name': 'read', 'actions': [lambda: log.append('A2')],
+                   'setup': ['A'], 'uptodate': [True]}
+
+        setup = Task('A', [acquire], teardown=[release])
+        a1 = Task('A1', [(lambda: log.append('A1'),)], setup=['A'])
+        a2 = Task('A2', None, loader=DelayedLoader(creator, executed='A1'))
+        task_b = Task('B', [lambda: log.append('B')], task_dep=['A'])
+
+        # A2's manifest is enough to confirm its read is up-to-date, so no
+        # user is left to read the old version after A1.
+        self._run([setup, a1, a2, task_b], ['A1', 'A2', 'B'])
+        self.assertEqual(['acquire A', 'A1', 'release A', 'B'], log)
+
+    def test_cancelled_user_leaves_pending_list(self):
+        # A1 was never selected; only A2 uses the snapshot, so it must not
+        # keep the setup pinned after A2 settles.
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        setup = Task('A', [acquire], teardown=[release])
+        a2 = Task('A2', [(lambda: log.append('A2'),)], setup=['A'])
+        task_b = Task('B', [lambda: log.append('B')], task_dep=['A'])
+
+        self._run([setup, a2, task_b], ['A2', 'B'])
+        self.assertEqual(['acquire A', 'A2', 'release A', 'B'], log)
+
+    def test_read_failure_still_releases(self):
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        def boom():
+            raise Exception('read failed')
+
+        setup = Task('A', [acquire], teardown=[release])
+        reader = Task('A1', [(boom,)], setup=['A'])
+
+        self._run([setup, reader], ['A1'])
+        self.assertEqual(['acquire A', 'release A'], log)
+        self.assertIn(('fail', reader), self.reporter.log)
+
+    def test_release_only_once(self):
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        setup = Task('A', [acquire], teardown=[release])
+        reader = Task('X', [lambda: log.append('X')], setup=['A'])
+        dispatcher = TaskDispatcher({'A': setup, 'X': reader}, [], ['X'])
+        my_runner = runner.Runner(self.dep_manager, self.reporter)
+        my_runner.run_tasks(dispatcher)
+        my_runner.teardown()
+        my_runner.finish()
+        self.assertEqual(['acquire A', 'X', 'release A'], log)
+
+    def test_teardown_users_before_setup_reverse_order(self):
+        # X uses S and registers cleanup; both are released together, X
+        # first because teardown ordering is reverse of execution.
+        log = []
+
+        def acquire():
+            log.append('acquire S')
+
+        def release():
+            log.append('release S')
+
+        setup = Task('S', [acquire], teardown=[release])
+        user = Task('X', [(lambda: log.append('X'),)],
+                    teardown=[lambda: log.append('release X')], setup=['S'])
+        later = Task('Y', [lambda: log.append('Y')])
+
+        self._run([setup, user, later], ['X', 'Y'])
+        self.assertEqual(
+            ['acquire S', 'X', 'release X', 'release S', 'Y'], log)
+
+    def test_delayed_created_user_is_served_before_release(self):
+        # The delayed creator itself adds a user of the snapshot.  The
+        # snapshot must stay open until that generated task ran.
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        def creator():
+            yield {'name': 'x', 'actions': [lambda: log.append('X')],
+                   'setup': ['A']}
+
+        setup = Task('A', [acquire], teardown=[release])
+        a1 = Task('A1', [(lambda: log.append('A1'),)], setup=['A'])
+        delayed = Task('X', None, loader=DelayedLoader(creator, executed='A1'))
+        task_b = Task('B', [lambda: log.append('B')], task_dep=['A'])
+
+        self._run([setup, a1, delayed, task_b], ['A1', 'X', 'B'])
+        self.assertEqual(
+            ['acquire A', 'A1', 'X', 'release A', 'B'], log)
+
+    def test_non_user_waits_for_snapshot_release(self):
+        # B does not read through the snapshot; depending on the setup
+        # task means it waits for the slot to be released, so it must not
+        # start while A1 is still using it.
+        log = []
+
+        def acquire():
+            log.append('acquire A')
+
+        def release():
+            log.append('release A')
+
+        setup = Task('A', [acquire], teardown=[release])
+        a1 = Task('A1', [(lambda: log.append('A1'),)], setup=['A'])
+        task_b = Task('B', [lambda: log.append('B')], task_dep=['A'])
+
+        self._run([setup, a1, task_b], ['A1', 'B'])
+        self.assertEqual(['acquire A', 'A1', 'release A', 'B'], log)
+
+    def test_mutual_wait_names_task_and_slot(self):
+        # A2 reads through the snapshot and depends on B; B waits for the
+        # snapshot to be released.  This is a real cycle, not a reason to
+        # open a second snapshot version.
+        setup = Task('A', [lambda: None], teardown=[lambda: None])
+        a2 = Task('A2', [lambda: None], setup=['A'], task_dep=['B'])
+        task_b = Task('B', [lambda: None], task_dep=['A'])
+
+        dispatcher = TaskDispatcher(
+            {'A': setup, 'A2': a2, 'B': task_b}, [], ['A2', 'B'])
+        my_runner = runner.Runner(self.dep_manager, self.reporter)
+        with self.assertRaises(InvalidDodoFile) as caught:
+            my_runner.run_tasks(dispatcher)
+        message = str(caught.exception)
+        self.assertIn("snapshot 'A'", message)
+        self.assertIn("'A2'", message)
+        self.assertIn("'B'", message)
+        self.assertIn('second snapshot version', message)
+
+    def test_unrelated_teardown_keeps_end_of_run_order(self):
+        log = []
+        t1 = Task('t1', [], teardown=[lambda: log.append('td t1')])
+        t2 = Task('t2', [], teardown=[lambda: log.append('td t2')])
+        t3 = Task('t3', [lambda: log.append('t3')], teardown=[
+            lambda: log.append('td t3')])
+        self._run([t1, t2, t3], ['t1', 't2', 't3'])
+        self.assertEqual(
+            ['t3', 'td t3', 'td t2', 'td t1'], log)
+
+    def test_late_user_refuses_second_snapshot_version(self):
+        # A user that appears only after the snapshot was released must
+        # fail loudly instead of silently opening a second version.
+        log = []
+        setup = Task('A', [lambda: log.append('acquire A')],
+                     teardown=[lambda: log.append('release A')])
+        first = Task('A1', [lambda: None], setup=['A'])
+        late = Task('late', [lambda: log.append('late')], setup=['A'])
+
+        dispatcher = TaskDispatcher(
+            {'A': setup, 'A1': first, 'late': late}, [], ['A1'])
+        my_runner = runner.Runner(self.dep_manager, self.reporter)
+        my_runner.run_tasks(dispatcher)
+        self.assertEqual(['acquire A', 'release A'], log)
+
+        # a user discovered only after the release must not get a second
+        # snapshot version
+        node = ExecNode(late, None)
+        my_runner._task_dispatcher = dispatcher
+        self.assertFalse(my_runner.select_task(node, dispatcher.tasks))
+        self.assertEqual('failure', node.run_status)
+        self.assertIn(('fail', late), self.reporter.log)
 
 
 class TestTask_RunAll(DepManagerMixin, unittest.TestCase):

@@ -5,7 +5,7 @@ from collections import OrderedDict
 import re
 
 from .exceptions import InvalidTask, InvalidCommand, InvalidDodoFile
-from .task import Task, DelayedLoaded
+from .task import Task, DelayedLoader, DelayedLoaded
 from .loader import generate_tasks
 
 
@@ -303,6 +303,8 @@ class ExecNode:
         # Wait for a task to finish its execution
         self.wait_run = set()  # task names
         self.wait_run_calc = set()  # task names
+        # Wait for a shared setup snapshot to be released
+        self.wait_release = set()  # task names
 
         self.waiting_me = set()  # ExecNode
 
@@ -360,11 +362,113 @@ class TaskDispatcher:
         self.selected_tasks = selected_tasks
 
         self.nodes = {}  # key task-name, value: ExecNode
+        # shared setup tasks whose snapshot is already released
+        self.released = set()
+        # cheap guard: no setup task anywhere means no lifetime tracking
+        self.has_setup_tasks = any(task.setup_tasks
+                                   for task in tasks.values())
         # queues
         self.waiting = set()  # of ExecNode
         self.ready = deque()  # of ExecNode
 
         self.generator = self._dispatcher_generator(selected_tasks)
+
+
+    # a task in one of these states can no longer start using a setup task
+    _terminal_status = frozenset(
+        ('successful', 'failure', 'ignore', 'up-to-date', 'done'))
+
+    def reachable_task_names(self):
+        """names of tasks that can still be reached from the selection
+
+        A setup task is only kept alive for tasks that belong to this run.
+        Tasks from the dodo file that were not selected must not extend a
+        setup lifetime.
+
+        A task that was skipped (up-to-date/ignore) or failed before its
+        setup tasks were scheduled will never use those setup tasks.  Do
+        not count that subtree as a future user when its setup task has no
+        node in this run.
+        """
+        if not self.selected_tasks:
+            return set()
+        seen = set()
+        stack = list(self.selected_tasks)
+        while stack:
+            name = stack.pop()
+            if name in seen:
+                continue
+            task = self.tasks.get(name)
+            if task is None:
+                continue
+            seen.add(name)
+            stack.extend(task.task_dep)
+            stack.extend(task.calc_dep)
+
+            node = self.nodes.get(name)
+            skipped_before_setup = (
+                node is not None
+                and node.run_status in ('up-to-date', 'ignore', 'failure'))
+            for setup_name in task.setup_tasks:
+                if skipped_before_setup and setup_name not in self.nodes:
+                    continue
+                stack.append(setup_name)
+        return seen
+
+
+    def has_pending_delayed_users(self):
+        """True while a delayed task creator may still add a setup user
+
+        A creator that was already executed cannot add tasks anymore, even
+        when the placeholder task still carries its `DelayedLoader` object.
+        """
+        for name in self.reachable_task_names():
+            loader = getattr(self.tasks.get(name), 'loader', None)
+            if not isinstance(loader, DelayedLoader) or loader.created:
+                continue
+            node = self.nodes.get(name)
+            # a terminal placeholder will not run its creator anymore
+            if node is not None and node.run_status in self._terminal_status:
+                continue
+            return True
+        return False
+
+
+    def setup_consumers(self, setup_name):
+        """tasks reachable in this run that declare `setup_name` as setup"""
+        consumers = []
+        for name in self.reachable_task_names():
+            if name == setup_name:
+                continue
+            task = self.tasks.get(name)
+            if task and setup_name in task.setup_tasks:
+                consumers.append(name)
+        return sorted(consumers)
+
+
+    def is_shared_setup(self, task_name):
+        """a setup task that can be released early (snapshot with teardown)"""
+        task = self.tasks.get(task_name)
+        if task is None or not task.teardown:
+            return False
+        return bool(self.setup_consumers(task_name))
+
+
+    def setup_consumers_settled(self, setup_name):
+        """all tasks that may use this setup are done, skipped or exited
+
+        A task that was not reached yet is still a potential user, so it
+        keeps the setup open.  A setup without any user is never released
+        early by this rule.
+        """
+        consumers = self.setup_consumers(setup_name)
+        if not consumers:
+            return False
+        for name in consumers:
+            node = self.nodes.get(name)
+            if node is None or node.run_status not in self._terminal_status:
+                return False
+        return True
 
 
     def _gen_node(self, parent, task_name):
@@ -382,14 +486,32 @@ class TaskDispatcher:
         if parent and task_name in parent.ancestors:
             msg = "Cyclic/recursive dependencies for task %s: [%s]"
             cycle = " -> ".join(parent.ancestors + [task_name])
-            raise InvalidDodoFile(msg % (task_name, cycle))
+            message = msg % (task_name, cycle)
+
+            # name shared setup tasks taking part in the cycle, so the
+            # user can tell which snapshot slot forms a mutual wait
+            cycle_names = parent.ancestors + [task_name]
+            slots = []
+            for candidate in cycle_names:
+                task = self.tasks.get(candidate)
+                if task is None:
+                    continue
+                for setup_name in task.setup_tasks:
+                    slots.append(setup_name)
+            if slots:
+                message += (
+                    ". Task(s) %s use shared setup snapshot(s) %s in this "
+                    "cycle. Refusing to open another snapshot version."
+                    % (", ".join(cycle_names), ", ".join(sorted(set(slots)))))
+            raise InvalidDodoFile(message)
 
 
-    def _node_add_wait_run(self, node, task_list, calc=False):
+    def _node_add_wait_run(self, node, task_list, calc=False, setup=False):
         """updates node.wait_run
         @param node (ExecNode)
         @param task_list (list - str) tasks that node should wait for
         @param calc (bool) task_list is for calc_dep
+        @param setup (bool) task_list is for setup_tasks
         """
         # wait_for: contains tasks that `node` needs to wait for and
         # were not executed yet.
@@ -413,7 +535,20 @@ class TaskDispatcher:
         if calc:
             node.wait_run_calc.update(wait_for)
         else:
-            node.wait_run.update(wait_for)
+            # a consumer of a shared setup needs the snapshot alive: it
+            # waits for the setup actions.  A task that merely depends on
+            # the setup waits for the snapshot to be released.
+            run_done = set()
+            release_wait = set()
+            for name in wait_for:
+                if (not setup and self.is_shared_setup(name)
+                        and name not in node.task.setup_tasks
+                        and name not in self.released):
+                    release_wait.add(name)
+                else:
+                    run_done.add(name)
+            node.wait_run.update(run_done)
+            node.wait_release.update(release_wait)
 
 
     @no_none
@@ -458,7 +593,8 @@ class TaskDispatcher:
             # do not wait until all possible task_dep are created
             if (node.calc_dep or node.task_dep):
                 continue  # pragma: no cover  # coverage cant catch this #198
-            elif (node.wait_run or node.wait_run_calc):
+            elif (node.wait_run or node.wait_run_calc or
+                  node.wait_release):
                 yield 'wait'
             else:
                 break
@@ -476,6 +612,8 @@ class TaskDispatcher:
                     if not nt.loader:
                         nt.loader = DelayedLoaded
                     self.tasks[nt.name] = nt
+                    if nt.setup_tasks:
+                        self.has_setup_tasks = True
             # check itself for implicit dep (used by regex_target)
             TaskControl.add_implicit_task_dep(
                 self.targets, this_task, this_task.file_dep)
@@ -518,7 +656,8 @@ class TaskDispatcher:
             if node.run_status == 'run':
                 for setup_task in this_task.setup_tasks:
                     yield self._gen_node(node, setup_task)
-                self._node_add_wait_run(node, this_task.setup_tasks)
+                self._node_add_wait_run(
+                    node, this_task.setup_tasks, setup=True)
                 if node.wait_run:
                     yield 'wait'
 
@@ -570,7 +709,13 @@ class TaskDispatcher:
             # node wait_run will be ready if there are nothing left to wait
             if task_name in waiting_node.wait_run:
                 waiting_node.wait_run.remove(task_name)
-                is_ready = not (waiting_node.wait_run or waiting_node.wait_run_calc)
+                is_ready = not (waiting_node.wait_run or
+                                waiting_node.wait_run_calc or
+                                waiting_node.wait_release)
+            elif task_name in waiting_node.wait_release:
+                # setup actions finished, but its snapshot is still in use
+                # by another user; only release_setup wakes this waiter
+                is_ready = False
             # node wait_run_calc
             else:
                 assert task_name in waiting_node.wait_run_calc
@@ -585,6 +730,85 @@ class TaskDispatcher:
             if is_ready and (waiting_node in self.waiting):
                 self.ready.append(waiting_node)
                 self.waiting.remove(waiting_node)
+
+
+    def _wait_targets(self, node):
+        """nodes this node is currently blocked on"""
+        targets = []
+        for name in (node.wait_run | node.wait_run_calc | node.wait_release):
+            dep = self.nodes.get(name)
+            if dep is not None:
+                targets.append(dep)
+        return targets
+
+
+    def _find_release_deadlock(self, setup_name):
+        """which real task and slot form a mutual wait, if any
+
+        A consumer of `setup_name` may itself depend on a task that waits
+        for this setup to be released.  That is a real cycle (consumer ->
+        ... -> waiter -> setup), not something a second snapshot version
+        could fix.
+        """
+        for consumer_name in self.setup_consumers(setup_name):
+            start = self.nodes.get(consumer_name)
+            if start is None or start.run_status in self._terminal_status:
+                continue
+            seen = set()
+            stack = [start]
+            while stack:
+                node = stack.pop()
+                if node in seen:
+                    continue
+                seen.add(node)
+                if setup_name in node.wait_release:
+                    return consumer_name, node.task.name
+                stack.extend(self._wait_targets(node))
+        return None
+
+
+    def _raise_if_stuck(self):
+        """explain why no task can make progress instead of duplicating setup
+
+        Called only when every task is waiting and nothing is executing.
+        A task in "run" state may still be waiting for its setup actions;
+        only the mutual-wait shape is actionable here.
+        """
+        setups = set()
+        for node in self.nodes.values():
+            setups.update(node.wait_release)
+        for setup_name in sorted(setups):
+            found = self._find_release_deadlock(setup_name)
+            if found is None:
+                continue
+            consumer_name, waiter_name = found
+            msg = (
+                "Mutual wait on shared setup snapshot '{setup}': task "
+                "'{consumer}' must finish before the snapshot can be "
+                "released, but '{waiter}' waits for that release. "
+                "Refusing to open a second snapshot version."
+            ).format(setup=setup_name, consumer=consumer_name,
+                     waiter=waiter_name)
+            raise InvalidDodoFile(msg)
+
+
+    def release_setup(self, setup_name):
+        """mark a shared setup snapshot as released and wake its waiters"""
+        if setup_name in self.released:
+            return
+        self.released.add(setup_name)
+        for node in list(self.waiting):
+            if setup_name not in node.wait_release:
+                continue
+            node.wait_release.remove(setup_name)
+            if node.wait_run or node.wait_run_calc or node.wait_release:
+                continue
+            self.ready.append(node)
+            self.waiting.remove(node)
+        # a waiter that already received the setup actions still needs to
+        # be re-examined once the snapshot itself is gone
+        for node in list(self.ready):
+            node.wait_release.discard(setup_name)
 
 
     def _process_calc_dep_results(self, node, waiting_node):
@@ -618,7 +842,13 @@ class TaskDispatcher:
                 node = self._get_next_node(self.ready, tasks_to_run)
                 if not node:
                     if self.waiting:
-                        # all tasks are waiting, hold on
+                        # all tasks are waiting, hold on.  If no worker is
+                        # actually executing anything this is a real stall
+                        # (a mutual wait), not an opportunity to open a
+                        # second snapshot version.
+                        if not any(n.run_status == 'run'
+                                   for n in self.nodes.values()):
+                            self._raise_if_stuck()
                         processed = (yield "hold on")
                         self._update_waiting(processed)
                         continue
@@ -630,6 +860,11 @@ class TaskDispatcher:
 
             # got None, nothing left for this generator
             if next_step is None:
+                # a task that exits before it is ever run was cancelled
+                # (e.g. an already satisfied regex group).  It must not
+                # keep a shared setup snapshot alive.
+                if node.run_status is None:
+                    node.run_status = 'done'
                 node = None
                 continue
 

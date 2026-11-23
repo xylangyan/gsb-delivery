@@ -259,6 +259,8 @@ class Task:
         self.meta = meta
         # just indicate if actions were executed at all
         self.executed = False
+        # teardown is executed by the main process (shared setup in -n)
+        self.managed_teardown = False
 
 
     def _init_deps(self, file_dep, task_dep, calc_dep):

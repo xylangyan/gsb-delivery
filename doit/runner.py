@@ -62,6 +62,13 @@ class Runner():
         self.final_result = SUCCESS  # until something fails
         self._stop_running = False
 
+        # teardown already executed (a setup snapshot closes at most once)
+        self._teardown_done = set()
+        # dispatcher used by the current run, needed to know setup users
+        self._task_dispatcher = None
+        # setup tasks already released, by name
+        self._released_setups = set()
+
 
     def _handle_task_error(self, node, base_fail):
         """handle all task failures/errors
@@ -123,6 +130,17 @@ class Runner():
         # if run_status is not None, it was already calculated
         if node.run_status is None:
 
+            # a late user must not silently open a second snapshot version
+            for setup_name in task.setup_tasks:
+                if setup_name in self._released_setups:
+                    msg = (
+                        f"Task '{task.name}' requires setup task "
+                        f"'{setup_name}', but that setup snapshot was "
+                        "already released. Refusing to open it again."
+                    )
+                    self._handle_task_error(node, DependencyError(msg))
+                    return False
+
             self.reporter.get_status(task)
 
             # overwrite with effective verbosity
@@ -132,12 +150,14 @@ class Runner():
             if node.ignored_deps or self.dep_manager.status_is_ignore(task):
                 node.run_status = 'ignore'
                 self.reporter.skip_ignore(task)
+                self._release_early_teardowns()
                 return False
 
             # check task_deps
             if node.bad_deps:
                 bad_str = " ".join(n.task.name for n in node.bad_deps)
                 self._handle_task_error(node, UnmetDependency(bad_str))
+                self._release_early_teardowns()
                 return False
 
             # check if task is up-to-date
@@ -146,6 +166,7 @@ class Runner():
                 msg = "ERROR: Task '{}' checking dependencies: {}".format(
                     task.name, res.get_error_message())
                 self._handle_task_error(node, DependencyError(msg))
+                self._release_early_teardowns()
                 return False
 
             # set node.run_status
@@ -158,6 +179,7 @@ class Runner():
             if node.run_status == 'up-to-date':
                 self.reporter.skip_uptodate(task)
                 task.values = self.dep_manager.get_values(task.name)
+                self._release_early_teardowns()
                 return False
 
             if task.setup_tasks:
@@ -174,6 +196,7 @@ class Runner():
         except Exception as exception:
             msg = ("ERROR getting value for argument\n" + str(exception))
             self._handle_task_error(node, DependencyError(msg))
+            self._release_early_teardowns()
             return False
 
         return True
@@ -181,8 +204,8 @@ class Runner():
 
     def execute_task(self, task):
         """execute task's actions"""
-        # register cleanup/teardown
-        if task.teardown:
+        # register cleanup/teardown (shared setups stay with the parent)
+        if task.teardown and not task.managed_teardown:
             self.teardown_list.append(task)
 
         # finally execute it!
@@ -205,9 +228,11 @@ class Runner():
             else:
                 node.run_status = "successful"
                 self.reporter.add_success(task)
+                self._release_early_teardowns()
                 return
         # task error
         self._handle_task_error(node, base_fail)
+        self._release_early_teardowns()
 
 
     def run_tasks(self, task_dispatcher):
@@ -218,6 +243,7 @@ class Runner():
 
         @param task_dispatcher: L{TaskDispacher}
         """
+        self._task_dispatcher = task_dispatcher
         node = None
         while True:
             if self._stop_running:
@@ -228,6 +254,11 @@ class Runner():
             except StopIteration:
                 break
 
+            # a released snapshot can unblock a task that was only waiting
+            # for the setup slot; give the dispatcher that chance before
+            # selecting the node it came back with.
+            self._release_early_teardowns()
+
             if not self.select_task(node, task_dispatcher.tasks):
                 continue
 
@@ -235,15 +266,138 @@ class Runner():
             self.process_task_result(node, base_fail)
 
 
+    def _run_teardown(self, task):
+        """execute one task's teardown at most once"""
+        if task.name in self._teardown_done:
+            return
+        self._teardown_done.add(task.name)
+        try:
+            self.teardown_list.remove(task)
+        except ValueError:
+            pass
+
+        dispatcher = self._task_dispatcher
+        shared = bool(dispatcher and dispatcher.setup_consumers(task.name))
+        if shared:
+            self._released_setups.add(task.name)
+
+        self.reporter.teardown_task(task)
+        result = task.execute_teardown(self.stream)
+        if shared:
+            # the snapshot was closed (successfully or not); a waiter on
+            # the slot must not hang, the run already reports the error
+            dispatcher.release_setup(task.name)
+        if result:
+            msg = "ERROR: task '%s' teardown action" % task.name
+            error = SetupError(msg, result)
+            self.reporter.cleanup_error(error)
+
+
+    def _setup_can_close(self, setup_task, dispatcher, delayed_users,
+                         checking=None):
+        """every user of this setup snapshot is done and no more can appear
+
+        A user that itself acts as a setup for other tasks (a nested
+        snapshot) can only be closed after its own users settled.  Without
+        that check the outer snapshot would close while the nested users
+        still read through it.
+        """
+        consumers = dispatcher.setup_consumers(setup_task.name)
+        if not consumers:
+            return False
+        if delayed_users:
+            return False
+
+        node = dispatcher.nodes.get(setup_task.name)
+        if node is None or node.run_status not in dispatcher._terminal_status:
+            return False
+
+        checking = set() if checking is None else checking
+        if setup_task.name in checking:
+            return False
+        checking.add(setup_task.name)
+        try:
+            if not dispatcher.setup_consumers_settled(setup_task.name):
+                return False
+            for consumer_name in consumers:
+                consumer = dispatcher.tasks.get(consumer_name)
+                if consumer is None:
+                    continue
+                if not dispatcher.setup_consumers(consumer_name):
+                    continue
+                # a nested setup that never ran has no snapshot to close
+                if consumer_name not in self._teardown_list_names():
+                    continue
+                if not self._setup_can_close(
+                        consumer, dispatcher, delayed_users, checking):
+                    return False
+            return True
+        finally:
+            checking.remove(setup_task.name)
+
+
+    def _teardown_list_names(self):
+        return {task.name for task in self.teardown_list}
+
+
+    def _close_setup(self, setup_task, dispatcher, delayed_users):
+        """tear down a setup's users (reverse order) then the setup itself"""
+        if setup_task.name in self._teardown_done:
+            return
+        if not self._setup_can_close(setup_task, dispatcher, delayed_users):
+            return
+
+        consumer_names = dispatcher.setup_consumers(setup_task.name)
+        pending = set(consumer_names)
+        # users that registered a teardown are released in reverse order
+        for entry in reversed(list(self.teardown_list)):
+            if entry.name == setup_task.name or entry.name in self._teardown_done:
+                continue
+            if entry.name not in pending:
+                continue
+            pending.remove(entry.name)
+            # a nested setup is closed with its own users first
+            if dispatcher.setup_consumers(entry.name):
+                self._close_setup(entry, dispatcher, delayed_users)
+            else:
+                self._run_teardown(entry)
+        # users without teardown but acting as a setup still release their
+        # own users before the outer snapshot closes
+        for consumer_name in sorted(pending, reverse=True):
+            consumer = dispatcher.tasks.get(consumer_name)
+            if consumer is not None and dispatcher.setup_consumers(consumer_name):
+                self._close_setup(consumer, dispatcher, delayed_users)
+
+        if setup_task.name in self._teardown_list_names():
+            self._run_teardown(setup_task)
+
+
+    def _release_early_teardowns(self):
+        """run teardowns whose setup users already settled"""
+        dispatcher = self._task_dispatcher
+        if dispatcher is None or not self.teardown_list:
+            return
+        if not dispatcher.has_setup_tasks:
+            return  # ordinary teardown keeps end-of-run timing
+
+        delayed_users = dispatcher.has_pending_delayed_users()
+        progress = True
+        while progress:
+            progress = False
+            for task in reversed(list(self.teardown_list)):
+                if task.name in self._teardown_done:
+                    continue
+                if not dispatcher.setup_consumers(task.name):
+                    continue  # ordinary teardown keeps end-of-run timing
+                if self._setup_can_close(task, dispatcher, delayed_users):
+                    self._close_setup(task, dispatcher, delayed_users)
+                    progress = True
+
+
     def teardown(self):
         """run teardown from all tasks"""
-        for task in reversed(self.teardown_list):
-            self.reporter.teardown_task(task)
-            result = task.execute_teardown(self.stream)
-            if result:
-                msg = "ERROR: task '%s' teardown action" % task.name
-                error = SetupError(msg, result)
-                self.reporter.cleanup_error(error)
+        for task in reversed(list(self.teardown_list)):
+            self._run_teardown(task)
 
 
     def finish(self):
@@ -376,8 +530,32 @@ class MRunner(Runner):
         pickle_dict = self.__dict__.copy()
         pickle_dict['reporter'] = None
         pickle_dict['task_dispatcher'] = None
+        pickle_dict['_task_dispatcher'] = None
         pickle_dict['dep_manager'] = None
         return pickle_dict
+
+    def _register_managed_teardown(self, task):
+        """shared setup cleanup is owned by the main process
+
+        Workers only execute actions and are terminated at different
+        times, so the main process must be the one holding and releasing
+        a shared snapshot.  Marking the task keeps the worker from
+        registering a duplicate teardown.  Ordinary teardown keeps its
+        previous worker-owned behavior.
+        """
+        dispatcher = self.task_dispatcher
+        is_setup = False
+        if dispatcher is not None:
+            is_setup = any(task.name in other.setup_tasks
+                           for other in dispatcher.tasks.values())
+        managed = bool(task.setup_tasks) or is_setup
+        if not managed:
+            return
+        task.managed_teardown = True
+        if task.teardown and task.name not in self._managed_teardowns:
+            self._managed_teardowns.add(task.name)
+            self.teardown_list.append(task)
+
 
     def get_next_job(self, completed):
         """get next task to be dispatched to sub-process
@@ -406,6 +584,7 @@ class MRunner(Runner):
                 # If sub-process already contains the Task object send
                 # only safe pickle data, otherwise send whole object.
                 task = node.task
+                self._register_managed_teardown(task)
                 if task.loader is DelayedLoaded and self.Child == Process:
                     return JobTask(task)
                 else:
@@ -416,6 +595,8 @@ class MRunner(Runner):
         """initialization for run_tasks"""
         self.task_dispatcher = task_dispatcher
         self.tasks = task_dispatcher.tasks
+        self._task_dispatcher = task_dispatcher
+        self._managed_teardowns = set()
 
 
     def _run_start_processes(self, job_q, result_q):
@@ -527,6 +708,9 @@ class MRunner(Runner):
         self.result_q = result_q
         if self.Child == Process:
             self.reporter = MReporter(self, reporter_class)
+            # a forked worker inherited the parent's shared-setup cleanup;
+            # the parent owns those, the worker only registers its own
+            self.teardown_list = []
         try:
             while True:
                 job = job_q.get()

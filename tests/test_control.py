@@ -654,6 +654,104 @@ class TestTaskDispatcher_add_task(unittest.TestCase):
         self.assertRaises(InvalidCommand, next, gen)
 
 
+class TestTaskDispatcher_SetupUsers(unittest.TestCase):
+
+    def test_reachable_follows_task_dep_and_setup(self):
+        tasks = {'A': Task('A', None),
+                 'main': Task('main', None, task_dep=['dep'], setup=['A']),
+                 'dep': Task('dep', None),
+                 'unselected': Task('unselected', None, setup=['A'])}
+        td = TaskDispatcher(tasks, [], ['main'])
+        self.assertEqual({'main', 'dep', 'A'}, td.reachable_task_names())
+
+    def test_skipped_parent_does_not_pin_its_setup(self):
+        tasks = {'A': Task('A', None),
+                 'skipped': Task('skipped', None, setup=['A'])}
+        td = TaskDispatcher(tasks, [], ['skipped'])
+        node = td._gen_node(None, 'skipped')
+        node.run_status = 'up-to-date'
+        self.assertEqual({'skipped'}, td.reachable_task_names())
+
+    def test_delayed_creator_keeps_users_open(self):
+        def creator():  # pragma: no cover
+            yield {'name': 'late', 'actions': None}
+        loader = DelayedLoader(creator, executed='A1')
+        tasks = {'A': Task('A', None),
+                 'A1': Task('A1', None, setup=['A']),
+                 'A2': Task('A2', None, loader=loader)}
+        td = TaskDispatcher(tasks, [], ['A1', 'A2'])
+        self.assertTrue(td.has_pending_delayed_users())
+        node = td._gen_node(None, 'A2')
+        node.run_status = 'done'
+        self.assertFalse(td.has_pending_delayed_users())
+
+    def test_consumers_and_settled(self):
+        tasks = {'A': Task('A', None),
+                 'A1': Task('A1', None, setup=['A']),
+                 'A2': Task('A2', None, setup=['A']),
+                 'B': Task('B', None)}
+        td = TaskDispatcher(tasks, [], ['A1', 'A2', 'B'])
+        self.assertEqual(['A1', 'A2'], td.setup_consumers('A'))
+        self.assertFalse(td.setup_consumers_settled('A'))
+        td._gen_node(None, 'A1').run_status = 'successful'
+        self.assertFalse(td.setup_consumers_settled('A'))
+        td._gen_node(None, 'A2').run_status = 'up-to-date'
+        self.assertTrue(td.setup_consumers_settled('A'))
+        self.assertFalse(td.setup_consumers_settled('B'))
+
+    def test_cycle_names_shared_setup(self):
+        tasks = {'A': Task('A', None),
+                 'A1': Task('A1', None, setup=['A'], task_dep=['A2']),
+                 'A2': Task('A2', None, setup=['A'], task_dep=['A1'])}
+        control = TaskControl(list(tasks.values()))
+        control.process(['A1'])
+        dispatcher = control.task_dispatcher()
+        with self.assertRaises(InvalidDodoFile) as caught:
+            for _ in range(10):
+                node = next(dispatcher.generator)
+                if node == 'hold on':
+                    continue
+                node.run_status = 'done'
+        message = str(caught.exception)
+        self.assertIn('A1 -> A2 -> A1', message)
+        self.assertIn('shared setup snapshot', message)
+        self.assertIn('A', message)
+
+
+class TestTaskDispatcher_ReleaseWait(unittest.TestCase):
+
+    def test_dependent_of_setup_waits_for_release(self):
+        tasks = {'A': Task('A', None, teardown=[lambda: None]),
+                 'A1': Task('A1', None, setup=['A']),
+                 'B': Task('B', None, task_dep=['A'])}
+        td = TaskDispatcher(tasks, [], ['A1', 'B'])
+        node_b = td._gen_node(None, 'B')
+        setup_node = td._gen_node(None, 'A')
+        self.assertEqual('wait', node_b.step())
+        td._node_add_wait_run(node_b, ['A'])
+        self.assertEqual({'A'}, node_b.wait_release)
+        self.assertFalse(node_b.wait_run)
+
+        setup_node.run_status = 'run'
+        td._update_waiting(setup_node)
+        self.assertNotIn(node_b, td.ready)
+
+        td.waiting.add(node_b)
+        td.release_setup('A')
+        self.assertIn(node_b, td.ready)
+        self.assertFalse(node_b.wait_release)
+
+    def test_user_of_setup_waits_for_actions_only(self):
+        tasks = {'A': Task('A', None, teardown=[lambda: None]),
+                 'A1': Task('A1', None, setup=['A'])}
+        td = TaskDispatcher(tasks, [], ['A1'])
+        node = td._gen_node(None, 'A1')
+        td._gen_node(None, 'A')
+        td._node_add_wait_run(node, ['A'], setup=True)
+        self.assertEqual({'A'}, node.wait_run)
+        self.assertFalse(node.wait_release)
+
+
 class TestTaskDispatcher_get_next_node(unittest.TestCase):
 
     def test_none(self):

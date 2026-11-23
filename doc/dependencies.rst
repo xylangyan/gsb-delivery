@@ -306,6 +306,21 @@ Task may also define 'teardown' actions.
 These actions are executed after all tasks have finished their execution.
 They are executed in reverse order their tasks were executed.
 
+A task used as a *setup-task* by other tasks in the same run is a shared
+snapshot.  Its ``teardown`` runs as soon as every task that declares it as
+``setup`` is finished, skipped or cancelled, instead of waiting for the whole
+run to end.  A task that depends on a setup task (``task_dep``) but does not
+declare it as ``setup`` waits for the shared snapshot to be released.
+
+While a *delayed task* creator that may still add a user has not run, the
+snapshot is kept alive.  If a task to be created later still requires a
+snapshot that was already released, the run fails with a clear error rather
+than silently opening a second version of the snapshot.
+
+If a user of the snapshot depends on a task that waits for the snapshot to be
+released, the two form a mutual wait; the run reports which task and which
+shared setup task form the cycle instead of opening another version.
+
 
 Example:
 
