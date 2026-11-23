@@ -16,3 +16,4 @@ DTW-based subsequence matching.
 from .subsequencealignment import *
 from .localconcurrences import *
 from .subsequencesearch import *
+from .subsequenceindex import *

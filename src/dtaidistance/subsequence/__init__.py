@@ -13,3 +13,12 @@ Subsequence search
 """
 
 from .dtw import SubsequenceAlignment, subsequence_alignment
+from .subsequenceindex import (
+    SubsequenceIndex,
+    IntervalMatch,
+    interval_subsequence_index,
+    subsequence_index,
+    SubsequenceIntervalIndex,
+    IntervalSubsequenceIndex,
+    SubsequenceIntervalMatch,
+)
