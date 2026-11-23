@@ -210,6 +210,51 @@ end
 > 1. First migration: Add `renamed_from` to rename the table
 > 2. Second migration: Remove `renamed_from` and apply your desired changes
 
+## Rename plan across schemas (PostgreSQL)
+
+`Ridgepole::RenamePlanner` rehearses table renames and cross-schema moves
+(e.g. swapping archive tables between two schemas) and emits an auditable SQL
+plan. It works from a catalog listing (current names and object identities)
+and a source -> target identity mapping:
+
+```ruby
+catalog = {
+  relations: [ # tables and views
+    { oid: 16401, kind: 'table', schema: 'public', name: 'orders_2024' },
+    { oid: 16402, kind: 'table', schema: 'archive', name: 'orders_2024' },
+  ],
+  indexes: [ # move together with their table
+    { oid: 16501, schema: 'public', name: 'idx_orders_date', table: 16401 },
+  ],
+  sequences: [ # move together with their owning table
+    { oid: 16601, schema: 'public', name: 'orders_2024_id_seq', owned_by: { table: 16401, column: 'id' } },
+  ],
+  foreign_keys: [
+    { oid: 16701, name: 'fk_orders_customers', from_table: 16401, to_table: 16403 },
+  ],
+  temp_names: ['tmp_reserved_1'], # reserved names usable as temporary names
+}
+
+plan = Ridgepole::RenamePlanner.plan(catalog, [
+  { from: 16401, to: { schema: 'archive', name: 'orders_2024' } },
+  { from: 16402, to: { schema: 'public', name: 'orders_2024' } },
+])
+puts plan.to_sql
+```
+
+The planner only renames/moves objects, so rows, foreign keys, indexes and
+sequences keep their original identities. Each statement in the plan is
+preceded by a guard that checks the target name is free, and the plan ends
+with a final catalog to verify object identities, sequence owning columns and
+foreign key targets. When tables swap names, reserved `temp_names` are used as
+intermediate names; dependent objects (indexes, owned sequences) are
+temporarily renamed only when a rename cycle cannot be resolved otherwise, and
+the number of temporarily renamed dependent objects is minimized. Objects that
+do not take part in the migration are never renamed. If the reserved names or
+the rename permissions are not sufficient, a
+`Ridgepole::RenamePlanner::ConflictError` is raised naming the conflicting
+objects.
+
 ## Foreign Key
 ```ruby
 create_table "parent", force: :cascade do |t|
