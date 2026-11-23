@@ -495,6 +495,7 @@ class Unit(
 
 
 class GenericUnitRegistry[QuantityT: _Quantity, UnitT: _Unit](
+    facets.GenericCalibrationRegistry[QuantityT, UnitT],
     facets.GenericSystemRegistry[QuantityT, UnitT],
     facets.GenericContextRegistry[QuantityT, UnitT],
     facets.GenericDaskRegistry[QuantityT, UnitT],

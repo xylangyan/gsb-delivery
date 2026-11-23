@@ -16,6 +16,7 @@ examples that describe many common tasks that you can accomplish with pint.
     log_units
     angular_frequency
     contexts
+    calibration
     systems
     numpy
     plotting

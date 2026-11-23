@@ -299,6 +299,100 @@ class UnitStrippedWarning(UserWarning, PintError):
         return self.__class__, (self.msg,)
 
 
+class CalibrationError(PintError):
+    """Base class for errors raised by the calibration subsystem."""
+
+
+class NotMonotonicError(CalibrationError, ValueError):
+    """Raised when a calibration segment is not monotone."""
+
+    def __init__(self, interval: object = None):
+        self.interval = interval
+
+    def __str__(self) -> str:
+        if self.interval is None:
+            return "Calibration segment is not monotone."
+        return f"Calibration segment is not monotone on {self.interval}."
+
+
+class NotContinuousError(CalibrationError, ValueError):
+    """Raised when adjacent calibration segments do not meet."""
+
+    def __init__(self, left: object = None, right: object = None, delta: object = None):
+        self.left = left
+        self.right = right
+        self.delta = delta
+
+    def __str__(self) -> str:
+        return (
+            "Calibration segments are not continuous"
+            f" at {self.left!r}/{self.right!r} (difference {self.delta!r})."
+        )
+
+
+class NoPathError(CalibrationError, ValueError):
+    """Raised when no valid calibration path exists for a value."""
+
+    def __init__(
+        self, value: object = None, source: object = None, target: object = None
+    ):
+        self.value = value
+        self.source = source
+        self.target = target
+
+    def __str__(self) -> str:
+        return (
+            f"No calibration path from {self.source!r} to {self.target!r}"
+            f" for value {self.value!r}."
+        )
+
+
+class NoInverseError(CalibrationError, ValueError):
+    """Raised when a calibration value cannot be mapped back."""
+
+    def __init__(self, value: object = None):
+        self.value = value
+
+    def __str__(self) -> str:
+        return f"Calibration value {self.value!r} has no inverse."
+
+
+class AmbiguousConversionError(CalibrationError, ValueError):
+    """Raised when a calibration value has more than one result."""
+
+    def __init__(self, value: object = None, results: object = None):
+        self.value = value
+        self.results = results
+
+    def __str__(self) -> str:
+        return (
+            f"Calibration value {self.value!r} has multiple results: {self.results!r}."
+        )
+
+
+class OutsideDomainError(CalibrationError, ValueError):
+    """Raised when a value lies outside a calibration domain."""
+
+    def __init__(self, value: object = None, interval: object = None):
+        self.value = value
+        self.interval = interval
+
+    def __str__(self) -> str:
+        return f"Value {self.value!r} is outside calibration domain {self.interval!r}."
+
+
+class ArchiveReadOnlyError(CalibrationError, TypeError):
+    """Raised when trying to modify a signed calibration archive."""
+
+    def __init__(self, name: object = None):
+        self.name = name
+
+    def __str__(self) -> str:
+        if self.name is None:
+            return "Calibration archive is read-only."
+        return f"Calibration archive is read-only ({self.name})."
+
+
 class UnexpectedScaleInContainer(Exception):
     pass
 

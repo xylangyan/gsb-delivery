@@ -63,12 +63,17 @@ Currently the folowing facets are implemented:
   units through well defined relations (e.g. spectroscopy allows
   converting between spatial wavelength and temporal frequency)
 
+- calibration: adds piecewise monotone polynomial calibrations, interval
+  coverage analysis and signed archives on top of the registry.  It is
+  opt-in and does not change ordinary conversions.
+
 :copyright: 2022 by Pint Authors, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
 
 from __future__ import annotations
 
+from .calibration import GenericCalibrationRegistry
 from .context import ContextRegistry, GenericContextRegistry
 from .dask import DaskRegistry, GenericDaskRegistry
 from .group import GenericGroupRegistry, GroupRegistry
@@ -91,6 +96,7 @@ __all__ = [
     "NumpyRegistry",
     "PlainRegistry",
     "SystemRegistry",
+    "GenericCalibrationRegistry",
     "GenericContextRegistry",
     "GenericDaskRegistry",
     "GenericFormattingRegistry",

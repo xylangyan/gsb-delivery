@@ -12,6 +12,7 @@ Pint Changelog
 
 ### Other changes
 
+- Add an opt-in calibration facet: piecewise continuous monotone polynomial calibrations, interval coverage reports that distinguish unique, unreachable and ambiguous inputs, signed read-only archives, and revalidation that reports only affected input ranges. Ordinary unit and context conversion is unchanged.
 - Speed up `to_units_container` by using `isinstance` instead of `mro()` (#2565)
 - Add `array-api-compat` as an optional dependency (#2554)
 - Fix `Quantity(0, "degC") == Quantity(0, "degF")` and similar comparisons of zero in different offset units returning `True` (#2555)

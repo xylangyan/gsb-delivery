@@ -14,6 +14,10 @@ to dig deeper into Pint or develop Pint.
 .. automodule:: pint.converters
     :members:
 
+.. automodule:: pint.facets.calibration
+    :members:
+    :exclude-members: GenericCalibrationRegistry
+
 .. automodule:: pint.definitions
     :members:
 

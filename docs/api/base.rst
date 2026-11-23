@@ -54,6 +54,57 @@ Exceptions and warnings
 .. autoexception:: UnitStrippedWarning
     :members:
 
+.. autoexception:: CalibrationError
+    :members:
+
+.. autoexception:: NotMonotonicError
+    :members:
+
+.. autoexception:: NotContinuousError
+    :members:
+
+.. autoexception:: NoPathError
+    :members:
+
+.. autoexception:: NoInverseError
+    :members:
+
+.. autoexception:: AmbiguousConversionError
+    :members:
+
+.. autoexception:: OutsideDomainError
+    :members:
+
+.. autoexception:: ArchiveReadOnlyError
+    :members:
+
+Calibration
+-----------
+
+.. autoclass:: Interval
+    :members:
+
+.. autoclass:: Polynomial
+    :members:
+
+.. autoclass:: PiecewisePolynomial
+    :members:
+
+.. autoclass:: CalibrationEdge
+    :members:
+
+.. autoclass:: CalibrationGraph
+    :members:
+
+.. autoclass:: CoverageReport
+    :members:
+
+.. autoclass:: CalibrationArchive
+    :members:
+
+.. autoclass:: RevalidationReport
+    :members:
+
 
 Sharing registry among packages
 -------------------------------
