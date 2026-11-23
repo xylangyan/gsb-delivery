@@ -40,6 +40,29 @@ from .generic import GenericActor
 from .logging import get_logger
 from .message import Message, get_encoder, set_encoder
 from .middleware import Middleware
+from .migration import (
+    MISSING,
+    InMemoryReceiptStore,
+    MigrationMiddleware,
+    MigrationPipeline,
+    MigrationRegistry,
+    PendingMigration,
+    Receipt,
+    Stage,
+    WorkerRegistration,
+    cents_to_yuan,
+    get_field,
+    get_pipe_target,
+    has_field,
+    is_missing,
+    missing_fields,
+    null_fields,
+    pipe_target_payload,
+    resolve_currency,
+    resolve_default,
+    with_defaults,
+    yuan_to_cents,
+)
 from .worker import ConsumerThread, Worker, WorkerThread
 
 __all__ = [
@@ -78,6 +101,28 @@ __all__ = [
     "Message",
     "get_encoder",
     "set_encoder",
+    # Migration
+    "MISSING",
+    "InMemoryReceiptStore",
+    "MigrationMiddleware",
+    "MigrationPipeline",
+    "MigrationRegistry",
+    "PendingMigration",
+    "Receipt",
+    "Stage",
+    "WorkerRegistration",
+    "cents_to_yuan",
+    "get_field",
+    "get_pipe_target",
+    "has_field",
+    "is_missing",
+    "missing_fields",
+    "null_fields",
+    "pipe_target_payload",
+    "resolve_currency",
+    "resolve_default",
+    "with_defaults",
+    "yuan_to_cents",
     # Middlware
     "Middleware",
     # Workers

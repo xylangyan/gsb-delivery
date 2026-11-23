@@ -8,6 +8,17 @@ All notable changes to this project will be documented in this file.
 `Unreleased`_
 -------------
 
+Added
+^^^^^
+
+* Added the opt-in :mod:`dramatiq.migration` module for running pipelines
+  across incompatible actor versions.  It supports stage and worker
+  registration with per-queue versions, conditional per-run receipts,
+  explicit ``None`` versus missing-field payload handling, run-scoped
+  defaults, and resumable ``pending_migration`` stages.  Pipelines that are
+  not registered with a :class:`~dramatiq.migration.MigrationPipeline` are
+  unchanged.
+
 Fixed
 ^^^^^
 

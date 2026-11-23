@@ -47,6 +47,13 @@ class Pipelines(Middleware):
         if exception is not None or message.failed:
             return
 
+        # Messages managed by the versioned migration subsystem route their
+        # successors explicitly.  Never fall back to a legacy ``pipe_target``
+        # for them: an old worker finishing late must not dispatch into an
+        # old validate queue.
+        if message.options.get("migration_run_id") is not None or message.options.get("migration_stage") is not None:
+            return
+
         actor = broker.get_actor(message.actor_name)
         message_data = message.options.get("pipe_target")
         if message_data is not None:

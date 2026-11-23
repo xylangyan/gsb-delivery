@@ -306,3 +306,13 @@ These are the environment variables that dramatiq reads
    * - ``dramatiq_worker_timeout``
      - 1000
      - The number of milliseconds workers should wake up after if the queue is idle.
+
+
+Versioned Pipelines
+-------------------
+
+.. automodule:: dramatiq.migration
+   :members: Stage, WorkerRegistration, MigrationRegistry, MigrationPipeline,
+             Receipt, InMemoryReceiptStore, PendingMigration,
+             MigrationMiddleware, has_field, get_field, missing_fields,
+             null_fields, resolve_default, resolve_currency, yuan_to_cents

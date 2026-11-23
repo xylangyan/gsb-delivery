@@ -440,3 +440,170 @@ at arbitrary depth, you may find the dramatiq-workflow_ package
 useful.
 
 .. _dramatiq-workflow: https://github.com/Outset-AI/dramatiq-workflow
+
+
+Versioned Pipelines
+-------------------
+
+Dramatiq's regular :class:`pipeline <dramatiq.pipeline>` stores the next
+message inside ``pipe_target``.  That is convenient during normal operation,
+but it makes rolling upgrades awkward: a message created before an upgrade
+still points at the old actor and the old queue.  The opt-in
+:mod:`dramatiq.migration` module describes stages, versions and live workers
+so a run can move to a new route without losing results that were already
+produced by the previous version.
+
+The subsystem is entirely opt-in.  Pipelines that are not managed by a
+:class:`~dramatiq.migration.MigrationPipeline` keep behaving exactly like
+the built-in pipelines described in the cookbook.
+
+Declaring stages and workers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Stages are declared once and name the queues used by each version.  Workers
+register the queue they consume together with the versions they support:
+
+.. code-block:: python
+
+   from dramatiq.migration import MigrationPipeline, MigrationRegistry
+
+   registry = MigrationRegistry()
+   registry.register_stage(
+       "parse",
+       versions=("v1", "v2"),
+       queues={"v1": "parse-old", "v2": "parse-new"},
+       actors={"v1": "parse_v1", "v2": "parse_v2"},
+       successor="validate",
+   )
+   registry.register_stage(
+       "validate",
+       versions=("v1", "v2"),
+       queues={"v1": "validate-old", "v2": "validate-new"},
+       actors={"v1": "validate_v1", "v2": "validate_v2"},
+   )
+   pipeline = MigrationPipeline(registry=registry, first_stage="parse")
+
+   registry.register_worker("parse-old", ("v1",), stage="parse")
+   registry.register_worker("validate-old", ("v1",), stage="validate")
+
+:meth:`~dramatiq.migration.MigrationRegistry.route` prefers the newest
+version that a live worker declares.  An older implementation never accepts
+a payload written by a newer one; newer implementations accept older payloads
+unless a stage narrows that with ``accepts=``.
+
+Run-scoped receipts
+^^^^^^^^^^^^^^^^^^^
+
+Results are committed as :class:`~dramatiq.migration.Receipt` objects keyed by
+``(run_id, stage)``.  Commits are conditional:
+
+* a newer version replaces an older receipt;
+* an older version arriving later is rejected as ``stale_version`` and can
+  never enqueue its successor;
+* identical results are idempotent duplicates;
+* callers may pass ``expected=`` a prior receipt for compare-and-set.
+
+The default :class:`~dramatiq.migration.InMemoryReceiptStore` is suitable for
+tests and a single process.  Production deployments should provide a
+``ReceiptStore`` backed by shared storage that implements the same
+compare-and-set contract.
+
+Old results during a rollout
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:meth:`~dramatiq.migration.MigrationPipeline.adopt_result` records a result
+that an old worker already produced, and
+:meth:`~dramatiq.migration.MigrationPipeline.reroute` (or ``switch_stage``)
+routes an existing stage to a new version while reusing that result verbatim.
+Explicit ``None`` values are preserved:
+
+.. code-block:: python
+
+   run = pipeline.start(10.01, run_id="R1", defaults={"currency": "CNY"})
+   pipeline.adopt_result("R1", "parse", "v1", {"amount": 10.01, "currency": None})
+
+   registry.register_worker("parse-new", ("v2",), stage="parse")
+   registry.register_worker("validate-new", ("v2",), stage="validate")
+   pipeline.reroute("R1", "validate", version="v2")
+
+In-flight legacy chains
+^^^^^^^^^^^^^^^^^^^^^^^
+
+An old message that is still waiting in a queue already contains the
+successor's actor, queue and arguments in ``pipe_target``.  Use
+:func:`~dramatiq.migration.get_pipe_target` and
+:func:`~dramatiq.migration.pipe_target_payload` to read that payload without
+re-running the predecessor:
+
+.. code-block:: python
+
+   target = get_pipe_target(old_message)
+   payload = pipe_target_payload(old_message)
+   pipeline.enqueue("R1", "validate", payload, payload_version="v1")
+
+Payload helpers
+^^^^^^^^^^^^^^^
+
+Use :func:`~dramatiq.migration.has_field`,
+:func:`~dramatiq.migration.get_field`,
+:func:`~dramatiq.migration.missing_fields` and
+:func:`~dramatiq.migration.null_fields` to distinguish an explicit ``None``
+from an absent field.  :func:`~dramatiq.migration.resolve_currency` (and the
+more general ``resolve_default``) fills an absent field from the run's
+``defaults`` but leaves an explicit ``None`` untouched.
+:func:`~dramatiq.migration.yuan_to_cents` converts yuan to integer cents
+using decimal arithmetic: ``10.01`` becomes ``1001``.
+
+Pending migration
+^^^^^^^^^^^^^^^^^
+
+If no live worker can accept the next stage, routing marks that stage
+``pending_migration`` instead of dropping the run or sending it to an old
+queue.  Every upstream receipt stays in the store.  Once a compatible worker
+registers, call :meth:`~dramatiq.migration.MigrationPipeline.resume` to
+continue from the retained result.
+
+Workers
+^^^^^^^
+
+:class:`~dramatiq.migration.MigrationMiddleware` bridges real actor messages
+to the coordinator.  It registers its queues on boot, commits results through
+the receipt store and only enqueues the successor when the commit succeeded.
+Messages that carry no migration options are ignored.  The built-in
+:class:`~dramatiq.middleware.Pipelines` middleware also refuses to follow
+``pipe_target`` on messages that belong to a migration run, so a late old
+worker can neither overwrite a new result nor dispatch into an old validate
+queue.
+
+A complete run
+^^^^^^^^^^^^^^
+
+The following sketch shows the two runs from a rollout: ``R1`` reuses a parse
+result produced by the old worker, while ``R2`` is reprocessed by the new
+worker because its old parse has not finished yet.
+
+.. code-block:: python
+
+   registry.register_worker("parse-old", ("v1",), stage="parse")
+   registry.register_worker("validate-old", ("v1",), stage="validate")
+
+   r1 = pipeline.start(10.01, run_id="R1", defaults={"currency": "CNY"})
+   pipeline.adopt_result("R1", "parse", "v1", {"amount": 10.01, "currency": None})
+
+   r2 = pipeline.start(10.01, run_id="R2", defaults={"currency": "CNY"})
+   # R2's old parse is still queued; the rollout then registers v2 workers.
+
+   registry.register_worker("parse-new", ("v2",), stage="parse")
+   registry.register_worker("validate-new", ("v2",), stage="validate")
+
+   pipeline.reroute("R1", "validate", version="v2")
+   pipeline.reroute("R2", "parse", version="v2")
+
+   # The new parse implementation:
+   payload = {"amount_cents": yuan_to_cents(10.01)}
+   payload["currency"] = resolve_currency(payload, run=pipeline.get_run("R2"))
+   pipeline.submit_result("R2", "parse", "v2", payload)
+
+   # A late result from the old worker is rejected and cannot fan out.
+   late = pipeline.submit_result("R2", "parse", "v1", {"amount": 10.01, "currency": None})
+   assert late.stale and late.dispatch is None
