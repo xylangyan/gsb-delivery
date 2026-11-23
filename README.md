@@ -53,6 +53,101 @@ sketch.merge(another_sketch)
 ```
 The quantiles of `values` concatenated with `other_values` are still accurate to within the relative error.
 
+## Budgeted rollup planning
+
+A delayed rollup can keep one positive/negative sketch pair per tenant and use
+the planner to decide which tenant percentiles it can issue from one minute
+under a shared bucket budget.
+
+```python
+from ddsketch import CandidateConfiguration, Capability, TenantContract
+from ddsketch import WindowSketch, plan_rollup
+
+contract = TenantContract(
+    "tenant-a",
+    percentiles=[0.5, 0.9, 0.99],
+    error_bounds={0.5: 0.01, 0.9: 0.02, 0.99: 0.02},
+    priorities={0.5: 1, 0.9: 5, 0.99: 10},
+)
+window = WindowSketch(
+    window="2026-11-22T10:31",
+    tenant="tenant-a",
+    old=old_sketch,
+    new=new_sketch,
+    capability=Capability.from_sketch(old_sketch),
+    incoming_range=(0, 20),  # counts that may still arrive, values unknown
+)
+plan = plan_rollup(
+    [window],
+    [contract],
+    [
+        CandidateConfiguration("tight", 64, "lowest", 0.01),
+        CandidateConfiguration("roomy", 256, "lowest", 0.01),
+    ],
+    budget=512,
+)
+for item in plan.issuance_schedule():
+    print(item["tenant"], item["percentile"], item["value"])
+for item in plan.shortfalls:
+    print(item.tenant, item.percentile, item.reason)
+```
+
+The plan maximizes the number of certified reports first, then the summed
+business priority of certified reports, then minimizes capacity used. A report
+is certified only when the actual merged bucket supports the contract:
+
+* its bucket was not collapsed;
+* the bucket value is within the tenant's relative-error bound;
+* every admissible incoming-volume scenario keeps the requested rank in a
+  bucket that satisfies the contract (including exact-zero reports when the
+  tenant requires them).
+
+`ReportDecision.evidence` records the total count, the rank used, the bucket
+key and count, the bucket's source-key range, and the value bounds, so any
+issued report can be recomputed from the merged sketch. Uncertified reports
+appear in `RollupPlan.shortfalls` with their reason and, for incoming-volume
+failures, a concrete `extra`/`placement`/`future_rank` witness. Each candidate
+configuration carries its own counterexample in
+`RollupPlan.shortfall_witnesses()`.
+
+An old summary may already have lost an edge bucket. `Capability` records that
+mapping and the damaged source range; if the requested rank later falls in
+that damaged range, allocating more buckets to the new window cannot recover
+the lost distribution, and the plan says so with `inherited_collapse=True`.
+Ordinary `merge()` calls are unchanged; `merge_without_plan()` is a convenience
+wrapper for callers without a contract or a budget.
+
+### Rollup audit example
+
+Two tenants of one minute illustrate the two distinct failures:
+
+```python
+# Tenant A: the old summary already folded its low edge.
+a = WindowSketch(
+    "10:31", "a", old_a,
+    new=new_a,  # new counts push the lower ranks into the folded edge
+    capability=Capability.from_sketch(old_a),
+)
+# Tenant B: the future rank stays far from either edge under both volumes.
+b = WindowSketch(
+    "10:31", "b", old_b,
+    scenarios=[VolumeScenario("calm", 0, "none"),
+               VolumeScenario("low-20", 20, "low"),
+               VolumeScenario("high-20", 20, "high")],
+)
+plan = plan_rollup([b, a], [contract_a, contract_b], candidates, budget=4096)
+```
+
+The plan serves the maximum number of certified reports before business
+priority. B's median is issuable because both volume extremes keep its rank
+away from the edges. A's low and median reports land in the previously folded
+range: each shortfall carries `inherited_collapse=True`, the damaged source
+range, and the merged future rank. Allocating a larger candidate for A does not
+change that verdict, and `plan.shortfall_witnesses()` shows each candidate's
+own counterexample. For a known new summary, use
+`VolumeScenario(..., sketch=new_sketch)` instead of an `incoming_range`; the
+planner merges that sketch into the scenario before checking the rank.
+
 ## Development
 
 To work on ddsketch a Python interpreter must be installed. It is recommended to use the provided development

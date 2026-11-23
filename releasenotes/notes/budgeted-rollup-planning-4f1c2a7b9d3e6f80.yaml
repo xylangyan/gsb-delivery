@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    Add ``plan_rollup`` for budgeted multi-tenant minute rollups.  A plan
+    certifies tenant percentiles from the actual merged DDSketch buckets,
+    respects relative-error and business-priority contracts, and reports
+    verifiable volume witnesses when a report cannot be guaranteed.
+  - |
+    Add ``BaseDDSketch.absorb`` and the ``exact_zero_count`` property, plus
+    collapse provenance on stores.  ``absorb`` merges without copying the
+    source store's capacity, and the provenance records which source buckets
+    were folded into a damaged edge so later reports can be audited.

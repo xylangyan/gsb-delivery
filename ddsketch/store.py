@@ -69,6 +69,86 @@ class Store(six.with_metaclass(abc.ABCMeta)):
         self.count = 0  # type: float
         self.min_key = _pos_infinity  # type: int
         self.max_key = _neg_infinity  # type: int
+        # ``collapsed_ranges`` maps the key of a damaged bin to the inclusive
+        # range of source keys whose counts have been folded into it.  Ordinary
+        # bins are absent and represent exactly their own key.
+        self.collapsed_ranges = {}  # type: dict
+
+    def represented_range(self, key):
+        # type: (int) -> tuple
+        """Return the inclusive range of source keys represented by ``key``."""
+        value = self.collapsed_ranges.get(key)
+        if value is None:
+            return (key, key)
+        return (value[0], value[1])
+
+    def is_collapsed_bin(self, key):
+        # type: (int) -> bool
+        """Whether ``key`` holds counts from more than one source bucket."""
+        value = self.collapsed_ranges.get(key)
+        if value is None:
+            return False
+        return bool(value[0] < value[1])
+
+    def _record_range(self, key, low, high):
+        # type: (int, int, int) -> None
+        """Union the inclusive range ``[low, high]`` into ``key``'s provenance."""
+        low = min(low, key)
+        high = max(high, key)
+        previous = self.collapsed_ranges.get(key)
+        if previous is not None:
+            low = min(low, previous[0])
+            high = max(high, previous[1])
+        if low < high:
+            self.collapsed_ranges[key] = (low, high)
+        else:
+            self.collapsed_ranges.pop(key, None)
+
+    def _record_collapse(self, target_key, sources):
+        # type: (int, list) -> None
+        """Record that ``sources`` (``(key, count)`` pairs) folded into
+        ``target_key``.  Zero-count sources contribute no represented range.
+        """
+        low = high = target_key
+        for key, count in sources:
+            if count:
+                source_low, source_high = self.represented_range(key)
+                low = min(low, source_low)
+                high = max(high, source_high)
+        self._record_range(target_key, low, high)
+
+    def _record_foreign_collapse(self, target_key, store, sources):
+        # type: (int, Store, list) -> None
+        """Record source ranges from another store folded into ``target_key``."""
+        low = high = target_key
+        for key, count in sources:
+            if count:
+                source_low, source_high = store.represented_range(key)
+                low = min(low, source_low)
+                high = max(high, source_high)
+        self._record_range(target_key, low, high)
+
+    def _trim_ranges(self):
+        # type: () -> None
+        """Drop provenance entries that are outside the live key range."""
+        for key in list(self.collapsed_ranges):
+            if key < self.min_key or key > self.max_key:
+                del self.collapsed_ranges[key]
+
+    def _live_sources(self, low, high):
+        # type: (int, int) -> list
+        """Return non-empty ``(key, count)`` pairs for live bins in
+        ``[low, high]``.
+        """
+        if not self.count:
+            return []
+        low = max(low, self.min_key)
+        high = min(high, self.max_key)
+        return [
+            (key, self.bins[key - self.offset])
+            for key in range(low, high + 1)
+            if self.bins[key - self.offset]
+        ]
 
     @abc.abstractmethod
     def copy(self, store):
@@ -152,6 +232,7 @@ class DenseStore(Store):
         self.min_key = store.min_key
         self.max_key = store.max_key
         self.offset = store.offset
+        self.collapsed_ranges = dict(getattr(store, "collapsed_ranges", {}))
 
     def length(self):
         # type: () -> int
@@ -163,6 +244,28 @@ class DenseStore(Store):
         idx = self._get_index(key)
         self.bins[idx] += weight
         self.count += weight
+        self._record_placed(key, idx)
+
+    def add_with_provenance(self, key, weight, low, high):
+        # type: (int, float, int, int) -> None
+        """Add a count known to represent the source-key range ``[low, high]``.
+
+        This is used when absorbing a summary whose bins may already have been
+        collapsed.  The target store applies its own capacity and provenance
+        rules; the source range is unioned into whichever target bin receives
+        the count.
+        """
+        if not weight:
+            return
+        idx = self._get_index(key)
+        self.bins[idx] += weight
+        self.count += weight
+        self._record_placed(key, idx)
+        self._record_range(idx + self.offset, low, high)
+
+    def _record_placed(self, key, idx):
+        # type: (int, int) -> None
+        """Hook for collapsing stores to record an inexact placement."""
 
     def _get_index(self, key):
         # type: (int) -> int
@@ -256,6 +359,8 @@ class DenseStore(Store):
         for key in range(store.min_key, store.max_key + 1):
             self.bins[key - self.offset] += store.bins[key - store.offset]
 
+        for key, (low, high) in getattr(store, "collapsed_ranges", {}).items():
+            self._record_range(key, low, high)
         self.count += store.count
 
 
@@ -311,6 +416,12 @@ class CollapsingLowestDenseStore(DenseStore):
 
         return key - self.offset
 
+    def _record_placed(self, key, idx):
+        # type: (int, int) -> None
+        """Record a value placed into an already-collapsed lowest bin."""
+        if self.is_collapsed and key < self.offset:
+            self._record_range(self.offset, key, key)
+
     def _adjust(self, new_min_key, new_max_key):
         # type: (int, int) -> None
         """Override. Adjust the bins, the offset, the min_key, and max_key, without
@@ -323,10 +434,12 @@ class CollapsingLowestDenseStore(DenseStore):
 
             if new_min_key >= self.max_key:
                 # put everything in the first bin
+                sources = self._live_sources(self.min_key, self.max_key)
                 self.offset = new_min_key
                 self.min_key = new_min_key
                 self.bins[:] = [0.0] * self.length()
                 self.bins[0] = self.count
+                self._record_collapse(new_min_key, sources)
             else:
                 shift = self.offset - new_min_key
                 if shift < 0:
@@ -335,6 +448,7 @@ class CollapsingLowestDenseStore(DenseStore):
                     collapsed_count = sum(
                         self.bins[collapse_start_index:collapse_end_index]
                     )
+                    sources = self._live_sources(self.min_key, new_min_key - 1)
                     self.bins[collapse_start_index:collapse_end_index] = [0.0] * (
                         new_min_key - self.min_key
                     )
@@ -342,12 +456,14 @@ class CollapsingLowestDenseStore(DenseStore):
                     self.min_key = new_min_key
                     # shift the buckets to make room for new_max_key
                     self._shift_bins(shift)
+                    self._record_collapse(new_min_key, sources)
                 else:
                     self.min_key = new_min_key
                     # shift the buckets to make room for new_min_key
                     self._shift_bins(shift)
 
             self.max_key = new_max_key
+            self._trim_ranges()
             self.is_collapsed = True
         else:
             self._center_bins(new_min_key, new_max_key)
@@ -372,11 +488,26 @@ class CollapsingLowestDenseStore(DenseStore):
         if collapse_end_idx > collapse_start_idx:
             collapse_count = sum(store.bins[collapse_start_idx:collapse_end_idx])
             self.bins[0] += collapse_count
+            self._record_foreign_collapse(
+                self.offset,
+                store,
+                [
+                    (key, store.bins[key - store.offset])
+                    for key in range(
+                        collapse_start_idx + store.offset, collapse_end_idx + store.offset
+                    )
+                ],
+            )
         else:
             collapse_end_idx = collapse_start_idx
 
         for key in range(collapse_end_idx + store.offset, store.max_key + 1):
             self.bins[key - self.offset] += store.bins[key - store.offset]
+            low = key
+            high = key
+            if key in getattr(store, "collapsed_ranges", {}):
+                low, high = store.collapsed_ranges[key]
+            self._record_range(key, low, high)
 
         self.count += store.count
 
@@ -434,6 +565,12 @@ class CollapsingHighestDenseStore(DenseStore):
             self._extend_range(key)
         return key - self.offset
 
+    def _record_placed(self, key, idx):
+        # type: (int, int) -> None
+        """Record a value placed into an already-collapsed highest bin."""
+        if self.is_collapsed and key > self.max_key:
+            self._record_range(self.max_key, key, key)
+
     def _adjust(self, new_min_key, new_max_key):
         # type: (int, int) -> None
         """Override. Adjust the bins, the offset, the min_key, and max_key, without
@@ -446,10 +583,12 @@ class CollapsingHighestDenseStore(DenseStore):
 
             if new_max_key <= self.min_key:
                 # put everything in the last bin
+                sources = self._live_sources(self.min_key, self.max_key)
                 self.offset = new_min_key
                 self.max_key = new_max_key
                 self.bins[:] = [0.0] * self.length()
                 self.bins[-1] = self.count
+                self._record_collapse(new_max_key, sources)
             else:
                 shift = self.offset - new_min_key
                 if shift > 0:
@@ -458,6 +597,7 @@ class CollapsingHighestDenseStore(DenseStore):
                     collapsed_count = sum(
                         self.bins[collapse_start_index:collapse_end_index]
                     )
+                    sources = self._live_sources(new_max_key + 1, self.max_key)
                     self.bins[collapse_start_index:collapse_end_index] = [0.0] * (
                         self.max_key - new_max_key
                     )
@@ -465,12 +605,14 @@ class CollapsingHighestDenseStore(DenseStore):
                     self.max_key = new_max_key
                     # shift the buckets to make room for new_max_key
                     self._shift_bins(shift)
+                    self._record_collapse(new_max_key, sources)
                 else:
                     self.max_key = new_max_key
                     # shift the buckets to make room for new_min_key
                     self._shift_bins(shift)
 
             self.min_key = new_min_key
+            self._trim_ranges()
             self.is_collapsed = True
         else:
             self._center_bins(new_min_key, new_max_key)
@@ -495,10 +637,25 @@ class CollapsingHighestDenseStore(DenseStore):
         if collapse_end_idx > collapse_start_idx:
             collapse_count = sum(store.bins[collapse_start_idx:collapse_end_idx])
             self.bins[-1] += collapse_count
+            self._record_foreign_collapse(
+                self.offset + self.length() - 1,
+                store,
+                [
+                    (key, store.bins[key - store.offset])
+                    for key in range(
+                        collapse_start_idx + store.offset, collapse_end_idx + store.offset
+                    )
+                ],
+            )
         else:
             collapse_start_idx = collapse_end_idx
 
         for key in range(store.min_key, collapse_start_idx + store.offset):
             self.bins[key - self.offset] += store.bins[key - store.offset]
+            low = key
+            high = key
+            if key in getattr(store, "collapsed_ranges", {}):
+                low, high = store.collapsed_ranges[key]
+            self._record_range(key, low, high)
 
         self.count += store.count

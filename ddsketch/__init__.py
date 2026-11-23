@@ -5,6 +5,12 @@ from .ddsketch import LogCollapsingLowestDenseDDSketch
 from .mapping import CubicallyInterpolatedMapping
 from .mapping import LinearlyInterpolatedMapping
 from .mapping import LogarithmicMapping
+from .rollup import CandidateConfiguration
+from .rollup import Capability
+from .rollup import plan_rollup
+from .rollup import TenantContract
+from .rollup import VolumeScenario
+from .rollup import WindowSketch
 from .store import CollapsingHighestDenseStore
 from .store import CollapsingLowestDenseStore
 
@@ -21,4 +27,10 @@ __all__ = [
     "LogarithmicMapping",
     "CollapsingHighestDenseStore",
     "CollapsingLowestDenseStore",
+    "CandidateConfiguration",
+    "Capability",
+    "TenantContract",
+    "VolumeScenario",
+    "WindowSketch",
+    "plan_rollup",
 ]

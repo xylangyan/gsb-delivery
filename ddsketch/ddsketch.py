@@ -84,6 +84,7 @@ class BaseDDSketch(object):
         self._store = store
         self._negative_store = negative_store
         self._zero_count = zero_count
+        self._exact_zero_count = 0.0
 
         self._relative_accuracy = mapping.relative_accuracy
         self._count = self._negative_store.count + self._zero_count + self._store.count
@@ -124,6 +125,18 @@ class BaseDDSketch(object):
         return self._count
 
     @property
+    def exact_zero_count(self):
+        # type: () -> float
+        """Return the number of exactly-zero values added to the sketch.
+
+        ``zero_count`` is the DDSketch zero bucket and also contains values
+        whose magnitude is below ``mapping.min_possible``.  The exact-zero
+        counter is kept separately so that a zero report can be certified
+        without assuming that every value in the zero bucket is exactly zero.
+        """
+        return self._exact_zero_count
+
+    @property
     def avg(self):
         # type: () -> float
         """Return the exact average of the values added to the sketch."""
@@ -147,6 +160,8 @@ class BaseDDSketch(object):
             self._negative_store.add(self._mapping.key(-val), weight)
         else:
             self._zero_count += weight
+            if val == 0.0:
+                self._exact_zero_count += weight
 
         # Keep track of summary stats
         self._count += weight
@@ -205,6 +220,9 @@ class BaseDDSketch(object):
         self._store.merge(sketch._store)
         self._negative_store.merge(sketch._negative_store)
         self._zero_count += sketch._zero_count
+        self._exact_zero_count += getattr(
+            sketch, "_exact_zero_count", 0.0
+        )
 
         # Merge summary stats
         self._count += sketch._count
@@ -213,6 +231,47 @@ class BaseDDSketch(object):
             self._min = sketch._min
         if sketch._max > self._max:
             self._max = sketch._max
+
+    def absorb(self, sketch):
+        # type: (BaseDDSketch) -> None
+        """Merge ``sketch`` while keeping this sketch's capacity and mapping.
+
+        Unlike :meth:`merge`, an empty target does not copy the source store's
+        configuration.  Counts are replayed bin by bin into this sketch's own
+        stores, carrying source-key provenance so collapsed summaries remain
+        auditable after an absorption.
+        """
+        if not self._mergeable(sketch):
+            raise ValueError(
+                "Cannot merge two DDSketches with different parameters, got %r and %r"
+                % (self._mapping.gamma, sketch._mapping.gamma)
+            )
+
+        if sketch.count == 0:
+            return
+
+        self._absorb_store(self._store, sketch._store)
+        self._absorb_store(self._negative_store, sketch._negative_store)
+        self._zero_count += sketch._zero_count
+        self._exact_zero_count += getattr(sketch, "_exact_zero_count", 0.0)
+
+        self._count += sketch._count
+        self._sum += sketch._sum
+        if sketch._min < self._min:
+            self._min = sketch._min
+        if sketch._max > self._max:
+            self._max = sketch._max
+
+    def _absorb_store(self, target, source):
+        # type: (Store, Store) -> None
+        if not source.count:
+            return
+        for key in range(source.min_key, source.max_key + 1):
+            count = source.bins[key - source.offset]
+            if not count:
+                continue
+            low, high = source.represented_range(key)
+            target.add_with_provenance(key, count, low, high)
 
     def _mergeable(self, other):
         # type: (BaseDDSketch) -> bool
@@ -225,6 +284,7 @@ class BaseDDSketch(object):
         self._store.copy(sketch._store)
         self._negative_store.copy(sketch._negative_store)
         self._zero_count = sketch._zero_count
+        self._exact_zero_count = getattr(sketch, "_exact_zero_count", 0.0)
         self._min = sketch._min
         self._max = sketch._max
         self._count = sketch._count
