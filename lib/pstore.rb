@@ -584,14 +584,34 @@ class PStore
       file = open_and_lock_file(@filename, read_only)
       if file
         begin
-          @table, checksum, original_data_size = load_data(file, read_only)
+          has_journal = journal?
+          pending_merge = !read_only && has_journal
+          if read_only && has_journal
+            # Read-only consumers see the current committed amendment graph
+            # without changing the PStore file or the journal.
+            @table = Incremental.read_state(self, file, true).first
+          elsif pending_merge
+            # A normal write transaction transparently folds committed
+            # amendments into the graph it is about to rewrite.
+            @table = Incremental.read_state(self, file, false).first
+            checksum = nil
+            original_data_size = nil
+          else
+            @table, checksum, original_data_size = load_data(file, read_only)
+          end
 
           catch(self) do
             value = yield(self)
           end
 
           if !@abort && !read_only
-            save_data(checksum, original_data_size, file)
+            if pending_merge
+              # Commit the changes and the pending amendments as one atomic
+              # snapshot; see Incremental.merge! for the crash order.
+              Incremental.merge!(self, file, @table)
+            else
+              save_data(checksum, original_data_size, file)
+            end
           end
         ensure
           file.close
@@ -755,3 +775,5 @@ class PStore
     EMPTY_MARSHAL_CHECKSUM
   end
 end
+
+require_relative "pstore/incremental"

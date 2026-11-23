@@ -84,6 +84,43 @@ wiki.transaction(true) do  # begin read-only transaction, no changes allowed
 end
 ```
 
+## Incremental amendments
+
+Besides whole transactions, a store can accept keyed corrections that are
+appended beside the ordinary PStore file.  The PStore file itself remains a
+normal Marshal snapshot, so readers that only know `PStore.new(path)` keep
+working.
+
+```ruby
+store = PStore.new("ledger.pstore")
+
+# Correct an object that both roots share.  Both roots must observe the same
+# replacement object afterwards.
+handle = store.handle(:original, [:shared])
+store.amend_shared(handle, {id: "S", revision: 2})
+
+# Replace one reference only.  The other root keeps its previous value, while
+# all remaining sharing and cycles stay intact.
+store.amend_replace(:shard, [:items, 0], {id: "S", revision: 3})
+
+# Explicitly fold the journal into the ordinary PStore file, or write a
+# standalone ordinary PStore snapshot (e.g. for a legacy consumer).
+store.compact!
+store.deliver("delivery.pstore")
+```
+
+Amendments are stored in `path + ".pstore-journal"` as checksummed,
+self-delimiting frames.  Each correction writes only the changed value and the
+target path; unchanged roots are never re-serialized.  Reads apply complete
+frames only, so an interrupted submission leaves the previous complete graph
+visible.  Retrying an identical correction is idempotent; reusing a token for a
+different payload is rejected.
+
+Amendment payloads are restricted to arrays, hashes, primitive values and
+record types.  `Struct` and `Data` subclasses are accepted automatically;
+other record classes can be declared with
+`PStore::Incremental.record(MyRecord)`.
+
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake test` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
