@@ -108,6 +108,40 @@ The bin/ directory contains two Unix-style, command-line tools "zfec" and
 "zunfec".  Execute ``zfec --help`` or ``zunfec --help`` for usage
 instructions.
 
+Disk Retirement Planner
+-----------------------
+
+``zfec-migrate`` plans the decommissioning of disks that hold zfec shares.  It
+reads a JSON manifest describing object versions, checked share copies, disk
+space, and failure scenarios, and emits an ordered copy/delete plan::
+
+    zfec-migrate manifest.json
+    zfec-migrate --json manifest.json
+
+A manifest names each version's ``k`` and ``m``, each share's actual on-disk
+``size`` (including the zfec header), and each disk's ``available_bytes``
+(free space, excluding shares already listed).  Disks are retired by default;
+set ``"retired": false`` to keep shares there.  Optional scratch disks can be
+listed in ``scratch_disks``; they must be empty when the plan ends.
+
+Every plan step is checked against all declared failure scenarios.  A copy is
+only scheduled when the destination has room for the whole file while the
+source still exists, and a copy may only be deleted after another verified
+copy of the same version and share number remains.  Under each scenario, each
+version always keeps at least ``k`` distinct share numbers.  The search
+minimizes bytes actually written.
+
+By default every share number present in the input is retained.  With
+``--allow-drop`` (or ``"preserve_all": false`` in the manifest), surplus
+numbers may instead be discarded down to the ``k``-number safety floor; this
+can be the only feasible option when final capacity is tight.
+
+When no plan exists, the command exits nonzero and reports the blocking
+constraints (insufficient failure margin, no transient destination space, or
+no final keep-disk capacity) instead of emitting a partial plan.  See
+``zfec/migration.py`` for the manifest schema and
+``zfec/test/migration-manifest.example.json`` for a runnable example.
+
 
 Performance
 -----------

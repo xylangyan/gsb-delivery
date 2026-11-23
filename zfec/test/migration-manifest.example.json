@@ -1,0 +1,84 @@
+{
+  "versions": [
+    {
+      "name": "accounts-2026-11-01",
+      "original_length": 4194304,
+      "k": 3,
+      "m": 5
+    }
+  ],
+  "disks": [
+    {
+      "name": "old-1",
+      "available_bytes": 0,
+      "retired": true
+    },
+    {
+      "name": "old-2",
+      "available_bytes": 0,
+      "retired": true
+    },
+    {
+      "name": "keep-1",
+      "available_bytes": 5242880,
+      "retired": false
+    },
+    {
+      "name": "keep-2",
+      "available_bytes": 5242880,
+      "retired": false
+    }
+  ],
+  "shares": [
+    {
+      "version": "accounts-2026-11-01",
+      "number": 0,
+      "disk": "old-1",
+      "size": 1048580
+    },
+    {
+      "version": "accounts-2026-11-01",
+      "number": 1,
+      "disk": "old-2",
+      "size": 1048580
+    },
+    {
+      "version": "accounts-2026-11-01",
+      "number": 2,
+      "disk": "keep-1",
+      "size": 1048580
+    },
+    {
+      "version": "accounts-2026-11-01",
+      "number": 3,
+      "disk": "keep-2",
+      "size": 1048580
+    },
+    {
+      "version": "accounts-2026-11-01",
+      "number": 4,
+      "disk": "old-1",
+      "size": 1048580
+    }
+  ],
+  "failures": [
+    {
+      "name": "old-1 dies",
+      "lost_disks": [
+        "old-1"
+      ]
+    },
+    {
+      "name": "old-2 dies",
+      "lost_disks": [
+        "old-2"
+      ]
+    },
+    {
+      "name": "keep-1 dies",
+      "lost_disks": [
+        "keep-1"
+      ]
+    }
+  ]
+}
