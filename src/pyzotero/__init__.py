@@ -17,6 +17,16 @@ except importlib.metadata.PackageNotFoundError:
 from pyzotero._bibtex import BibTeX
 from pyzotero._client import Zotero
 from pyzotero._search import SavedSearch
+from pyzotero._tagclean import (
+    TagCleanupDispatch,
+    TagCleanupJournal,
+    TagCleanupRecord,
+    TagCleanupReport,
+    TagCleanupRequest,
+    TagCleanupResult,
+    TagConflict,
+    TagEvent,
+)
 from pyzotero._upload import Zupload
 from pyzotero._utils import chunks
 from pyzotero.errors import (
@@ -67,6 +77,15 @@ __all__ = [
     "SavedSearch",
     "ServerIDMismatchError",
     "ServerIDRequiredError",
+    # Tag cleanup
+    "TagCleanupDispatch",
+    "TagCleanupJournal",
+    "TagCleanupRecord",
+    "TagCleanupReport",
+    "TagCleanupRequest",
+    "TagCleanupResult",
+    "TagConflict",
+    "TagEvent",
     "TooManyItemsError",
     "TooManyRequestsError",
     "TooManyRetriesError",

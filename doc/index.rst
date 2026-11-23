@@ -1708,6 +1708,54 @@ Example:
         # updated now contains a representation of the updated server item
 
 
+Batch tag cleanup
+~~~~~~~~~~~~~~~~~
+
+    .. py:method:: Zotero.cleanup_tags(requests[, journal=None, events=None, last_modified=None])
+
+        Apply a batch of "remove these tags, add these tags" intents idempotently. Use this instead of hand-rolling :py:meth:`update_items()` when a batch may be retried after a lost acknowledgement, or when other people may edit the same items between your read and your write.
+
+        :param list requests: one dict per item, in input order: ``{"key": "<itemKey>", "remove": ["review"], "add": ["checked"]}``. Either tag list may be omitted. :class:`pyzotero.TagCleanupRequest` objects are accepted too.
+        :param journal: an optional :class:`pyzotero.TagCleanupJournal` shared between calls or client instances. It records dispatched and completed cleanups per item so a retry cannot write an already-completed intent twice. Omit it to use an instance-local journal.
+        :param dict events: optional per-item lists of :class:`pyzotero.TagEvent` objects taken from the server's edit history, e.g. ``{"KEY": [TagEvent("review", "removed"), TagEvent("review", "added")]}``. They are stored in the journal and used to spot tags that another editor re-created.
+        :param int last_modified: optional library version, sent as ``If-Unmodified-Since-Version`` on the write, exactly as for :py:meth:`update_items()`.
+        :rtype: :class:`pyzotero.TagCleanupReport`
+
+        Each input position produces one :class:`pyzotero.TagCleanupResult`, whose ``status`` is one of:
+
+        * ``applied``: present tags were removed and additions appended in this call;
+        * ``backfill_applied``: nothing remained to remove (e.g. only the addition was missing), so just the additions were written. Other fields such as ``abstractNote`` are never sent and are preserved;
+        * ``already_applied``: the journal proves the intent completed, or the item already carries exactly the requested tags. No write is made;
+        * ``conflict``: a tag slated for removal is present again and the journal or supplied events show it was removed and then re-created. The re-created tag is preserved, nothing is written for the item, and ``conflicts``/``events`` on the result describe the clash between the request and the newer history;
+        * ``needs_review``: a tag slated for removal is present again after an unconfirmed dispatch, with no journal record or event proving whether the original removal applied or the tag was rebuilt. No write is made; inspect the item and its history manually.
+
+        Reads (``itemKey`` batches of 50) and writes are chunked automatically. Classification depends only on intent, current tags and the journal, so re-opening the client or moving an item across a chunk boundary never changes its result. Look results up by input position via the report's ``results``, or via the ``applied``, ``backfills``, ``conflicts`` and ``needs_review`` views.
+
+    Example:
+
+    .. code-block:: python
+
+        from pyzotero import TagCleanupJournal, TagEvent
+
+        journal = TagCleanupJournal()  # persist this object to survive a restart
+        report = zot.cleanup_tags(
+            [
+                {"key": "T1", "remove": ["review"], "add": ["checked"]},
+                {"key": "T2", "remove": ["review"], "add": ["checked"]},
+                {"key": "T3", "remove": ["review"], "add": ["checked"]},
+            ],
+            journal=journal,
+            events={
+                # T2's review was deleted and then re-created by someone else
+                "T2": [TagEvent("review", "removed"), TagEvent("review", "added")],
+            },
+        )
+        for result in report.results:  # input order and positions are preserved
+            print(result.index, result.key, result.status)
+        # Retrying the same call with the same journal writes nothing for T1:
+        report = zot.cleanup_tags(the_same_requests, journal=journal)
+
+
 Collection Methods
 ------------------
 

@@ -35,6 +35,15 @@ import pyzotero as pz
 from . import errors as ze
 from ._bibtex import BibTeX
 from ._decorators import backoff_check, cleanwrap, retrieve, ss_wrap, tcache
+from ._tagclean import (
+    TagCleanupJournal,
+    TagCleanupReport,
+    TagCleanupRequest,
+    TagCleanupResult,
+    TagEvent,
+    make_record,
+    plan_tag_cleanup,
+)
 from ._upload import Zupload
 from ._utils import (
     DEFAULT_ITEM_LIMIT,
@@ -180,6 +189,10 @@ class Zotero:
         self.savedsearch: Any = None
         # backoff handling: timestamp when backoff expires (0.0 = no backoff)
         self.backoff_until: float = 0.0
+        # Completed tag cleanups and ingested server-side tag events, by item
+        # key. Pass another instance into cleanup_tags() to share the history
+        # across client restarts.
+        self.tag_cleanup_journal = TagCleanupJournal()
 
     def __del__(self) -> None:
         """Remove client before cleanup."""
@@ -1506,6 +1519,185 @@ class Zotero:
         necessary only when the dicts do not have a ``version`` of their own.
         """
         return self._batch_update(payload, "items", last_modified)
+
+    def cleanup_tags(
+        self,
+        requests: list[dict[str, Any] | TagCleanupRequest],
+        *,
+        journal: TagCleanupJournal | None = None,
+        events: dict[str, list[TagEvent]] | None = None,
+        last_modified: int | None = None,
+    ) -> TagCleanupReport:
+        """Apply batch tag-removal/tag-addition intents idempotently.
+
+        Each request names an item, the tags to remove and the tags to add,
+        e.g. ``{"key": "ABC123", "remove": ["review"], "add": ["checked"]}``.
+        The current state of every item is fetched first, and each request is
+        then classified against that state and the per-item journal:
+
+        * a request whose full intent is already recorded, or whose item
+          already carries exactly the requested tags, is not written again;
+        * a removed tag that is present again is a conflict when the journal
+          or the ingested server history shows a remove followed by a
+          re-creation. The re-created tag is preserved and nothing is written
+          for the item;
+        * a removed tag that is present again with no explaining history is
+          returned for manual review rather than guessed at;
+        * otherwise the surviving tags are kept, requested removals dropped,
+          and missing additions appended. No other field is sent, so edits
+          made by others (e.g. an abstract change) are preserved.
+
+        Results are returned in input order; use the report's ``applied``,
+        ``backfills``, ``conflicts`` and ``needs_review`` lists, or
+        ``by_status()``, to look items up by their original position. Pass a
+        shared :class:`TagCleanupJournal` to keep the classification stable
+        across client restarts, and pass per-item server :class:`TagEvent`
+        lists to account for edits made by other clients. Reads and writes
+        are chunked at the API's 50-object limit, which never changes the
+        per-item decision.
+        """
+        if not requests:
+            return TagCleanupReport(results=[])
+        effective_journal = journal if journal is not None else self.tag_cleanup_journal
+        if events:
+            for key, item_events in events.items():
+                effective_journal.record_events(key, item_events)
+
+        planned: list[TagCleanupRequest] = [
+            self._coerce_cleanup_request(entry, pos)
+            for pos, entry in enumerate(requests)
+        ]
+        current = self._fetch_items([request.key for request in planned])
+        results = self._plan_cleanup_results(planned, current, effective_journal)
+        writable = [result for result in results if result.writable]
+        if writable:
+            self._apply_cleanup_writes(
+                planned, writable, current, effective_journal, last_modified
+            )
+        else:
+            self._settle_satisfied_dispatches(planned, results, effective_journal)
+        return TagCleanupReport(results=results)
+
+    def _plan_cleanup_results(
+        self,
+        planned: list[TagCleanupRequest],
+        current: dict[str, dict[str, Any]],
+        effective_journal: TagCleanupJournal,
+    ) -> list[TagCleanupResult]:
+        """Classify every request against the fetched items and the journal."""
+        results: list[TagCleanupResult] = []
+        for pos, request in enumerate(planned):
+            item = current.get(request.key)
+            if item is None:
+                results.append(
+                    TagCleanupResult(
+                        index=pos,
+                        key=request.key,
+                        status="needs_review",
+                        remove=request.remove,
+                        add=request.add,
+                        current_tags=[],
+                        reasons=[
+                            "The item could not be retrieved, so its current "
+                            "tags cannot be compared with the request."
+                        ],
+                    )
+                )
+                continue
+            data = item.get("data", item)
+            tag_names = [tag["tag"] for tag in data.get("tags", [])]
+            results.append(
+                plan_tag_cleanup(
+                    request,
+                    tag_names,
+                    effective_journal.records_for(request.key),
+                    effective_journal.events_for(request.key),
+                    dispatches=effective_journal.dispatches_for(request.key),
+                    index=pos,
+                )
+            )
+        return results
+
+    def _apply_cleanup_writes(
+        self,
+        planned: list[TagCleanupRequest],
+        writable: list[TagCleanupResult],
+        current: dict[str, dict[str, Any]],
+        effective_journal: TagCleanupJournal,
+        last_modified: int | None,
+    ) -> None:
+        """Dispatch the writable results and record confirmed cleanups."""
+        payload: list[dict[str, Any]] = []
+        for result in writable:
+            # Record the dispatch before the request: if the acknowledgement
+            # is lost, the retry still has evidence that an unconfirmed write
+            # went out.
+            effective_journal.mark_dispatched(planned[result.index])
+            item = copy.deepcopy(current[result.key])
+            data = item.get("data", item)
+            # Keep surviving tag dicts intact (e.g. automatic-tag type);
+            # only the appended additions are bare manual tag dicts.
+            original_by_name: dict[str, dict[str, Any]] = {}
+            for tag in data.get("tags", []):
+                original_by_name.setdefault(tag["tag"], tag)
+            data["tags"] = [
+                original_by_name.get(name, {"tag": name})
+                for name in result.target_tags or []
+            ]
+            payload.append(data)
+        self.update_items(payload, last_modified)
+        for result in writable:
+            effective_journal.append(
+                make_record(planned[result.index], result.target_tags or [])
+            )
+
+    @staticmethod
+    def _settle_satisfied_dispatches(
+        planned: list[TagCleanupRequest],
+        results: list[TagCleanupResult],
+        effective_journal: TagCleanupJournal,
+    ) -> None:
+        """Record completion for satisfied intents whose dispatch is unconfirmed."""
+        for result in results:
+            if result.status != "already_applied":
+                continue
+            if not effective_journal.dispatches_for(result.key):
+                continue
+            # The live state already satisfies a request whose dispatch was
+            # never confirmed. The earlier write must have landed, so settle
+            # the dispatch with a record instead of leaving it dangling.
+            effective_journal.append(
+                make_record(planned[result.index], result.current_tags)
+            )
+
+    @staticmethod
+    def _coerce_cleanup_request(
+        entry: dict[str, Any] | TagCleanupRequest, pos: int
+    ) -> TagCleanupRequest:
+        """Validate one cleanup entry and normalise it to a request object."""
+        if isinstance(entry, TagCleanupRequest):
+            return entry
+        key = entry.get("key")
+        if not key:
+            msg = f"Cleanup request at position {pos} must include an item 'key'"
+            raise ze.ParamNotPassedError(msg)
+        remove = tuple(entry.get("remove") or ())
+        add = tuple(entry.get("add") or ())
+        return TagCleanupRequest(
+            key=key,
+            remove=tuple(dict.fromkeys(remove)),
+            add=tuple(dict.fromkeys(add)),
+            version=entry.get("version"),
+        )
+
+    def _fetch_items(self, keys: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch the named items, chunking at the API's itemKey limit."""
+        fetched: dict[str, dict[str, Any]] = {}
+        for chunk in chunks(keys, DEFAULT_NUM_ITEMS):
+            for item in self.items(itemKey=",".join(chunk)):
+                data = item.get("data", item)
+                fetched[data["key"]] = item
+        return fetched
 
     def update_collections(
         self, payload: list[dict[str, Any]], last_modified: int | None = None
