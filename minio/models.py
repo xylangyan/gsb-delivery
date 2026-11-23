@@ -38,6 +38,7 @@ from .compat import HTTPHeaderDict, HTTPResponse, JSONDecodeError
 from .credentials import Credentials
 from .error import MinioException
 from .helpers import check_bucket_name
+from .notification import NotificationReader
 from .signer import get_credential_string, post_presign_v4
 from .time import (from_http_header, from_iso8601utc, to_amz_date,
                    to_http_header, to_iso8601utc)
@@ -3201,7 +3202,12 @@ class DeleteObjectsResponse(GenericResponse):
 
 
 class EventIterable:
-    """Context manager friendly event iterable."""
+    """Context manager friendly event iterable.
+
+    Iterating yields raw ``{"Records": [...]}`` envelopes.  Use
+    :meth:`reader` when the events must be de-duplicated and acknowledged by
+    event identity across reconnects.
+    """
 
     def __init__(self, func):
         self._func = func
@@ -3213,6 +3219,19 @@ class EventIterable:
             self._response.close()
             self._response.release_conn()
             self._response = None
+
+    def reader(
+            self, *, evidence=None,
+    ) -> NotificationReader:
+        """Return a reader which yields each real event once.
+
+        Args:
+            evidence (Optional[EventEvidenceProvider], default=None):
+                Service evidence source used to reconcile unacknowledged
+                events.  When omitted the reader only uses the events it has
+                observed.
+        """
+        return NotificationReader(self, evidence=evidence)
 
     def __iter__(self):
         return self

@@ -578,6 +578,11 @@ __Return Value__
 |:-------------------------------------------------------|
 | Iterator _minio.models.EventIterable_ of event records |
 
+Use `EventIterable.reader()` to consume the same stream through
+`minio.NotificationReader`, which de-duplicates by event identity and
+acknowledges each real event separately. See
+[NotificationReader](#notificationreader) below.
+
 ```py
 with client.listen_bucket_notification(
     bucket_name="my-bucket",
@@ -587,6 +592,51 @@ with client.listen_bucket_notification(
     for event in events:
         print(event)
 ```
+
+### NotificationReader
+
+`listen_bucket_notification` yields raw `{"Records": [...]}` envelopes. Those
+envelopes are a transport unit, not an event unit: a reconnect may split the
+same events into different envelopes, replay them in another order, or omit
+history the queue no longer retains. Use `EventIterable.reader()` when each
+real event must be acknowledged separately.
+
+```py
+with client.listen_bucket_notification(
+    bucket_name="my-bucket",
+    events=["s3:ObjectCreated:*", "s3:ObjectRemoved:*"],
+) as events:
+    reader = events.reader()
+    for event in reader:
+        # Apply the event, then acknowledge this identity, not the envelope.
+        print(event.identity)
+        handle(event.to_dict())
+        reader.ack(event.identity)
+```
+
+The reader keeps one ledger entry per event identity. A service event id is
+preferred; otherwise the key is bucket plus object plus event name plus
+generation (or version id, sequencer, event time). Object name is always part
+of the key, so two objects which happen to share a sequencer value stay
+independent. Duplicate deliveries return no second event and never reset an
+acknowledgement.
+
+Acknowledging an existing event is idempotent. A late acknowledgement of an
+older generation is retained but never moves the object's current generation
+backwards. Pending events are scoped to their own object; an unresolved
+deletion cannot hold back an event with independent evidence.
+
+`NotificationReader(evidence=...)` accepts an `EventEvidenceProvider` with
+`event_evidence()` (lookup by bucket and event id) and
+`object_generations()` (per-object generation order including tombstones).
+`reader.reconcile()` uses event id evidence first, then the object's own
+generation order, and returns confirmed, superseded and unconfirmed identities.
+
+When replay history is gone, call `reader.note_replay_gap(...)`. The returned
+`ReplayGapReport` explains which objects need a rescan, which need their
+generation order, and which deletion events cannot be proven by final state
+alone. A rescan can confirm a current generation or current absence; it cannot
+confirm that an intermediate deletion was delivered.
 
 <a name="get_bucket_encryption"></a>
 

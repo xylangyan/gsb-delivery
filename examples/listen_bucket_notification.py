@@ -27,5 +27,8 @@ with client.listen_bucket_notification(
     prefix="my-prefix/",
     events=["s3:ObjectCreated:*", "s3:ObjectRemoved:*"],
 ) as events:
-    for event in events:
-        print(event)
+    reader = events.reader()
+    for event in reader:
+        print(event.to_dict())
+        # Acknowledge the real event identity, not the response envelope.
+        reader.ack(event.identity)

@@ -38,3 +38,6 @@ __copyright__ = "Copyright [2014] - [2025] MinIO, Inc."
 from .error import InvalidResponseError, S3Error, ServerError
 from .minio import Minio
 from .minioadmin import MinioAdmin
+from .notification import (EventEvidence, EventEvidenceProvider, EventIdentity,
+                           EventState, NotificationEvent, NotificationReader,
+                           ObjectGeneration, ReconcileReport, ReplayGapReport)
