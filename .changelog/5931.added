@@ -1,0 +1,5 @@
+`opentelemetry-sdk`: add sliding-window merge of archived exponential
+histogram data points, recomputing the scale, buckets and zero count a
+full replay of the window's measurements would produce, with confirmable
+counts and separating example measurement sets when the archived
+summaries do not determine a unique result
