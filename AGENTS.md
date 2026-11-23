@@ -172,6 +172,7 @@ Read the relevant page before changing that area.
 - `docs/internal/release.md` - how a release is driven and verified, the designs that were tried and rejected, why `RELEASE.md` states only the procedure, and the two known gaps.
 - `docs/internal/docs-site.md` - runbooks for the published site that are not part of cutting a release: standing it up, the ReadTheDocs redirects, rebuilding `gh-pages`, and pruning pre-release versions.
 - `docs/internal/thread-safe-connection.md` - how `pika.Connection` dispatches callbacks, the back-pressure that bounds it, the broker measurements behind the publisher-confirm contract, and what a close guarantees: the cancel-drain-close order, why every wait is bounded by liveness rather than a clock, and where this diverges from the Java client.
+- `docs/internal/publish-tracker.md` - how per-publication confirm and return tracking correlates tag-less `Basic.Return` frames by a stamped message id, why a reopened channel needs a new tracker, and what state a disconnect can hand back.
 
 ## Code style
 
