@@ -89,3 +89,80 @@ can also be used to index :class:`datasketch.WeightedMinHash`.
     result = lsh.query(m1)
     print("Approximate neighbours with weighted Jaccard similarity > 0.1", result)
 
+Incremental corrections
+-----------------------
+
+When term counts arrive as positive and negative corrections over a fixed
+vocabulary, :class:`datasketch.IncrementalWeightedMinHashIndex` maintains the
+same weighted MinHash signatures incrementally.  After every batch, each
+document's complete signature is exactly what
+:meth:`WeightedMinHashGenerator.minhash` would return on the aggregated
+frequency vector, using the same vocabulary indices, ``sample_size`` and
+``seed``.  Only the documents and terms mentioned by a batch are touched; all
+other term scores are kept from initialization.
+
+.. code:: python
+
+    from datasketch import Correction, IncrementalWeightedMinHashIndex, Retraction
+
+    index = IncrementalWeightedMinHashIndex(
+        ["apple", "banana", "cherry", "date"], sample_size=128, seed=7
+    )
+    index.initialize({
+        "doc-1": {"apple": 4, "banana": 2},
+        "doc-2": {"cherry": 5},
+    })
+
+    # Two shards each subtract one apple; replaying both is deterministic.
+    index.apply_batch("batch-42", [Correction("c-1", "doc-1", "apple", -1)])
+    index.apply_batch("batch-43", [Correction("c-2", "doc-1", "apple", -1)])
+
+Batches are atomic and idempotent.  Re-submitting the same ``batch_id`` with
+the same payload returns the original :class:`BatchResult` and never applies
+the deltas twice, so a client may safely retry after a failure.  A batch that
+would make any aggregated frequency negative is rejected as a whole with
+:class:`NegativeFrequencyError`, leaving the published version unchanged.
+
+``apply_batch`` also accepts ``retractions``.  A retraction is terminal: if it
+arrives before the correction it targets, the correction will not contribute
+when it arrives later.  Corrections are replayed in business order
+(``sequence``, then ``shard``, then ``correction_id``); since deltas are
+additive, the visible signature is independent of arrival order.
+
+Each successful batch publishes an immutable
+:class:`datasketch.IndexSnapshot` with a new version number.  Readers holding
+an older snapshot keep querying exactly that version and never observe a newer
+signature.  Documents whose aggregated frequency becomes zero leave the
+published version.  Use :meth:`IncrementalWeightedMinHashIndex.find` to recall
+documents by complete signature.
+
+.. code:: python
+
+    old = index.snapshot()          # pin the current version
+    result = index.apply_batch("batch-44", [Correction("c-3", "doc-2", "cherry", -5)])
+    print(result.removed_docs)      # ('doc-2',)
+    print("doc-2" in old)           # still visible to the old reader
+    print(index.candidates(index.signature("doc-1")))
+
+.. autoclass:: datasketch.IncrementalWeightedMinHashIndex
+    :members:
+
+.. autoclass:: datasketch.IndexSnapshot
+    :members:
+
+.. autoclass:: datasketch.Correction
+    :members:
+
+.. autoclass:: datasketch.Retraction
+    :members:
+
+.. autoclass:: datasketch.BatchResult
+    :members:
+
+.. autoclass:: datasketch.NegativeFrequencyError
+
+.. autoclass:: datasketch.BatchIdConflictError
+
+.. autoclass:: datasketch.CorrectionConflictError
+
+

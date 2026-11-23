@@ -35,6 +35,24 @@ Weighted MinHash
     :members:
     :special-members:
 
+Incremental Weighted MinHash
+----------------------------
+
+.. autoclass:: datasketch.IncrementalWeightedMinHashIndex
+    :members:
+
+.. autoclass:: datasketch.IndexSnapshot
+    :members:
+
+.. autoclass:: datasketch.Correction
+    :members:
+
+.. autoclass:: datasketch.Retraction
+    :members:
+
+.. autoclass:: datasketch.BatchResult
+    :members:
+
 MinHash LSH
 -----------
 
