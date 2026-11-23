@@ -1,2 +1,3 @@
 from .tdigest import TDigest
-__version__ = "0.5.2.1"
+from . import certified
+__version__ = "0.6.0.1"

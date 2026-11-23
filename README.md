@@ -89,6 +89,30 @@ Then pass the encoder function as the default parameter.
 json.dumps(digest, default=encoder)
 ```
 
+### Certified, tree-independent summaries
+
+For hierarchical aggregation where the same windows may be grouped in
+different orders (device-first vs. site-first), retried and temporarily
+back-filled, use `tdigest.certified`. It provides a deterministic integer
+histogram summary with a rank error provable against every original
+observation, byte-identical canonical output regardless of the aggregation
+tree, and explicit gap sources instead of silent downgrades.
+
+```
+from tdigest.certified import CertifiedDigest, validate_two_trees
+
+window = CertifiedDigest.from_window(
+    "win-1", version=1, values=[...], epsilon=0.05, record_ids=[...])
+root = window.merge(other_window)
+root.certificate()                 # raises if any source cannot be proven
+root.rank_interval(42)             # proven 1-based rank interval
+result = validate_two_trees(windows)   # identical bytes + proofs on both trees
+```
+
+See [`tdigest/certified/README.md`](tdigest/certified/README.md) for the
+full contract, including same-precision alternative summaries, retractable
+window replacement and legacy `TDigest.to_dict` windows.
+
 
 ### API 
 

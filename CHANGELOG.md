@@ -1,5 +1,15 @@
 ## Changelog
 
+### Unreleased
+ - Add `tdigest.certified`: a deterministic, mergeable integer quantile
+   summary with a provable relative rank error against every original
+   observation.
+ - Canonical byte serialization is independent of the aggregation tree
+   shape, message retries and intermediate pruning.
+ - Add error certificates valid across upward merges, same-precision
+   alternative summaries, retractable window replacement, and named gap
+   sources for legacy `TDigest.to_dict` windows and ambiguous overwrites.
+
 ### 0.5.2.1
  - Fixes pickling error when using PySpark.
 
