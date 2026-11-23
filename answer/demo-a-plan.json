@@ -1,0 +1,38 @@
+{
+  "allowed": [
+    [
+      0,
+      59
+    ],
+    [
+      123,
+      182
+    ],
+    [
+      62,
+      121
+    ],
+    [
+      182,
+      241
+    ]
+  ],
+  "edits": [
+    {
+      "entry": "a.txt",
+      "name": "a-xx.txt",
+      "encoding": "keep",
+      "fund_local": [
+        {
+          "id": "feca"
+        }
+      ],
+      "fund_central": [
+        {
+          "id": "feca"
+        }
+      ],
+      "expect_offset": 0
+    }
+  ]
+}
