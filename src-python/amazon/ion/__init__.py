@@ -24,6 +24,7 @@ __all__ = [
     'simpleion',
     'symbols',
     'util',
+    'volumes',
     'writer',
     'writer_binary',
     'writer_binary_raw',

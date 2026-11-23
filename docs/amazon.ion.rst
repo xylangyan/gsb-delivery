@@ -92,6 +92,14 @@ amazon.ion.util module
     :undoc-members:
     :show-inheritance:
 
+amazon.ion.volumes module
+-------------------------
+
+.. automodule:: amazon.ion.volumes
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 amazon.ion.writer module
 ------------------------
 

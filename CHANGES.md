@@ -1,3 +1,7 @@
+### Unreleased
+* Add `amazon.ion.volumes` for splitting a binary Ion stream into independently readable volumes. Values keep their original TLV bytes and symbol meanings; the splitter rebuilds the minimum IVM/local-symbol-table preamble per volume, honors import provenance and carryable shared tables, and supports opening-byte budgets and value groups.
+* Add `audit_volumes` to compare source and volume raw bytes and managed field/annotation/value events, report group placement, and verify minimum opening overhead.
+
 ### 0.16.0 (2026-11-13)
 * Drop support for Python 3.9; add Python 3.14 (#463)
 * Fix a double decref of annotations in the C extension that could crash on Python 3.14 (#463)
