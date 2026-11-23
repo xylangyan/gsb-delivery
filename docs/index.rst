@@ -223,6 +223,7 @@ Delete items from the database:
    operations
    sql/index
    logging_handler
+   staging
    examples/index
    references/index
    versions
