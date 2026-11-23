@@ -67,6 +67,17 @@ opt_sort = {
              "[default: %(default)s]")
 }
 
+opt_list_manifest = {
+    'name': 'manifest',
+    'short': '',
+    'long': 'manifest',
+    'type': str,
+    'default': None,
+    'help': ("show tasks/results for a manifest version. Tasks whose saved "
+             "result can not be proven to belong to the current graph are "
+             "listed separately. [default: none]")
+}
+
 
 class List(DoitCmdBase):
     doc_purpose = "list tasks from dodo file"
@@ -75,7 +86,7 @@ class List(DoitCmdBase):
 
     cmd_options = (opt_listall, opt_list_quiet, opt_list_status,
                    opt_list_private, opt_list_dependencies, opt_template,
-                   opt_sort)
+                   opt_sort, opt_list_manifest)
 
 
     STATUS_MAP = {'ignore': 'I', 'up-to-date': 'U', 'run': 'R', 'error': 'E'}
@@ -127,11 +138,22 @@ class List(DoitCmdBase):
 
 
     def _execute(self, subtasks=False, quiet=True, status=False, private=False,
-                 list_deps=False, template=None, sort='name', pos_args=None):
+                 list_deps=False, template=None, sort='name', pos_args=None,
+                 manifest=None):
         """List task generators"""
         filter_tasks = pos_args
         # dict of all tasks
         tasks = dict([(t.name, t) for t in self.task_list])
+
+        if manifest:
+            from . import manifest as manifest_lib
+            selected, _reserved = manifest_lib.select_tasks(
+                self.task_list, manifest)
+            tasks = dict([(t.name, t) for t in selected])
+            self.dep_manager.manifest_mode = True
+            self.dep_manager.manifest_id = manifest
+            for task in tasks.values():
+                self.dep_manager.register_task(task)
 
         if filter_tasks:
             # list only tasks passed on command line
@@ -165,4 +187,28 @@ class List(DoitCmdBase):
         # print list of tasks
         for task in print_list:
             self._print_task(template, task, status, list_deps, tasks)
+
+        if manifest:
+            self._print_unconfirmed(print_list)
         return 0
+
+    def _print_unconfirmed(self, print_list):
+        """list tasks whose saved result can not be proven for this graph
+
+        Legacy data only carries a name and value, and a changed graph makes
+        the old receipt unusable.  They are listed apart so they are never
+        mistaken for a successful update.
+        """
+        pending = []
+        for task in print_list:
+            try:
+                state, reason = self.dep_manager.manifest_check(task)
+            except Exception:  # pragma: no cover - defensive
+                continue
+            if state == 'unconfirmed':
+                pending.append((task, reason))
+        if not pending:
+            return
+        self.outstream.write('\nneeds confirmation:\n')
+        for task, reason in sorted(pending, key=lambda item: item[0].name):
+            self.outstream.write("  {} ({})\n".format(task.name, reason))

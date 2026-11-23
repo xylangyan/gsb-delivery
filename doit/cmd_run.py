@@ -141,6 +141,18 @@ opt_report_failure_verbosity = {
 }
 
 
+opt_manifest = {
+    'name': 'manifest',
+    'short': '',
+    'long': 'manifest',
+    'type': str,
+    'default': None,
+    'help': ("select a manifest version and only run tasks effective for it. "
+             "Saved results are tracked per manifest version so another "
+             "version can not be silently re-used. [default: none]")
+}
+
+
 class Run(DoitCmdBase):
     doc_purpose = "run tasks"
     doc_usage = "[TASK/TARGET...]"
@@ -150,7 +162,8 @@ class Run(DoitCmdBase):
     cmd_options = (opt_always, opt_continue, opt_verbosity,
                    opt_reporter, opt_outfile, opt_num_process,
                    opt_parallel_type, opt_pdb, opt_single,
-                   opt_auto_delayed_regex, opt_report_failure_verbosity)
+                   opt_auto_delayed_regex, opt_report_failure_verbosity,
+                   opt_manifest)
 
 
     def __init__(self, **kwargs):
@@ -190,7 +203,7 @@ class Run(DoitCmdBase):
                  verbosity=None, always=False, continue_=False,
                  reporter='console', num_process=0, par_type='process',
                  single=False, auto_delayed_regex=False, force_verbosity=False,
-                 failure_verbosity=0, pdb=False):
+                 failure_verbosity=0, pdb=False, manifest=None):
         """
         @param reporter:
                (str) one of provided reporters or ...
@@ -201,11 +214,20 @@ class Run(DoitCmdBase):
         # configure PythonAction
         PythonAction.pm_pdb = pdb
 
+        # enable manifest-scoped results before tasks are loaded/checked
+        self.dep_manager.manifest_mode = manifest is not None
+        self.dep_manager.manifest_id = manifest
+
         # get tasks to be executed
         # self.control is saved on instance to be used by 'auto' command
         self.control = TaskControl(self.task_list,
-                                   auto_delayed_regex=auto_delayed_regex)
+                                   auto_delayed_regex=auto_delayed_regex,
+                                   manifest_id=manifest)
         self.control.process(self.sel_tasks)
+
+        if manifest:
+            for task in self.control.tasks.values():
+                self.dep_manager.register_task(task)
 
         if single:
             for task_name in self.control.selected_tasks:

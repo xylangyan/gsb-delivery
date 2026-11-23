@@ -462,3 +462,23 @@ considered.
 By specifying `--auto-delayed-regex`, every delayed task loader having no
 target regex specified is assumed to have `.*` specified, a regex which
 matches any target.
+
+
+.. _manifest-option:
+
+manifest version
+----------------
+
+The option ``--manifest`` selects which version of a manifest to run.  Only
+tasks whose ``manifest`` attribute matches the selected version are used to
+build the graph; untagged tasks are always included.
+
+.. code-block:: console
+
+    $ doit run --manifest R-v2
+
+Saved results are scoped to the selected version and carry a receipt proving
+which task graph produced them.  See :ref:`manifest-versions` for details.
+
+This option is opt-in: without it, manifest tags are ignored and task results
+are stored exactly as before.

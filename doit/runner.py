@@ -13,7 +13,9 @@ except ImportError:
 
 from .exceptions import InvalidTask, BaseFail
 from .exceptions import TaskFailed, SetupError, DependencyError, UnmetDependency
+from .exceptions import UnconfirmedDependency
 from .task import Stream, DelayedLoaded
+from . import manifest
 
 # Python 3.14 made forkserver the default on Linux. It pickles the runner with
 # every task, so a dodo.py with a lambda or nested function fails with -n.
@@ -61,6 +63,7 @@ class Runner():
         self.teardown_list = []  # list of tasks to be teardown
         self.final_result = SUCCESS  # until something fails
         self._stop_running = False
+        self._tasks_dict = {}
 
 
     def _handle_task_error(self, node, base_fail):
@@ -88,10 +91,16 @@ class Runner():
 
         def get_value(task_id, key_name):
             """get single value or dict from task's saved values"""
+            if self.dep_manager.manifest_mode:
+                status, reason = self.dep_manager.manifest_check(
+                    tasks_dict[task_id])
+                if status != 'confirmed':
+                    raise UnconfirmedDependency(
+                        "task '{}' value required by '{}' is {} ({})".format(
+                            task_id, task.name, status, reason))
             if key_name is None:
                 return self.dep_manager.get_values(task_id)
             return self.dep_manager.get_value(task_id, key_name)
-
         # selected just need to get values from other tasks
         for arg, value in task.getargs.items():
             task_id, key_name = value
@@ -190,6 +199,19 @@ class Runner():
         return task.execute(self.stream)
 
 
+    def _record_sources(self, task):
+        """record references to the receipts this task actually consumed"""
+        sources = {}
+        tasks = self._tasks_dict
+        for name in manifest.task_source_names(task):
+            source_task = tasks.get(name)
+            ref = None
+            if source_task is not None:
+                ref = self.dep_manager.receipt_ref(source_task)
+            if ref is not None:
+                sources[name] = ref
+        task.manifest_sources = sources
+
     def process_task_result(self, node, base_fail):
         """handles result"""
         task = node.task
@@ -197,6 +219,8 @@ class Runner():
         if base_fail is None:
             task.save_extra_values()
             try:
+                if self.dep_manager.manifest_mode:
+                    self._record_sources(task)
                 self.dep_manager.save_success(task)
             except FileNotFoundError as exception:
                 msg = (f"ERROR: Task '{task.name}' saving success: "
@@ -261,6 +285,7 @@ class Runner():
         """entry point to run tasks
         @ivar task_dispatcher (TaskDispatcher)
         """
+        self._tasks_dict = getattr(task_dispatcher, 'tasks', {})
         try:
             if hasattr(self.reporter, 'initialize'):
                 self.reporter.initialize(task_dispatcher.tasks,

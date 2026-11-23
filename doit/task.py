@@ -130,6 +130,9 @@ class Task:
     @ivar result: (str) last action "result". used to check task-result-dep
     @ivar values: (dict) values saved by task that might be used by other tasks
     @ivar getargs: (dict) values from other tasks
+    @ivar manifest: (str or list - str) manifest version this task belongs to.
+                    When set, saved results are scoped so a different version
+                    of the same task name can not silently re-use them.
     @ivar doc: (string) task documentation
     @ivar meta: (dict) extra info from user/plugin not directly used by doit
 
@@ -162,6 +165,7 @@ class Task:
                   'verbosity': ((), (None, 0, 1, 2,)),
                   'io': ((dict,), (None,)),
                   'getargs': ((dict,), ()),
+                  'manifest': ((str, list, tuple), (None,)),
                   'title': ((Callable,), (None,)),
                   'watch': ((list, tuple), ()),
                   'meta': ((dict,), (None,))
@@ -174,7 +178,7 @@ class Task:
                  subtask_of=None, has_subtask=False,
                  doc=None, params=(), pos_arg=None,
                  verbosity=None, io=None, title=None, getargs=None,
-                 watch=(), meta=None, loader=None):
+                 watch=(), meta=None, manifest=None, loader=None):
         """sanity checks and initialization
 
         @param params: (list of dict for parameters) see cmdparse.CmdOption
@@ -200,6 +204,8 @@ class Task:
         self.check_attr(name, 'title', title, self.valid_attr['title'])
         self.check_attr(name, 'watch', watch, self.valid_attr['watch'])
         self.check_attr(name, 'meta', meta, self.valid_attr['meta'])
+        self.check_attr(name, 'manifest', manifest,
+                        self.valid_attr['manifest'])
 
         if '=' in name:
             msg = "Task '{}': name must not use the char '=' (equal sign)."
@@ -257,6 +263,19 @@ class Task:
         self.doc = self._init_doc(doc)
         self.watch = watch
         self.meta = meta
+        self.manifest = manifest
+        # frozen declaration used to identify the task's graph.  captured
+        # before any execution so calc_dep additions never change identity.
+        self.manifest_declared = {
+            'file_dep': set(self.file_dep),
+            'task_dep': list(self.task_dep),
+            'calc_dep': set(self.calc_dep),
+            'setup': list(self.setup_tasks),
+        }
+        # filled in by the manifest-aware parts of doit
+        self.manifest_static_graph = None
+        self.manifest_provenance = None
+        self.manifest_sources = None
         # just indicate if actions were executed at all
         self.executed = False
 
@@ -637,6 +656,12 @@ class result_dep(UptodateCalculator):
 
     def _result_single(self):
         """get result from a single task"""
+        if getattr(self, '_dep_manager', None) is not None and \
+                self._dep_manager.manifest_mode:
+            dep_task = self.tasks_dict[self.dep_name]
+            status, reason = self._dep_manager.manifest_check(dep_task)
+            if status != 'confirmed':
+                return ('<unconfirmed>', status, reason)
         return self.get_val(self.dep_name, 'result:')
 
     def _result_group(self, dep_task):

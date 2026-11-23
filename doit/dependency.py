@@ -9,6 +9,8 @@ from collections import defaultdict
 import importlib
 import dbm
 
+from . import manifest
+
 # note: to check which DBM backend is being used:
 #   >>> doit dumpdb
 
@@ -499,7 +501,8 @@ class Dependency:
     :ivar bool _closed: DB was flushed to file
     """
     def __init__(self, db_class, backend_name, checker_cls=MD5Checker,
-                 codec_cls=JSONCodec, module_name=None):
+                 codec_cls=JSONCodec, module_name=None, manifest_mode=False,
+                 manifest_id=None):
         self._closed = False
         self.checker = checker_cls()
         self.db_class = db_class
@@ -510,6 +513,13 @@ class Dependency:
         self.remove_all = self.backend.remove_all
         self._in = self.backend.in_
         self.name = self.backend.name
+        # When manifest_mode is enabled saved results carry a receipt so a
+        # result is only re-used by an identical effective task graph.
+        self.manifest_mode = manifest_mode
+        self.manifest_id = manifest_id
+        self.task_registry = {}
+        # task name -> ['confirmed' | 'unconfirmed' | 'none', reason]
+        self.manifest_status = {}
 
     def close(self):
         """Write DB in file"""
@@ -525,6 +535,13 @@ class Dependency:
 
         :param str result_hash: explicitly set result_hash
         """
+        if self.manifest_mode:
+            self.register_task(task)
+            self._save_manifest_success(task, result_hash)
+            self.manifest_status[task.name] = ['confirmed', 'saved']
+            self._rehydrate(task, self._load_state(task))
+            return
+
         # save task values
         self._set(task.name, "_values_:", task.values)
 
@@ -547,11 +564,206 @@ class Dependency:
         # save list of file_deps
         self._set(task.name, 'deps:', tuple(task.file_dep))
 
+    def _label(self, task):
+        """manifest version label for a task's saved state"""
+        return manifest.version_label(task, self.manifest_id)
+
+    def register_task(self, task):
+        """remember a task so name-only reads can resolve its version"""
+        self.task_registry[task.name] = task
+
+    def _state_key(self, task):
+        return 'manifest:' + self._label(task)
+
+    def _states(self, task_name):
+        """saved states of a task name, by manifest label"""
+        return self._get(task_name, 'manifest_states:') or {}
+
+    def _load_state(self, task):
+        return self._get(task.name, self._state_key(task))
+
+    def _store_state(self, task, state):
+        key = self._state_key(task)
+        self._set(task.name, key, state)
+        states = dict(self._states(task.name))
+        states[self._label(task)] = state
+        self._set(task.name, 'manifest_states:', states)
+
+    def _forget_state(self, task):
+        """drop the current version and its plain view, persistently"""
+        key = self._state_key(task)
+        self._set(task.name, key, None)
+        states = dict(self._states(task.name))
+        states.pop(self._label(task), None)
+        self._set(task.name, 'manifest_states:', states)
+        self._set(task.name, '_values_:', None)
+        self._set(task.name, 'result:', None)
+        self._set(task.name, 'deps:', None)
+        self._set(task.name, 'checker:', None)
+        for dep in task.file_dep:
+            self._set(task.name, dep, None)
+
+    def _save_manifest_success(self, task, result_hash):
+        """store a version-scoped state before the plain keys are written"""
+        if result_hash is not None:
+            raw_result = result_hash
+        elif isinstance(task.result, dict):
+            raw_result = task.result
+        elif task.result:
+            raw_result = get_md5(task.result)
+        else:
+            raw_result = None
+        files = {}
+        for dep in task.file_dep:
+            # always compute a fresh state; a state saved under another
+            # manifest version must not be used as an optimization shortcut
+            files[dep] = self.checker.get_state(dep, None)
+        provenance = getattr(task, 'manifest_provenance', None)
+        if provenance is None:
+            provenance = manifest.graph_id(task)
+        state = {
+            'manifest': self._label(task),
+            'graph': manifest.graph_id(task),
+            'provenance': provenance,
+            'sources': dict(getattr(task, 'manifest_sources', None) or {}),
+            'values': task.values,
+            'result': raw_result,
+            'files': files,
+            'deps': sorted(task.file_dep),
+            'outputs': {target: manifest.path_digest(target)
+                        for target in task.targets},
+            'checker': self.checker.__class__.__name__,
+        }
+        self._store_state(task, state)
+
+    def _rehydrate(self, task, state):
+        """copy a version state into the plain DB keys used by the runner"""
+        self._set(task.name, '_values_:', state.get('values') or {})
+        self._set(task.name, 'result:', state.get('result'))
+        self._set(task.name, 'deps:', tuple(state.get('deps') or ()))
+        self._set(task.name, 'checker:',
+                  state.get('checker') or self.checker.__class__.__name__)
+        for dep, dep_state in (state.get('files') or {}).items():
+            self._set(task.name, dep, dep_state)
+
+    def _restore_plain_state(self, task):
+        """make the plain keys reflect this task's manifest version"""
+        if not (task.file_dep or task.targets):
+            return
+        state = self._load_state(task)
+        if isinstance(state, dict):
+            self._rehydrate(task, state)
+
+    def receipt(self, task):
+        """state saved for the task's current version (or None)"""
+        return self._load_state(task)
+
+    def receipt_ref(self, task):
+        state = self._load_state(task)
+        return manifest.receipt_ref(state) if state else None
+
+    def _check_state(self, task, state):
+        """return (ok, reason) for a saved state against the current task"""
+        if not isinstance(state, dict):
+            return False, 'no_receipt'
+        if state.get('graph') != manifest.graph_id(task):
+            return False, 'graph_changed'
+        current = getattr(task, 'manifest_provenance', None)
+        if current is not None and state.get('provenance') != current:
+            return False, 'provenance_changed'
+        if 'values' not in state:
+            return False, 'receipt_incomplete'
+        expected = state.get('outputs') or {}
+        for target in task.targets:
+            if expected.get(target) != manifest.path_digest(target):
+                return False, 'output_changed'
+        for name, ref in (state.get('sources') or {}).items():
+            source = self.task_registry.get(name)
+            if source is None:
+                return False, 'source_unverified'
+            if self.receipt_ref(source) != ref:
+                return False, 'source_changed'
+        return True, 'ok'
+
+    def _adopt_prior(self, task):
+        """adopt a state saved by an identical graph under another label
+
+        The graph identity is the only thing that can be compared without
+        trusting the saved values.  Inputs and outputs are re-validated by
+        the normal checks after adoption.
+        """
+        for label, state in self._states(task.name).items():
+            if label == self._label(task):
+                continue
+            if not isinstance(state, dict):
+                continue
+            if state.get('graph') != manifest.graph_id(task):
+                continue
+            expected = state.get('outputs') or {}
+            if any(expected.get(target) != manifest.path_digest(target)
+                   for target in task.targets):
+                continue
+            return state
+        return None
+
+    def manifest_check(self, task):
+        """return (status, reason) for the task's saved state
+
+        ``confirmed`` means the saved state provably belongs to the current
+        effective graph.  ``unconfirmed`` means data exists but its lineage
+        can not be proven; ``none`` means nothing was saved.
+        """
+        if not self.manifest_mode:
+            return 'none', 'manifest_disabled'
+        self.register_task(task)
+        if not self._in(task.name):
+            return 'none', 'not_executed'
+
+        state = self._load_state(task)
+        if state is not None:
+            ok, reason = self._check_state(task, state)
+            if ok:
+                self._rehydrate(task, state)
+                # keep the in-memory task consistent with the saved state
+                task.values = state.get('values') or {}
+                return 'confirmed', 'ok'
+            return 'unconfirmed', reason
+
+        # ``manifest_states:`` is the authoritative index.  A version that
+        # was forgotten leaves a ``manifest:<tag>`` tombstone but no entry
+        # in this index, and must not be revived from plain keys.
+        versions = self._states(task.name)
+        if not versions:
+            # data saved before manifest tracking only has a name and value;
+            # its graph can not be proven, so it needs confirmation
+            if self._get(task.name, '_values_:') is not None or \
+                    self._get(task.name, 'result:') is not None:
+                return 'unconfirmed', 'legacy_no_receipt'
+            return 'none', 'not_executed'
+
+        prior = self._adopt_prior(task)
+        if prior is not None:
+            self._store_state(task, prior)
+            self._rehydrate(task, prior)
+            task.values = prior.get('values') or {}
+            return 'confirmed', 'adopted'
+
+        # other versions exist but this graph did not run: normal execution
+        return 'none', 'not_executed'
+
     def get_values(self, task_name):
         """get all saved values from a task
 
         :return dict:
         """
+        if self.manifest_mode:
+            task = self.task_registry.get(task_name)
+            if task is not None:
+                state = self._load_state(task)
+                if isinstance(state, dict):
+                    return state.get('values') or {}
+                return {}
+            return {}
         values = self._get(task_name, '_values_:')
         return values or {}
 
@@ -575,10 +787,20 @@ class Dependency:
 
         :return (dict or md5sum):
         """
+        if self.manifest_mode:
+            task = self.task_registry.get(task_name)
+            if task is not None:
+                state = self._load_state(task)
+                if isinstance(state, dict):
+                    return state.get('result')
+            return None
         return self._get(task_name, 'result:')
 
     def remove_success(self, task):
         """remove saved info from task"""
+        if self.manifest_mode:
+            self._forget_state(task)
+            return
         self.remove(task.name)
 
     def ignore(self, task):
@@ -609,6 +831,16 @@ class Dependency:
         """
         result = DependencyStatus(get_log)
         task.dep_changed = []
+
+        # check manifest receipt before re-using saved values
+        if self.manifest_mode:
+            status, reason = self.manifest_check(task)
+            self.manifest_status[task.name] = [status, reason]
+            if status != 'confirmed':
+                task.dep_changed = list(task.file_dep)
+                result.add_reason('manifest_unconfirmed', reason)
+                return result
+            self._restore_plain_state(task)
 
         # check uptodate bool/callables
         uptodate_result_list = []
@@ -672,7 +904,16 @@ class Dependency:
             task.dep_changed = list(task.file_dep)
             # remove all saved values otherwise they might be re-used by
             # some optimization on MD5Checker.get_state()
-            self.remove(task.name)
+            if self.manifest_mode:
+                # only invalidate this version; other manifests keep their
+                # receipts and can be re-validated on their own run
+                self._set(task.name, '_values_:', None)
+                self._set(task.name, 'result:', None)
+                self._set(task.name, 'deps:', None)
+                for dep in task.file_dep:
+                    self._set(task.name, dep, None)
+            else:
+                self.remove(task.name)
             if result.set_reason('checker_changed', (previous, checker_name)):
                 return result
 
@@ -719,11 +960,13 @@ class UptodateCalculator:
     def __init__(self):
         self.get_val = None  # Dependency._get
         self.tasks_dict = None  # dict with all tasks
+        self._dep_manager = None
 
     def setup(self, dep_manager, tasks_dict):
         """@param"""
         self.get_val = dep_manager._get
         self.tasks_dict = tasks_dict
+        self._dep_manager = dep_manager
 
 
 if __name__ == '__main__':

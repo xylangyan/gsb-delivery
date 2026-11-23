@@ -124,3 +124,103 @@ For simple examples to help you create your own check this
 `blog post <http://blog.schettino72.net/posts/doit-task-creation.html>`_.
 
 
+
+
+.. _manifest-versions:
+
+manifest versions
+-----------------
+
+A single *dodo* file can describe several versions of the same shard.  This
+is useful when a batch is re-planned: a first manifest might read a field
+with the ordinary format while a second manifest re-reads the same file with
+another interpretation.  Both manifests can name the task ``clean:R`` and even
+produce the same output path.
+
+Give each version a name with the ``manifest`` task attribute, then select the
+version for a run with ``--manifest``:
+
+.. code-block:: python
+
+    def task_clean_r_v1():
+        def clean():
+            return {'field': 'code'}
+        return {
+            'basename': 'clean:R',
+            'actions': [clean],
+            'file_dep': ['input.txt'],
+            'targets': ['R.clean'],
+            'manifest': 'R-v1',
+        }
+
+    def task_clean_r_v2():
+        def clean():
+            return {'field': 'reserved'}
+        return {
+            'basename': 'clean:R',
+            'actions': [clean],
+            'file_dep': ['input.txt'],
+            'targets': ['R.clean'],
+            'manifest': 'R-v2',
+        }
+
+.. code-block:: console
+
+    $ doit run --manifest R-v1
+    $ doit run --manifest R-v2
+
+Only tasks effective for the selected manifest are used to build the task
+graph.  Untagged tasks are always effective, so shared infrastructure can stay
+untagged.
+
+Without ``--manifest`` the attribute is ignored and ``doit`` behaves exactly
+as before (task names must still be unique).
+
+
+how results are protected
++++++++++++++++++++++++++
+
+``doit`` identifies a task by a digest of its *effective definition*: actions,
+file/task/calculated dependencies, targets, ``getargs``, ``uptodate`` checks
+and so on.  Documentation, verbosity and the manifest label itself are not part
+of that identity.
+
+With ``--manifest`` every successful run stores a *receipt*: the graph digest,
+the values and result, a digest of each produced target, and references to the
+receipts of the tasks whose values it consumed.  A saved result is re-used only
+when the receipt matches the current run.  Consequently:
+
+* A shard whose definition did not change can re-use its saved result.
+* A shard whose definition changed gets a new identity and runs again, even if
+  its input file and output key look identical to the previous version.
+* A downstream ``getargs`` consumer never reads values from a version whose
+  result was not completed.  If it tries, the task fails explicitly instead of
+  silently mixing versions.
+* Dependencies added by ``calc_dep`` are recorded as part of the run.  A task
+  that needs a target still produced by another manifest version aborts with a
+  clear error rather than overwriting that other round's progress.
+
+Data saved before manifest tracking was enabled only has a name and a value.
+It can not be proven to belong to the current graph, so it is reported as
+``unconfirmed``; *doit* does not treat a matching content digest as an
+upgrade.  Run the task once under a manifest to record a receipt, or use
+``doit forget`` to discard the old data.
+
+Inspecting pending data
++++++++++++++++++++++++
+
+Use ``doit list --manifest`` to see tasks for a version.  Tasks whose saved
+result exists but can not be proven to belong to the current graph are listed
+separately:
+
+.. code-block:: console
+
+    $ doit list --manifest R-v2 --status
+    R  clean:R
+
+    needs confirmation:
+      clean:S (legacy_no_receipt)
+
+A run treats such data as *not up-to-date*: the task is executed again so a
+receipt can be recorded.  ``getargs`` consumers fail explicitly rather than
+reading those values.

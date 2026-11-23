@@ -7,6 +7,7 @@ import re
 from .exceptions import InvalidTask, InvalidCommand, InvalidDodoFile
 from .task import Task, DelayedLoaded
 from .loader import generate_tasks
+from . import manifest
 
 
 class RegexGroup:
@@ -40,10 +41,12 @@ class TaskControl:
                           Value: task_name
     """
 
-    def __init__(self, task_list, auto_delayed_regex=False):
+    def __init__(self, task_list, auto_delayed_regex=False,
+                 manifest_id=None):
         self.tasks = OrderedDict()
         self.targets = {}
         self.auto_delayed_regex = auto_delayed_regex
+        self.manifest_id = manifest_id
 
         # name of task in order to be executed
         # this the order as in the dodo file. the real execution
@@ -51,6 +54,13 @@ class TaskControl:
         self._def_order = []
         # list of tasks selected to be executed
         self.selected_tasks = None
+        # tasks generated for another manifest version, kept for conflict
+        # detection (they must never be silently overwritten)
+        self.reserved_tasks = []
+
+        if manifest_id:
+            task_list, self.reserved_tasks = manifest.select_tasks(
+                task_list, manifest_id)
 
         # sanity check and create tasks dict
         for task in task_list:
@@ -74,6 +84,48 @@ class TaskControl:
         self._check_dep_names()
         self.set_implicit_deps(self.targets, task_list)
 
+        if manifest_id:
+            self._init_manifest(task_list)
+
+
+    def _init_manifest(self, task_list):
+        """capture the static graph and target ownership for this run
+
+        Dynamic dependencies (``calc_dep``) only exist during execution, so
+        the identity used by receipts must be frozen here, before the
+        dispatcher starts adding computed dependencies.
+        """
+        self.manifest_targets = manifest.target_owners(
+            task_list + self.reserved_tasks, self.manifest_id)
+        # An effective task must not claim a target still produced by another
+        # round; that would silently overwrite the other round's progress.
+        for target, entries in self.manifest_targets.items():
+            active = sorted({entry[0] for entry in entries if entry[2]})
+            if len(active) > 1:
+                from .exceptions import ManifestConflict
+                raise ManifestConflict(
+                    "Target '{}' is claimed by more than one active task: {}. "
+                    "Select a single manifest version.".format(
+                        target, ', '.join(active)))
+        for task in task_list:
+            if task.manifest_declared is None:
+                task.manifest_declared = {
+                    'file_dep': set(task.file_dep),
+                    'task_dep': list(task.task_dep),
+                    'calc_dep': set(task.calc_dep),
+                    'setup': list(task.setup_tasks),
+                }
+            task.manifest_static_graph = manifest.task_graph_digest(task)
+            task.manifest_sources = {}
+        self._refresh_manifest_provenance()
+
+    def _refresh_manifest_provenance(self):
+        """recompute upstream provenance for tasks that consume values"""
+        for task in self.tasks.values():
+            if task.manifest_static_graph is None:
+                task.manifest_static_graph = manifest.task_graph_digest(task)
+            task.manifest_provenance = manifest.provenance_digest(
+                task, self.tasks, self.manifest_id)
 
     def _check_dep_names(self):
         """check if user input task_dep or setup_task that doesnt exist"""
@@ -265,7 +317,11 @@ class TaskControl:
         assert self.selected_tasks is not None, \
             "must call 'process' before this"
 
-        return TaskDispatcher(self.tasks, self.targets, self.selected_tasks)
+        return TaskDispatcher(self.tasks, self.targets, self.selected_tasks,
+                              manifest_id=self.manifest_id,
+                              manifest_targets=getattr(
+                                  self, 'manifest_targets', None),
+                              reserved_tasks=self.reserved_tasks)
 
 
 
@@ -354,10 +410,14 @@ class TaskDispatcher:
 
     Note that a dispatched task might not be ready to be executed.
     """
-    def __init__(self, tasks, targets, selected_tasks):
+    def __init__(self, tasks, targets, selected_tasks, manifest_id=None,
+                 manifest_targets=None, reserved_tasks=()):
         self.tasks = tasks
         self.targets = targets
         self.selected_tasks = selected_tasks
+        self.manifest_id = manifest_id
+        self.manifest_targets = manifest_targets
+        self.reserved_tasks = list(reserved_tasks)
 
         self.nodes = {}  # key task-name, value: ExecNode
         # queues
@@ -438,6 +498,19 @@ class TaskDispatcher:
             if regex_group and regex_group.found:
                 return
 
+        if self.manifest_id and this_task.manifest_static_graph is None:
+            if this_task.manifest_declared is None:
+                this_task.manifest_declared = {
+                    'file_dep': set(this_task.file_dep),
+                    'task_dep': list(this_task.task_dep),
+                    'calc_dep': set(this_task.calc_dep),
+                    'setup': list(this_task.setup_tasks),
+                }
+            this_task.manifest_static_graph = manifest.task_graph_digest(
+                this_task)
+            this_task.manifest_provenance = manifest.provenance_digest(
+                this_task, self.tasks, self.manifest_id)
+
         # add calc_dep & task_dep until all processed
         # calc_dep may add more deps so need to loop until nothing left
         while True:
@@ -473,6 +546,10 @@ class TaskDispatcher:
                 new_tasks = generate_tasks(to_load, task_gen, ref.__doc__)
                 TaskControl.set_implicit_deps(self.targets, new_tasks)
                 for nt in new_tasks:
+                    if self.manifest_id:
+                        manifest.check_generated_task(
+                            nt, self.tasks, self.manifest_targets,
+                            self.manifest_id)
                     if not nt.loader:
                         nt.loader = DelayedLoaded
                     self.tasks[nt.name] = nt
@@ -602,6 +679,25 @@ class TaskDispatcher:
         waiting_node.task_dep.extend(new_task_dep)
         new_calc_dep = waiting_node.task.calc_dep - old_calc_dep
         waiting_node.calc_dep.update(new_calc_dep)
+
+        if self.manifest_id:
+            waiting_node.task.manifest_provenance = \
+                manifest.provenance_digest(
+                    waiting_node.task, self.tasks, self.manifest_id)
+            # calc_dep can add file_dep whose target belongs to another round
+            for dep in values.get('file_dep', []):
+                owners = (self.manifest_targets or {}).get(str(dep), ())
+                for owner_name, graph, is_active in owners:
+                    if owner_name == waiting_node.task.name:
+                        continue
+                    if not is_active:
+                        from .exceptions import ManifestConflict
+                        raise ManifestConflict(
+                            "Task '{}' for manifest '{}' needs '{}' produced "
+                            "by task '{}' which belongs to another round "
+                            "(manifest version).".format(
+                                waiting_node.task.name, self.manifest_id,
+                                dep, owner_name))
 
 
 

@@ -108,3 +108,20 @@ class SetupError(TaskError):
 class DependencyError(TaskError):
     """Error while trying to check if task is up-to-date or saving task status"""
     pass
+
+
+class ManifestConflict(InvalidTask):
+    """A task generated from a manifest would silently replace another one.
+
+    Raised when two manifest versions (or two delayed generations) claim the
+    same task name or target with a different effective task graph.
+    """
+
+
+class UnconfirmedDependency(DependencyError):
+    """Saved data exists but cannot be proven to belong to the current graph.
+
+    This is a distinct error so downstream ``getargs`` never consumes values
+    from an unverified version of a task.
+    """
+
