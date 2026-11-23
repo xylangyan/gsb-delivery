@@ -1,0 +1,4 @@
+route_id,agency_id,route_short_name,route_long_name,route_type
+RIN,A,10,Inbound,3
+ROUT,A,20,Outbound,3
+ROTHER,A,30,Other,3

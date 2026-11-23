@@ -1,0 +1,6 @@
+stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station
+HUB,Harbor Interchange,45.000,-122.000,1,
+HUB-A,Harbor Interchange Platform A,45.000,-122.000,0,HUB
+HUB-B,Harbor Interchange Platform B,45.000,-122.000,0,HUB
+SRC,Source Loop,44.900,-122.100,0,
+DST,Destination Loop,45.100,-121.900,0,

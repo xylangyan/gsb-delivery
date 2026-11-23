@@ -1,0 +1,7 @@
+stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station
+H1,Hub One,45.0,-122.0,1,
+H1-A,Hub One A,45.0,-122.0,0,H1
+H1-B,Hub One B,45.0,-122.0,0,H1
+H2,Hub Two,45.2,-122.2,1,
+H2-A,Hub Two A,45.2,-122.2,0,H2
+H2-B,Hub Two B,45.2,-122.2,0,H2

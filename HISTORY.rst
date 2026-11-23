@@ -2,6 +2,20 @@
 History
 =======
 
+Unreleased
+----------
+
+* Add ``partridge.can_transfer_feed`` for answering trip-to-trip transfers,
+  honouring parent stations and the rule specificity of ``transfers.txt``.
+* Keep a platform's ``parent_station`` row whenever the platform survives a
+  view or an extraction, and carry a necessary parent only once.
+* Prune ``transfers.txt`` by both stop and trip references, and treat a blank
+  reference as a wildcard so stop-pair rules are not lost.
+* Add ``partridge.extract_minimal_feed`` to search the rows a permit allows
+  for the lowest-weight package that keeps a survey of transfer answers.
+  It refuses to trim a stop-pair rule to one platform and reports questions
+  whose prohibition the permit does not cover.
+
 1.1.2 (2022-11-23)
 ------------------
 

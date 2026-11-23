@@ -1,0 +1,7 @@
+stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station
+C,Complex,45.0,-122.0,2,
+P,Station,45.0,-122.0,1,C
+P-A,Plat A,45.0,-122.0,0,P
+P-B,Plat B,45.0,-122.0,0,P
+S,Other,45.1,-122.1,0,
+T,Other2,45.2,-122.2,0,

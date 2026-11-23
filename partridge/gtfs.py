@@ -136,6 +136,8 @@ class Feed(object):
             dependencies.append((depf, deps))
 
         if not dependencies:
+            if filename == "stops.txt":
+                return self._retain_parent_stations(df)
             return df
 
         for depfile, column_pairs in dependencies:
@@ -146,9 +148,44 @@ class Feed(object):
                 depcol = deps[depfile]
                 # If applicable, prune this dataframe by the other
                 if col in df.columns and depcol in depdf.columns:
-                    df = df[df[col].isin(depdf[depcol])]
+                    mask = df[col].isin(set(depdf[depcol]))
+                    if filename == "transfers.txt":
+                        # A blank reference field is a wildcard at its level.
+                        mask = mask | df[col].isna() | df[col].eq("")
+                    df = df[mask]
+
+        if filename == "stops.txt":
+            df = self._retain_parent_stations(df)
 
         return df
+
+    def _retain_parent_stations(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Keep the parent station rows of every retained stop.
+
+        Platform rows point at a ``parent_station`` that has no stop time of
+        its own, so it is otherwise pruned away.  Without it a reader can no
+        longer tell which station the platform belongs to or apply rules that
+        are written against the station.
+        """
+        if df.empty or "parent_station" not in df.columns or "stop_id" not in df.columns:
+            return df
+
+        parents = {value for value in df["parent_station"] if value and value != ""}
+        parents -= set(df["stop_id"])
+        if not parents:
+            return df
+
+        raw = self._read("stops.txt")
+        wanted = raw[raw["stop_id"].isin(parents)]
+        if wanted.empty:
+            return df
+
+        for column in df.columns:
+            if column not in wanted.columns:
+                wanted[column] = ""
+
+        wanted = wanted[list(df.columns)]
+        return pd.concat([df, wanted], ignore_index=True).drop_duplicates("stop_id")
 
     def _convert_types(self, filename: str, df: pd.DataFrame) -> None:
         """

@@ -129,6 +129,16 @@ def add_edge_config(g: nx.DiGraph) -> nx.DiGraph:
                     ]
                 },
             ),
+            (
+                "transfers.txt",
+                "trips.txt",
+                {
+                    "dependencies": [
+                        {"transfers.txt": "from_trip_id", "trips.txt": "trip_id"},
+                        {"transfers.txt": "to_trip_id", "trips.txt": "trip_id"},
+                    ]
+                },
+            ),
         ]
     )
 

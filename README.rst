@@ -191,12 +191,85 @@ Extracting a new feed
     assert service_ids == set(feed.trips.service_id)
 
 
+Answering transfers
+~~~~~~~~~~~~~~~~~~~
+
+A trimmed feed often has to keep answering "may the passengers of this
+arriving trip catch that departing trip?".  That answer needs the trips,
+their stop times, the platforms they call at, the parent stations those
+platforms belong to, and the matching rows of ``transfers.txt`` -- including
+trip-pair prohibitions (``transfer_type`` 3).
+
+.. code:: python
+
+    feed = ptg.load_feed('gtfs-slim.zip')
+
+    ptg.can_transfer_feed(feed, arriving_trip_id, departing_trip_id)
+    #  True
+
+Two trips connect when they call at the same stop or at stops that share a
+non-empty ``parent_station``.  At each such point the most specific
+``transfers.txt`` rule wins, and a ``transfer_type`` 3 rule forbids the
+connection.
+
+Parents are never trimmed away: whenever a platform survives a view or an
+extraction, the parent station row of that platform survives with it, and a
+necessary parent is carried once no matter how many platforms point at it.
+
+Preserving a survey at minimum weight
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:func:`partridge.extract_minimal_feed` takes a permit and a survey.  The
+permit lists the routes, trips, stops, files, and (optionally) the individual
+rows the publishing department released.  The survey lists trip pairs and
+the answer each must keep.  The cheapest permitted selection is written and
+then read back to confirm every answer.
+
+.. code:: python
+
+    permit = ptg.Permit(
+        routes=['RIN', 'ROUT'],
+        stops=['HUB-A', 'HUB-B', 'SRC', 'DST'],
+    )
+    survey = [
+        ptg.Query('IN-1', 'OUT-1', True),
+        ptg.Query('IN-2', 'OUT-1', False),
+    ]
+
+    result = ptg.extract_minimal_feed(inpath, outpath, permit, survey)
+
+    result.weight        # carried stop-time + parent + rule rows
+    result.verified      # re-read package reproduces the survey
+    result.unpreservable # questions the permit cannot keep answerable
+    result.scope_losses  # rules dropped that older readers would have seen
+
+Weight counts one for every carried ``stop_times.txt`` row, one for every
+carried parent-station row, and one for every carried ``transfers.txt``
+rule row.  A rule is only carried when every reference it names survives,
+so a trip outside the permitted window can never enter the result.
+
+A stop-pair rule that touches a carried platform keeps both of its
+endpoints.  If the other platform cannot get a surviving stop-time row the
+rule cannot be kept as written; it is reported in ``scope_losses`` rather
+than silently narrowed to a single platform, because that narrowing is
+exactly what changes the applicability an older reader saw.
+
+If the permit leaves out a prohibition a negative answer depends on,
+``unpreservable`` names the trip pair, the reason, and the exact rule that
+would have been needed.  The typical case is a ``from_trip_id``/``to_trip_id``
+rule of type 3 between the two arriving trips at the shared parent station:
+the question "is the given arriving trip *not* allowed to connect to the
+given departing trip?" can no longer be kept once that row is not released.
+
+
 Features
 --------
 
 -  Surprisingly fast :)
 -  Load only what you need into memory
 -  Built-in support for resolving service dates
+-  Answer trip-to-trip transfers, including parent stations and trip-pair rules
+-  Extract the cheapest permitted feed that keeps a transfer survey
 -  Easily extended to support fields and files outside the official spec
    (TODO: document this)
 -  Handle nested folders and bad data in zips

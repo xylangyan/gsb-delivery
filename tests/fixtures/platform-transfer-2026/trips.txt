@@ -1,0 +1,5 @@
+route_id,service_id,trip_id,shape_id
+RIN,S,IN-1,
+RIN,S,IN-2,
+ROUT,S,OUT-1,
+ROTHER,S,OTHER-1,
