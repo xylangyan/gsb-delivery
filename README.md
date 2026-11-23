@@ -62,6 +62,52 @@ Pyvisgraph also has some useful helper functions:
 For further examples, please look at the scripts provided in the `examples`
 folder.
 
+## Incremental survey revisions
+`SurveyGraph` publishes station-to-station routes over stable survey ids and
+applies mapping corrections as atomic batches. The first revision builds the
+full visibility graph plus an index of the pairs each fence can affect; later
+revisions only re-check fences and nodes touched by the correction.
+
+```
+>>> from pyvisgraph import SurveyGraph, Station, Vertex, PolygonDef, SurveyCorrection
+>>> fence = PolygonDef('fence-1', [Vertex('v1', 0, 0), Vertex('v2', 10, 0),
+...                                Vertex('v3', 10, 10), Vertex('v4', 0, 10)])
+>>> survey = SurveyGraph([fence], [Station('st-a', -5, 5),
+...                                Station('st-b', 15, 5)])
+>>> survey.shortest_path('st-a', 'st-b')
+['st-a', 'v1', 'v2', 'st-b']
+>>> old_routes = dict(survey.routes)
+>>> report = survey.apply(SurveyCorrection(polygons_removed=['fence-1']))
+>>> report.added_edges
+[EdgeChange(('station', 'st-a'), ('station', 'st-b'))]
+>>> report.removed_edges[:2]
+[EdgeChange(('station', 'st-a'), ('vertex', 'v1')), ...]
+>>> report.route_changes[0].new_path
+['st-a', 'st-b']
+>>> replayed = report.replay(old_routes)
+>>> replayed == survey.routes
+True
+```
+
+A correction can add, remove, or redefine whole polygons, move vertices, add or
+remove stations, and move stations. Everything in one `SurveyCorrection` is
+applied atomically; an invalid batch raises `SurveyError` and leaves the
+published revision untouched.
+
+`report.added_edges` and `report.removed_edges` contain the complete
+visibility-edge delta. `report.vertex_edges_added` /
+`report.vertex_edges_removed` and `report.station_edges_added` /
+`report.station_edges_removed` expose the vertex-only and station-incident
+subsets. Every edge is identified by stable ids, so it can be matched to the
+previous publication. `report.route_changes` lists each station pair whose
+path or length changed, including pairs that became reachable or unreachable.
+Equal-length routes are ordered by the lexicographically first sequence of
+stable ids.
+
+`report.replay(old_routes)` returns the corrected route mapping. A full rebuild
+of the same corrected survey produces the same mapping, which is covered by
+the tests.
+
 ## Example & performance
 This example uses a shapefile representing world shorelines as obstacles.
 Two vessels were picked randomly and their current location found
