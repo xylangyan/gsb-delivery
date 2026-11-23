@@ -1,0 +1,15 @@
+{
+  "document": "receipts.pdf",
+  "fields": [
+    {"id": "p1_po_top",        "page": 1, "rect": [55, 780, 145, 800], "direction": "ltr"},
+    {"id": "p1_cell_top",      "page": 1, "rect": [58, 762, 80, 780],  "direction": "ltr"},
+    {"id": "p1_po_clipped",    "page": 1, "rect": [55, 640, 145, 660], "direction": "ltr"},
+    {"id": "p1_cell_clipped",  "page": 1, "rect": [58, 622, 80, 640],  "direction": "ltr"},
+    {"id": "p1_pair_covered",  "page": 1, "rect": [45, 494, 90, 514],  "direction": "ltr"},
+    {"id": "p1_signature",     "page": 1, "rect": [395, 695, 465, 720], "direction": "ltr"},
+    {"id": "p1_rewritten",     "page": 1, "rect": [45, 444, 95, 464],  "direction": "ltr"},
+    {"id": "p2_po",            "page": 2, "rect": [55, 720, 145, 740], "direction": "ltr"},
+    {"id": "p2_cell",          "page": 2, "rect": [58, 702, 80, 720],  "direction": "ltr"},
+    {"id": "p2_note",          "page": 2, "rect": [45, 595, 95, 615],  "direction": "ltr"}
+  ]
+}

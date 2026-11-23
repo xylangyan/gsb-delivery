@@ -1,0 +1,1995 @@
+{
+  "document": "receipts.pdf",
+  "fields": [
+    {
+      "id": "p1_po_top",
+      "page": 1,
+      "rect": [
+        55,
+        780,
+        145,
+        800
+      ],
+      "direction": "ltr",
+      "status": "ok",
+      "value": "PO-2026-0001",
+      "review": false,
+      "glyphs": [
+        {
+          "char": "P",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            60.0,
+            781.3,
+            68.0,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              60.0,
+              781.3,
+              68.0,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              60.0,
+              781.3,
+              68.0,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "O",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            68.0,
+            781.3,
+            77.34,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              68.0,
+              781.3,
+              77.34,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              68.0,
+              781.3,
+              77.34,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "-",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            77.34,
+            781.3,
+            81.34,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              77.34,
+              781.3,
+              81.34,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              77.34,
+              781.3,
+              81.34,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "2",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            81.34,
+            781.3,
+            88.01,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              81.34,
+              781.3,
+              88.01,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              81.34,
+              781.3,
+              88.01,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            88.01,
+            781.3,
+            94.68,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              88.01,
+              781.3,
+              94.68,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              88.01,
+              781.3,
+              94.68,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "2",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            94.68,
+            781.3,
+            101.35,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              94.68,
+              781.3,
+              101.35,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              94.68,
+              781.3,
+              101.35,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "6",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            101.35,
+            781.3,
+            108.02,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              101.35,
+              781.3,
+              108.02,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              101.35,
+              781.3,
+              108.02,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "-",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            108.02,
+            781.3,
+            112.02,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              108.02,
+              781.3,
+              112.02,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              108.02,
+              781.3,
+              112.02,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            112.02,
+            781.3,
+            118.69,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              112.02,
+              781.3,
+              118.69,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              112.02,
+              781.3,
+              118.69,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            118.69,
+            781.3,
+            125.36,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              118.69,
+              781.3,
+              125.36,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              118.69,
+              781.3,
+              125.36,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            125.36,
+            781.3,
+            132.04,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              125.36,
+              781.3,
+              132.04,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              125.36,
+              781.3,
+              132.04,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "1",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            132.04,
+            781.3,
+            138.71,
+            795.17
+          ],
+          "clipped_box": [
+            [
+              132.04,
+              781.3,
+              138.71,
+              795.17
+            ]
+          ],
+          "visible_region": [
+            [
+              132.04,
+              781.3,
+              138.71,
+              795.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [
+          "Do /FmTable (obj 3) @ page 1 contents offset 105"
+        ],
+        "text_instructions": [
+          "Tj @ form /FmTable (obj 3) offset 55"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p1_cell_top",
+      "page": 1,
+      "rect": [
+        58,
+        762,
+        80,
+        780
+      ],
+      "direction": "ltr",
+      "status": "partial",
+      "value": null,
+      "review": false,
+      "visible_text": "X▯",
+      "glyphs": [
+        {
+          "char": "X",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            64.0,
+            766.75,
+            70.67,
+            778.31
+          ],
+          "clipped_box": [
+            [
+              64.0,
+              766.75,
+              70.67,
+              778.31
+            ]
+          ],
+          "visible_region": [
+            [
+              64.0,
+              766.75,
+              70.67,
+              778.31
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105",
+            "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+          ],
+          "text_instruction": "Tj @ form /FmCell (obj 2) offset 46"
+        },
+        {
+          "char": "7",
+          "state": "partial",
+          "visible_ratio": 0.2392,
+          "glyph_box": [
+            70.67,
+            766.75,
+            76.23,
+            778.31
+          ],
+          "clipped_box": [
+            [
+              70.67,
+              766.75,
+              72,
+              778.31
+            ]
+          ],
+          "visible_region": [
+            [
+              70.67,
+              766.75,
+              72,
+              778.31
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 105",
+            "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+          ],
+          "text_instruction": "Tj @ form /FmCell (obj 2) offset 46"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [
+          "Do /FmTable (obj 3) @ page 1 contents offset 105",
+          "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+        ],
+        "text_instructions": [
+          "Tj @ form /FmCell (obj 2) offset 46"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p1_po_clipped",
+      "page": 1,
+      "rect": [
+        55,
+        640,
+        145,
+        660
+      ],
+      "direction": "ltr",
+      "status": "partial",
+      "value": null,
+      "review": false,
+      "visible_text": "▯▯▯▯▯▯▯▯▯▯▯▯",
+      "glyphs": [
+        {
+          "char": "P",
+          "state": "partial",
+          "visible_ratio": 0.4998,
+          "glyph_box": [
+            60.0,
+            641.3,
+            68.0,
+            655.17
+          ],
+          "clipped_box": [
+            [
+              60.0,
+              641.3,
+              64,
+              655.17
+            ]
+          ],
+          "visible_region": [
+            [
+              60.0,
+              641.3,
+              64,
+              655.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "O",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            68.0,
+            641.3,
+            77.34,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "-",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            77.34,
+            641.3,
+            81.34,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "2",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            81.34,
+            641.3,
+            88.01,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            88.01,
+            641.3,
+            94.68,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "2",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            94.68,
+            641.3,
+            101.35,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "6",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            101.35,
+            641.3,
+            108.02,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "-",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            108.02,
+            641.3,
+            112.02,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            112.02,
+            641.3,
+            118.69,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            118.69,
+            641.3,
+            125.36,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            125.36,
+            641.3,
+            132.04,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "1",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            132.04,
+            641.3,
+            138.71,
+            655.17
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [
+          "Do /FmTable (obj 3) @ page 1 contents offset 159"
+        ],
+        "text_instructions": [
+          "Tj @ form /FmTable (obj 3) offset 55"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p1_cell_clipped",
+      "page": 1,
+      "rect": [
+        58,
+        622,
+        80,
+        640
+      ],
+      "direction": "ltr",
+      "status": "partial",
+      "value": null,
+      "review": false,
+      "visible_text": "▯▯",
+      "glyphs": [
+        {
+          "char": "X",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            64.0,
+            626.75,
+            70.67,
+            638.31
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159",
+            "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+          ],
+          "text_instruction": "Tj @ form /FmCell (obj 2) offset 46"
+        },
+        {
+          "char": "7",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            70.67,
+            626.75,
+            76.23,
+            638.31
+          ],
+          "clipped_box": [],
+          "visible_region": [],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 1 contents offset 159",
+            "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+          ],
+          "text_instruction": "Tj @ form /FmCell (obj 2) offset 46"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [
+          "Do /FmTable (obj 3) @ page 1 contents offset 159",
+          "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+        ],
+        "text_instructions": [
+          "Tj @ form /FmCell (obj 2) offset 46"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p1_pair_covered",
+      "page": 1,
+      "rect": [
+        45,
+        494,
+        90,
+        514
+      ],
+      "direction": "ltr",
+      "status": "partial",
+      "value": null,
+      "review": false,
+      "visible_text": "AB▯2",
+      "glyphs": [
+        {
+          "char": "A",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            50.0,
+            497.3,
+            58.0,
+            511.17
+          ],
+          "clipped_box": [
+            [
+              50.0,
+              497.3,
+              58.0,
+              511.17
+            ]
+          ],
+          "visible_region": [
+            [
+              50.0,
+              497.3,
+              58.0,
+              511.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 194"
+        },
+        {
+          "char": "B",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            58.0,
+            497.3,
+            66.01,
+            511.17
+          ],
+          "clipped_box": [
+            [
+              58.0,
+              497.3,
+              66.01,
+              511.17
+            ]
+          ],
+          "visible_region": [
+            [
+              58.0,
+              497.3,
+              66.01,
+              511.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 194"
+        },
+        {
+          "char": "1",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            66.01,
+            497.3,
+            72.68,
+            511.17
+          ],
+          "clipped_box": [
+            [
+              66.01,
+              497.3,
+              72.68,
+              511.17
+            ]
+          ],
+          "visible_region": [],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 194"
+        },
+        {
+          "char": "2",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            72.68,
+            497.3,
+            79.35,
+            511.17
+          ],
+          "clipped_box": [
+            [
+              72.68,
+              497.3,
+              79.35,
+              511.17
+            ]
+          ],
+          "visible_region": [
+            [
+              72.68,
+              497.3,
+              79.35,
+              511.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 194"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [],
+        "text_instructions": [
+          "Tj @ page 1 contents offset 194"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p1_signature",
+      "page": 1,
+      "rect": [
+        395,
+        695,
+        465,
+        720
+      ],
+      "direction": "ltr",
+      "status": "ok",
+      "value": "9102",
+      "review": false,
+      "glyphs": [
+        {
+          "char": "9",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            404.0,
+            701.3,
+            410.67,
+            715.17
+          ],
+          "clipped_box": [
+            [
+              404.0,
+              701.3,
+              410.67,
+              715.17
+            ]
+          ],
+          "visible_region": [
+            [
+              404.0,
+              701.3,
+              410.67,
+              715.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 70"
+        },
+        {
+          "char": "1",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            410.67,
+            701.3,
+            417.34,
+            715.17
+          ],
+          "clipped_box": [
+            [
+              410.67,
+              701.3,
+              417.34,
+              715.17
+            ]
+          ],
+          "visible_region": [
+            [
+              410.67,
+              701.3,
+              417.34,
+              715.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 70"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            417.34,
+            701.3,
+            424.02,
+            715.17
+          ],
+          "clipped_box": [
+            [
+              417.34,
+              701.3,
+              424.02,
+              715.17
+            ]
+          ],
+          "visible_region": [
+            [
+              417.34,
+              701.3,
+              424.02,
+              715.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 70"
+        },
+        {
+          "char": "2",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            424.02,
+            701.3,
+            430.69,
+            715.17
+          ],
+          "clipped_box": [
+            [
+              424.02,
+              701.3,
+              430.69,
+              715.17
+            ]
+          ],
+          "visible_region": [
+            [
+              424.02,
+              701.3,
+              430.69,
+              715.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 70"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [],
+        "text_instructions": [
+          "Tj @ page 1 contents offset 70"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p1_rewritten",
+      "page": 1,
+      "rect": [
+        45,
+        444,
+        95,
+        464
+      ],
+      "direction": "ltr",
+      "status": "replaced",
+      "value": "NEW01",
+      "review": false,
+      "note": "original characters fully covered; complete replacement value painted on top is fully visible",
+      "glyphs": [
+        {
+          "char": "N",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            50.0,
+            447.3,
+            58.66,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              50.0,
+              447.3,
+              58.66,
+              461.17
+            ]
+          ],
+          "visible_region": [
+            [
+              50.0,
+              447.3,
+              58.66,
+              461.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 368"
+        },
+        {
+          "char": "O",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            50.0,
+            447.3,
+            59.34,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              50.0,
+              447.3,
+              59.34,
+              461.17
+            ]
+          ],
+          "visible_region": [],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 295"
+        },
+        {
+          "char": "E",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            58.66,
+            447.3,
+            66.67,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              58.66,
+              447.3,
+              66.67,
+              461.17
+            ]
+          ],
+          "visible_region": [
+            [
+              58.66,
+              447.3,
+              66.67,
+              461.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 368"
+        },
+        {
+          "char": "L",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            59.34,
+            447.3,
+            66.01,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              59.34,
+              447.3,
+              66.01,
+              461.17
+            ]
+          ],
+          "visible_region": [],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 295"
+        },
+        {
+          "char": "D",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            66.01,
+            447.3,
+            74.67,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              66.01,
+              447.3,
+              74.67,
+              461.17
+            ]
+          ],
+          "visible_region": [],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 295"
+        },
+        {
+          "char": "W",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            66.67,
+            447.3,
+            78.0,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              66.67,
+              447.3,
+              78.0,
+              461.17
+            ]
+          ],
+          "visible_region": [
+            [
+              66.67,
+              447.3,
+              78.0,
+              461.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 368"
+        },
+        {
+          "char": "9",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            74.67,
+            447.3,
+            81.34,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              74.67,
+              447.3,
+              81.34,
+              461.17
+            ]
+          ],
+          "visible_region": [],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 295"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            78.0,
+            447.3,
+            84.67,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              78.0,
+              447.3,
+              84.67,
+              461.17
+            ]
+          ],
+          "visible_region": [
+            [
+              78.0,
+              447.3,
+              84.67,
+              461.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 368"
+        },
+        {
+          "char": "9",
+          "state": "hidden",
+          "visible_ratio": 0.0,
+          "glyph_box": [
+            81.34,
+            447.3,
+            88.02,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              81.34,
+              447.3,
+              88.02,
+              461.17
+            ]
+          ],
+          "visible_region": [],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 295"
+        },
+        {
+          "char": "1",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            84.67,
+            447.3,
+            91.34,
+            461.17
+          ],
+          "clipped_box": [
+            [
+              84.67,
+              447.3,
+              91.34,
+              461.17
+            ]
+          ],
+          "visible_region": [
+            [
+              84.67,
+              447.3,
+              91.34,
+              461.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 1 contents offset 368"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [],
+        "text_instructions": [
+          "Tj @ page 1 contents offset 368",
+          "Tj @ page 1 contents offset 295"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p2_po",
+      "page": 2,
+      "rect": [
+        55,
+        720,
+        145,
+        740
+      ],
+      "direction": "ltr",
+      "status": "ok",
+      "value": "PO-2026-0001",
+      "review": false,
+      "glyphs": [
+        {
+          "char": "P",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            60.0,
+            721.3,
+            68.0,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              60.0,
+              721.3,
+              68.0,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              60.0,
+              721.3,
+              68.0,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "O",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            68.0,
+            721.3,
+            77.34,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              68.0,
+              721.3,
+              77.34,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              68.0,
+              721.3,
+              77.34,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "-",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            77.34,
+            721.3,
+            81.34,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              77.34,
+              721.3,
+              81.34,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              77.34,
+              721.3,
+              81.34,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "2",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            81.34,
+            721.3,
+            88.01,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              81.34,
+              721.3,
+              88.01,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              81.34,
+              721.3,
+              88.01,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            88.01,
+            721.3,
+            94.68,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              88.01,
+              721.3,
+              94.68,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              88.01,
+              721.3,
+              94.68,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "2",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            94.68,
+            721.3,
+            101.35,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              94.68,
+              721.3,
+              101.35,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              94.68,
+              721.3,
+              101.35,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "6",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            101.35,
+            721.3,
+            108.02,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              101.35,
+              721.3,
+              108.02,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              101.35,
+              721.3,
+              108.02,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "-",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            108.02,
+            721.3,
+            112.02,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              108.02,
+              721.3,
+              112.02,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              108.02,
+              721.3,
+              112.02,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            112.02,
+            721.3,
+            118.69,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              112.02,
+              721.3,
+              118.69,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              112.02,
+              721.3,
+              118.69,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            118.69,
+            721.3,
+            125.36,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              118.69,
+              721.3,
+              125.36,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              118.69,
+              721.3,
+              125.36,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "0",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            125.36,
+            721.3,
+            132.04,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              125.36,
+              721.3,
+              132.04,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              125.36,
+              721.3,
+              132.04,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        },
+        {
+          "char": "1",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            132.04,
+            721.3,
+            138.71,
+            735.17
+          ],
+          "clipped_box": [
+            [
+              132.04,
+              721.3,
+              138.71,
+              735.17
+            ]
+          ],
+          "visible_region": [
+            [
+              132.04,
+              721.3,
+              138.71,
+              735.17
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31"
+          ],
+          "text_instruction": "Tj @ form /FmTable (obj 3) offset 55"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [
+          "Do /FmTable (obj 3) @ page 2 contents offset 31"
+        ],
+        "text_instructions": [
+          "Tj @ form /FmTable (obj 3) offset 55"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p2_cell",
+      "page": 2,
+      "rect": [
+        58,
+        702,
+        80,
+        720
+      ],
+      "direction": "ltr",
+      "status": "partial",
+      "value": null,
+      "review": false,
+      "visible_text": "X▯",
+      "glyphs": [
+        {
+          "char": "X",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            64.0,
+            706.75,
+            70.67,
+            718.31
+          ],
+          "clipped_box": [
+            [
+              64.0,
+              706.75,
+              70.67,
+              718.31
+            ]
+          ],
+          "visible_region": [
+            [
+              64.0,
+              706.75,
+              70.67,
+              718.31
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31",
+            "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+          ],
+          "text_instruction": "Tj @ form /FmCell (obj 2) offset 46"
+        },
+        {
+          "char": "7",
+          "state": "partial",
+          "visible_ratio": 0.2392,
+          "glyph_box": [
+            70.67,
+            706.75,
+            76.23,
+            718.31
+          ],
+          "clipped_box": [
+            [
+              70.67,
+              706.75,
+              72,
+              718.31
+            ]
+          ],
+          "visible_region": [
+            [
+              70.67,
+              706.75,
+              72,
+              718.31
+            ]
+          ],
+          "form_invocation": [
+            "Do /FmTable (obj 3) @ page 2 contents offset 31",
+            "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+          ],
+          "text_instruction": "Tj @ form /FmCell (obj 2) offset 46"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [
+          "Do /FmTable (obj 3) @ page 2 contents offset 31",
+          "Do /FmCell (obj 2) @ form /FmTable (obj 3) offset 87"
+        ],
+        "text_instructions": [
+          "Tj @ form /FmCell (obj 2) offset 46"
+        ]
+      },
+      "flags": []
+    },
+    {
+      "id": "p2_note",
+      "page": 2,
+      "rect": [
+        45,
+        595,
+        95,
+        615
+      ],
+      "direction": "ltr",
+      "status": "ok",
+      "value": "NOTE",
+      "review": true,
+      "glyphs": [
+        {
+          "char": "N",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            50.0,
+            597.3,
+            58.66,
+            611.17
+          ],
+          "clipped_box": [
+            [
+              50.0,
+              597.3,
+              58.66,
+              611.17
+            ]
+          ],
+          "visible_region": [
+            [
+              50.0,
+              597.3,
+              58.66,
+              611.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 2 contents offset 66"
+        },
+        {
+          "char": "O",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            58.66,
+            597.3,
+            68.0,
+            611.17
+          ],
+          "clipped_box": [
+            [
+              58.66,
+              597.3,
+              68.0,
+              611.17
+            ]
+          ],
+          "visible_region": [
+            [
+              58.66,
+              597.3,
+              68.0,
+              611.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 2 contents offset 66"
+        },
+        {
+          "char": "T",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            68.0,
+            597.3,
+            75.33,
+            611.17
+          ],
+          "clipped_box": [
+            [
+              68.0,
+              597.3,
+              75.33,
+              611.17
+            ]
+          ],
+          "visible_region": [
+            [
+              68.0,
+              597.3,
+              75.33,
+              611.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 2 contents offset 66"
+        },
+        {
+          "char": "E",
+          "state": "full",
+          "visible_ratio": 1.0,
+          "glyph_box": [
+            75.33,
+            597.3,
+            83.34,
+            611.17
+          ],
+          "clipped_box": [
+            [
+              75.33,
+              597.3,
+              83.34,
+              611.17
+            ]
+          ],
+          "visible_region": [
+            [
+              75.33,
+              597.3,
+              83.34,
+              611.17
+            ]
+          ],
+          "form_invocation": [],
+          "text_instruction": "Tj @ page 2 contents offset 66"
+        }
+      ],
+      "provenance": {
+        "form_invocations": [],
+        "text_instructions": [
+          "Tj @ page 2 contents offset 66"
+        ]
+      },
+      "flags": [
+        {
+          "type": "image_xobject",
+          "detail": "image XObject Im1 painted",
+          "region": [
+            [
+              48,
+              596,
+              88,
+              610
+            ]
+          ],
+          "instruction": "Do @ page 2 contents offset 99",
+          "form_invocation": []
+        }
+      ]
+    }
+  ],
+  "flags_outside_fields": []
+}
