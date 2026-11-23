@@ -62,6 +62,84 @@ class _COMMAND_TYPE:
 _bchr = functools.partial(struct.pack, 'B')
 
 
+class ReadIndexResult(object):
+    """Snapshot returned by a successful linearizable read.
+
+    :ivar readIndex: raft log index that was committed (and applied locally)
+        when the read was confirmed; everything up to and including this index
+        is reflected in the payload.
+    :ivar term: raft term of the leader that confirmed the read index.
+    :ivar payload: user object returned by the read function; by default a dict
+        with 'manifest', 'cursor' and 'logBoundary' keys.
+    :ivar logBoundary: (index, term) pair of the last raft log entry covered
+        by the snapshot, i.e. the exact log boundary the payload corresponds
+        to. A given boundary can only ever describe one state.
+    """
+
+    def __init__(self, readIndex, term, payload, logBoundary=None):
+        self.readIndex = readIndex
+        self.term = term
+        self.payload = payload
+        self.logBoundary = logBoundary if logBoundary is not None else (readIndex, term)
+
+    def __repr__(self):
+        return 'ReadIndexResult(readIndex=%r, term=%r, logBoundary=%r, payload=%r)' % (
+            self.readIndex, self.term, self.logBoundary, self.payload)
+
+
+class _PendingRead(object):
+    """A linearizable read accepted by this node and awaiting confirmation."""
+
+    __slots__ = ('requestID', 'readFunc', 'callback', 'deadline', 'cancelled',
+                 'readIndex', 'term')
+
+    def __init__(self, requestID, readFunc, callback, deadline):
+        self.requestID = requestID
+        self.readFunc = readFunc
+        self.callback = callback
+        self.deadline = deadline
+        self.cancelled = False
+        self.readIndex = None
+        self.term = None
+
+
+class _ReadWaiter(object):
+    """A confirmed read waiting for the local state machine to catch up."""
+
+    __slots__ = ('pendingRead', 'waitIndex')
+
+    def __init__(self, pendingRead, waitIndex):
+        self.pendingRead = pendingRead
+        self.waitIndex = waitIndex
+
+
+class _LeaderReadRequest(object):
+    """Leader-side bookkeeping for a read-index round."""
+
+    __slots__ = ('pendingRead', 'term', 'readIndex', 'acks', 'deadline')
+
+    def __init__(self, pendingRead, term, readIndex, deadline):
+        self.pendingRead = pendingRead
+        self.term = term
+        self.readIndex = readIndex
+        self.acks = 1
+        self.deadline = deadline
+
+
+class _ProxiedReadRequest(object):
+    """Leader-side bookkeeping for a read-index round requested by a follower."""
+
+    __slots__ = ('followerNode', 'origRequestID', 'term', 'readIndex', 'acks', 'deadline')
+
+    def __init__(self, followerNode, origRequestID, term, readIndex, deadline):
+        self.followerNode = followerNode
+        self.origRequestID = origRequestID
+        self.term = term
+        self.readIndex = readIndex
+        self.acks = 1
+        self.deadline = deadline
+
+
 class SyncObjException(Exception):
     def __init__(self, errorCode, *args, **kwargs):
         Exception.__init__(self, errorCode, *args, **kwargs)
@@ -262,6 +340,9 @@ class SyncObj(object):
         self.__commandsQueue = FastQueue(self.__conf.commandsQueueSize)
         if not self.__conf.appendEntriesUseBatch and PIPE_NOTIFIER_ENABLED:
             self.__pipeNotifier = PipeNotifier(self._poller)
+        # Linearizable reads are enqueued from arbitrary threads and must wake
+        # the raft loop promptly even when append-entries batching is enabled.
+        self.__readNotifier = PipeNotifier(self._poller) if PIPE_NOTIFIER_ENABLED else None
         self.__needLoadDumpFile = True
 
         self.__lastReadonlyCheck = 0
@@ -270,6 +351,17 @@ class SyncObj(object):
         self.__commandsWaitingCommit = collections.defaultdict(list)  # logID => [(termID, callback), ...]
         self.__commandsLocalCounter = 0
         self.__commandsWaitingReply = {}  # commandLocalCounter => callback
+
+        # Linearizable (read-index) reads. Everything below is only touched from
+        # the raft thread, except __readRequestsQueue and __readRequestCounter
+        # which are also accessed from caller threads (the counter is lock-guarded).
+        self.__readRequestsQueue = FastQueue(self.__conf.commandsQueueSize)
+        self.__readRequestCounter = 0
+        self.__readRequestCounterLock = threading.Lock()
+        self.__leaderReadRequests = {}  # requestID => _LeaderReadRequest (reads started on this leader)
+        self.__proxiedReadRounds = {}  # localRequestID => _ProxiedReadRequest (reads forwarded by followers)
+        self.__proxiedReadRequests = {}  # requestID => _PendingRead (follower, awaiting the leader's read index)
+        self.__readWaiters = []  # list of _ReadWaiter, local reads waiting for raftLastApplied
 
         self.__properies = set()
         for key in self.__dict__:
@@ -342,6 +434,7 @@ class SyncObj(object):
         self.destroy()
 
     def _doDestroy(self):
+        self._failPendingReadsOnDestroy()
         self.__transport.destroy()
         for consumer in self.__consumers:
             consumer._destroy()
@@ -698,6 +791,8 @@ class SyncObj(object):
 
         self._checkCommandsToApply()
         self.__tryLogCompaction()
+        self._processReadRequests()
+        self.__expireReadRequests()
 
         with self.__onTickCallbacksLock:
             for callback in self.__onTickCallbacks:
@@ -1040,6 +1135,18 @@ class SyncObj(object):
             else:
                 self._applyCommand(message['command'], None)
 
+        if message['type'] == 'read_index':
+            self.__onReadIndexRequest(node, message)
+
+        if message['type'] == 'read_index_ack':
+            self.__onReadIndexAck(node, message)
+
+        if message['type'] == 'consistent_read':
+            self.__onConsistentReadRequest(node, message)
+
+        if message['type'] == 'consistent_read_response':
+            self.__onConsistentReadResponse(message)
+
         if message['type'] == 'apply_command_response':
             requestID = message['request_id']
             error = message.get('error', None)
@@ -1128,6 +1235,10 @@ class SyncObj(object):
 
     def __onNodeDisconnected(self, node):
         self.__connectedNodes.discard(node)
+        # Reads proxied for a node that is gone can never be delivered.
+        for localRequestID, proxiedRequest in list(self.__proxiedReadRounds.items()):
+            if proxiedRequest.followerNode == node:
+                self.__proxiedReadRounds.pop(localRequestID, None)
 
     def __getCurrentLogIndex(self):
         return self.__raftLog[-1][1]
@@ -1160,6 +1271,361 @@ class SyncObj(object):
             if totalSize >= maxSizeBytes:
                 break
         return result[:i + 1]
+
+    def consistentRead(self, readFunc=None, timeout=None, callback=None):
+        """Perform a linearizable (consistent) read without appending a log entry.
+
+        Unlike plain local reads, the returned state is guaranteed to be at
+        least as fresh as every write whose success acknowledgement was
+        delivered before the read started. The read never appends a new entry
+        to the replicated log: leadership is confirmed through a read-index
+        quorum round, and the state is only read once this node has applied up
+        to the confirmed log position.
+
+        :param readFunc: zero-argument function called from the raft thread once
+            the node is caught up; its return value is put into
+            `ReadIndexResult.payload`. If None, `_buildReadSnapshot` is used.
+        :type readFunc: function | None
+        :param timeout: maximum time (seconds) to wait for confirmation and for
+            the local state machine to catch up. On expiry the read fails with
+            `FAIL_REASON.TIMEOUT` instead of returning stale data. None uses the
+            configured `linearizableReadTimeout`.
+        :type timeout: float | None
+        :param callback: function(result, failReason). On success result is a
+            `ReadIndexResult` and failReason is None. If omitted, the call
+            blocks and returns the `ReadIndexResult`.
+        :type callback: function | None
+        :rtype: ReadIndexResult | None
+        """
+        if timeout is None:
+            timeout = self.__conf.linearizableReadTimeout
+        if timeout is not None and timeout <= 0:
+            raise SyncObjException('timeout must be positive')
+
+        if callback is None:
+            asyncResult = AsyncResult()
+            callback = asyncResult.onResult
+            sync = True
+        else:
+            sync = False
+
+        requestID = self._enqueueReadRequest(readFunc, callback, timeout)
+
+        if sync:
+            res = asyncResult.event.wait(timeout)
+            if not res:
+                raise SyncObjException(FAIL_REASON.TIMEOUT)
+            if asyncResult.error is not None:
+                raise SyncObjException(asyncResult.error)
+            return asyncResult.result
+        return requestID
+
+    # Explicit, self-describing alias kept for callers that prefer the Raft term.
+    linearizableRead = consistentRead
+
+    def cancelLinearizableRead(self, requestID):
+        """Cancel a pending linearizable read.
+
+        :param requestID: request id returned by the asynchronous
+            `consistentRead`/`linearizableRead` call. If the read is still
+            pending its callback is invoked with `FAIL_REASON.CANCELLED`;
+            already completed reads are not affected.
+        :return: True if the cancellation request was accepted.
+        :rtype: bool
+        """
+        return self._enqueueReadCancellation(requestID)
+
+    def _buildReadSnapshot(self):
+        """Build the default linearizable-read payload.
+
+        Override this method (or pass an explicit ``readFunc``) to decide which
+        fields make up the consistent snapshot, e.g. the published partition
+        manifest, the ingestion cursor and the matching log boundary.
+        """
+        return {
+            'manifest': getattr(self, 'manifest', None),
+            'cursor': getattr(self, 'cursor', None),
+            'logBoundary': getattr(self, 'logBoundary', None),
+        }
+
+    def _enqueueReadRequest(self, readFunc, callback, timeout):
+        deadline = monotonicTime() + timeout if timeout is not None else None
+        with self.__readRequestCounterLock:
+            self.__readRequestCounter += 1
+            requestID = self.__readRequestCounter
+        try:
+            self.__readRequestsQueue.put_nowait(('read', requestID, readFunc, callback, deadline))
+        except Queue.Full:
+            callback(None, FAIL_REASON.QUEUE_FULL)
+            return None
+        self.__notifyReadQueue()
+        return requestID
+
+    def _enqueueReadCancellation(self, requestID):
+        try:
+            self.__readRequestsQueue.put_nowait(('cancel', requestID))
+        except Queue.Full:
+            return False
+        self.__notifyReadQueue()
+        return True
+
+    def __notifyReadQueue(self):
+        # The raft thread may be blocked in the poller while waiting for network
+        # events; wake it up so the new request is processed without waiting for
+        # the next tick. Safe to call from any thread.
+        if self.__readNotifier is not None:
+            self.__readNotifier.notify()
+
+    def _processReadRequests(self):
+        """Drain the cross-thread read request queue. Raft thread only."""
+        while True:
+            try:
+                request = self.__readRequestsQueue.get_nowait()
+            except Queue.Empty:
+                return
+            if request[0] == 'cancel':
+                self.__cancelPendingRead(request[1])
+            else:
+                _, requestID, readFunc, callback, deadline = request
+                self.__startPendingRead(requestID, readFunc, callback, deadline)
+
+    def __startPendingRead(self, requestID, readFunc, callback, deadline):
+        if deadline is not None and deadline <= monotonicTime():
+            callback(None, FAIL_REASON.TIMEOUT)
+            return
+        pendingRead = _PendingRead(requestID, readFunc, callback, deadline)
+        if self.__raftState == _RAFT_STATE.LEADER:
+            self.__startReadIndexRound(pendingRead)
+        elif self.__raftLeader is not None:
+            # Forward to the leader; the leader runs the quorum round and tells
+            # us the committed index to wait for. No log entry is created.
+            self.__proxiedReadRequests[requestID] = pendingRead
+            self.__transport.send(self.__raftLeader, {
+                'type': 'consistent_read',
+                'request_id': requestID,
+            })
+        else:
+            callback(None, FAIL_REASON.MISSING_LEADER)
+
+    def __startReadIndexRound(self, pendingRead):
+        # ReadIndex (Raft §6.4): remember the current commit index and ask a
+        # quorum to confirm we are still the leader. No log entry is appended.
+        readIndex = self.__raftCommitIndex
+        pendingRead.readIndex = readIndex
+        pendingRead.term = self.__raftCurrentTerm
+        self.__leaderReadRequests[pendingRead.requestID] = _LeaderReadRequest(
+            pendingRead, self.__raftCurrentTerm, readIndex, pendingRead.deadline)
+        for node in self.__otherNodes:
+            self.__transport.send(node, {
+                'type': 'read_index',
+                'request_id': pendingRead.requestID,
+                'term': self.__raftCurrentTerm,
+            })
+        self.__maybeCompleteLeaderRead(pendingRead.requestID)
+
+    def __maybeCompleteLeaderRead(self, requestID):
+        leaderRequest = self.__leaderReadRequests.get(requestID)
+        if leaderRequest is None:
+            return
+        quorum = (len(self.__otherNodes) + 1) / 2
+        if leaderRequest.acks > quorum and self.__raftState == _RAFT_STATE.LEADER:
+            self.__leaderReadRequests.pop(requestID, None)
+            # The leader's own no-op entry from the election is committed before
+            # any read index can be confirmed, so the commit index reflects only
+            # entries of the current leadership (Raft §6.4 read-index rules).
+            self.__readWaiters.append(_ReadWaiter(leaderRequest.pendingRead, leaderRequest.readIndex))
+
+    def __onReadIndexRequest(self, node, message):
+        # Follower side: only answer for a current, legitimate leader. An old
+        # leader (partitioned away, stale term) gets no ack and can never reach
+        # a quorum, so it cannot serve any (possibly stale) read.
+        if self.__selfNode is None:
+            return
+        if message['term'] != self.__raftCurrentTerm:
+            return
+        if self.__raftState != _RAFT_STATE.FOLLOWER or node != self.__raftLeader:
+            return
+        self.__transport.send(node, {
+            'type': 'read_index_ack',
+            'request_id': message['request_id'],
+            'term': message['term'],
+        })
+
+    def __onReadIndexAck(self, node, message):
+        if self.__raftState != _RAFT_STATE.LEADER or message['term'] != self.__raftCurrentTerm:
+            return
+        leaderRequest = self.__leaderReadRequests.get(message['request_id'])
+        if leaderRequest is not None and message['term'] == leaderRequest.term:
+            leaderRequest.acks += 1
+            self.__maybeCompleteLeaderRead(message['request_id'])
+            return
+        proxiedRequest = self.__proxiedReadRounds.get(message['request_id'])
+        if proxiedRequest is not None and message['term'] == proxiedRequest.term:
+            proxiedRequest.acks += 1
+            self.__maybeCompleteProxiedRead(message['request_id'])
+
+    def __onConsistentReadRequest(self, node, message):
+        # Leader side: a follower asks us to establish a read index on its behalf.
+        if self.__raftState != _RAFT_STATE.LEADER:
+            self.__transport.send(node, {
+                'type': 'consistent_read_response',
+                'request_id': message['request_id'],
+                'error': FAIL_REASON.NOT_LEADER,
+            })
+            return
+        with self.__readRequestCounterLock:
+            self.__readRequestCounter += 1
+            localRequestID = self.__readRequestCounter
+        deadline = monotonicTime() + self.__conf.linearizableReadTimeout \
+            if self.__conf.linearizableReadTimeout is not None else None
+        proxiedRequest = _ProxiedReadRequest(
+            node, message['request_id'], self.__raftCurrentTerm,
+            self.__raftCommitIndex, deadline)
+        self.__proxiedReadRounds[localRequestID] = proxiedRequest
+        for otherNode in self.__otherNodes:
+            self.__transport.send(otherNode, {
+                'type': 'read_index',
+                'request_id': localRequestID,
+                'term': self.__raftCurrentTerm,
+            })
+        self.__maybeCompleteProxiedRead(localRequestID)
+
+    def __maybeCompleteProxiedRead(self, localRequestID):
+        proxiedRequest = self.__proxiedReadRounds.get(localRequestID)
+        if proxiedRequest is None:
+            return
+        quorum = (len(self.__otherNodes) + 1) / 2
+        if proxiedRequest.acks > quorum and self.__raftState == _RAFT_STATE.LEADER:
+            self.__proxiedReadRounds.pop(localRequestID, None)
+            self.__transport.send(proxiedRequest.followerNode, {
+                'type': 'consistent_read_response',
+                'request_id': proxiedRequest.origRequestID,
+                'read_index': proxiedRequest.readIndex,
+                'term': proxiedRequest.term,
+            })
+
+    def __onConsistentReadResponse(self, message):
+        requestID = message['request_id']
+        pendingRead = self.__proxiedReadRequests.pop(requestID, None)
+        if pendingRead is None:
+            return
+        error = message.get('error', None)
+        if error is not None:
+            pendingRead.callback(None, error)
+            return
+        pendingRead.readIndex = message['read_index']
+        pendingRead.term = message['term']
+        # Wait until this node applied up to the confirmed index - a node still
+        # installing an older snapshot must not answer before catching up.
+        self.__readWaiters.append(_ReadWaiter(pendingRead, pendingRead.readIndex))
+
+    def __processReadWaiters(self):
+        if not self.__readWaiters:
+            return
+        remaining = []
+        for waiter in self.__readWaiters:
+            pendingRead = waiter.pendingRead
+            if pendingRead.cancelled:
+                continue
+            if pendingRead.deadline is not None and monotonicTime() > pendingRead.deadline:
+                pendingRead.callback(None, FAIL_REASON.TIMEOUT)
+                continue
+            if self.__raftLastApplied >= waiter.waitIndex:
+                self.__completePendingRead(pendingRead)
+            else:
+                remaining.append(waiter)
+        self.__readWaiters = remaining
+
+    def __completePendingRead(self, pendingRead):
+        # The state machine may have advanced beyond the confirmed index while
+        # waiting. Snapshot at the actual applied position so the payload and
+        # the returned log boundary describe exactly the same state; the index
+        # is still >= the confirmed read index, preserving linearizability.
+        snapshotIndex = self.__raftLastApplied
+        entries = self.__getEntries(snapshotIndex, 1)
+        if entries:
+            boundaryTerm = entries[0][2]
+        else:
+            # The entry was compacted into a snapshot; the snapshot ends exactly
+            # at raftLastApplied, which still covers the confirmed read index.
+            boundaryTerm = self.__getCurrentLogTerm()
+        readFunc = pendingRead.readFunc or self._buildReadSnapshot
+        try:
+            payload = readFunc()
+        except Exception:
+            logger.exception('linearizable read function failed')
+            pendingRead.callback(None, FAIL_REASON.REQUEST_DENIED)
+            return
+        result = ReadIndexResult(snapshotIndex, pendingRead.term, payload, (snapshotIndex, boundaryTerm))
+        pendingRead.callback(result, None)
+
+    def __cancelPendingRead(self, requestID):
+        for waiter in self.__readWaiters:
+            if waiter.pendingRead.requestID == requestID and not waiter.pendingRead.cancelled:
+                waiter.pendingRead.cancelled = True
+                waiter.pendingRead.callback(None, FAIL_REASON.CANCELLED)
+                return
+        pendingRead = self.__proxiedReadRequests.pop(requestID, None)
+        if pendingRead is not None:
+            pendingRead.cancelled = True
+            pendingRead.callback(None, FAIL_REASON.CANCELLED)
+            return
+        leaderRequest = self.__leaderReadRequests.pop(requestID, None)
+        if leaderRequest is not None:
+            leaderRequest.pendingRead.cancelled = True
+            leaderRequest.pendingRead.callback(None, FAIL_REASON.CANCELLED)
+
+    def __expireReadRequests(self):
+        now = monotonicTime()
+        for requestID, leaderRequest in list(self.__leaderReadRequests.items()):
+            if leaderRequest.deadline is not None and now > leaderRequest.deadline:
+                self.__leaderReadRequests.pop(requestID, None)
+                leaderRequest.pendingRead.callback(None, FAIL_REASON.TIMEOUT)
+        for localRequestID, proxiedRequest in list(self.__proxiedReadRounds.items()):
+            if proxiedRequest.deadline is not None and now > proxiedRequest.deadline:
+                self.__proxiedReadRounds.pop(localRequestID, None)
+                self.__transport.send(proxiedRequest.followerNode, {
+                    'type': 'consistent_read_response',
+                    'request_id': proxiedRequest.origRequestID,
+                    'error': FAIL_REASON.TIMEOUT,
+                })
+        for requestID, pendingRead in list(self.__proxiedReadRequests.items()):
+            if pendingRead.deadline is not None and now > pendingRead.deadline:
+                self.__proxiedReadRequests.pop(requestID, None)
+                pendingRead.callback(None, FAIL_REASON.TIMEOUT)
+        self.__processReadWaiters()
+
+    def __failAllPendingReads(self, reason):
+        for leaderRequest in self.__leaderReadRequests.values():
+            leaderRequest.pendingRead.callback(None, reason)
+        self.__leaderReadRequests.clear()
+        for proxiedRequest in self.__proxiedReadRounds.values():
+            # Let the waiting follower fail fast and retry against the new leader.
+            self.__transport.send(proxiedRequest.followerNode, {
+                'type': 'consistent_read_response',
+                'request_id': proxiedRequest.origRequestID,
+                'error': FAIL_REASON.NOT_LEADER,
+            })
+        self.__proxiedReadRounds.clear()
+        for pendingRead in self.__proxiedReadRequests.values():
+            pendingRead.callback(None, reason)
+        self.__proxiedReadRequests.clear()
+        # Read waiters already hold a quorum-confirmed committed index, so they
+        # stay valid across elections: they complete as soon as the index is
+        # applied, or expire on their own deadline. Nothing to do here.
+
+    def _failPendingReadsOnDestroy(self):
+        for leaderRequest in self.__leaderReadRequests.values():
+            leaderRequest.pendingRead.callback(None, FAIL_REASON.CANCELLED)
+        self.__leaderReadRequests.clear()
+        self.__proxiedReadRounds.clear()
+        for pendingRead in self.__proxiedReadRequests.values():
+            pendingRead.callback(None, FAIL_REASON.CANCELLED)
+        self.__proxiedReadRequests.clear()
+        for waiter in self.__readWaiters:
+            if not waiter.pendingRead.cancelled:
+                waiter.pendingRead.callback(None, FAIL_REASON.CANCELLED)
+        self.__readWaiters = []
 
     def _isLeader(self):
         """ Check if current node has a leader state.
@@ -1242,11 +1708,22 @@ class SyncObj(object):
         callback = self.__conf.onStateChanged
         if callback is not None and oldState != newState:
             callback(oldState, newState)
+        if oldState == _RAFT_STATE.LEADER and newState != _RAFT_STATE.LEADER:
+            # Reads whose leadership was not yet confirmed cannot be proven
+            # anymore. Already-confirmed waiters keep a valid committed index
+            # and are left to complete (or expire) on their own.
+            self.__failAllPendingReads(FAIL_REASON.NOT_LEADER)
 
     def __onLeaderChanged(self):
         for id in sorted(self.__commandsWaitingReply):
             self.__commandsWaitingReply[id](None, FAIL_REASON.LEADER_CHANGED)
         self.__commandsWaitingReply = {}
+        # Reads waiting for the previous leader's confirmation cannot be proven
+        # against it anymore; callers may retry and the new request is routed
+        # to the new leader. Confirmed waiters are untouched.
+        for pendingRead in self.__proxiedReadRequests.values():
+            pendingRead.callback(None, FAIL_REASON.LEADER_CHANGED)
+        self.__proxiedReadRequests.clear()
 
     def __sendAppendEntries(self):
         self.__newAppendEntriesTime = monotonicTime() + self.__conf.appendEntriesPeriod

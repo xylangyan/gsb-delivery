@@ -7,6 +7,12 @@ SyncObj
 .. autoclass:: pysyncobj.SyncObj
     :members:
 
+ReadIndexResult
+---------------
+
+.. autoclass:: pysyncobj.ReadIndexResult
+    :members:
+
 replicated
 ----------
 

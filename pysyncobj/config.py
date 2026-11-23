@@ -8,6 +8,8 @@ class FAIL_REASON:
     LEADER_CHANGED = 5      #: Similar to NOT_LEADER - leader has changed without command commit.
     REQUEST_DENIED = 6      #: Command denied
     UNKNOWN_OUTCOME = 7     #: Unknown outcome - Unknown outcome, might happen if a older command is tried to apply
+    TIMEOUT = 8             #: Linearizable read could not be confirmed before the deadline expired
+    CANCELLED = 9           #: Linearizable read was cancelled before it could be confirmed
 
 class SERIALIZER_STATE:
     NOT_SERIALIZING = 0     #: Serialization not started or already finished.
@@ -168,6 +170,12 @@ class SyncObjConf(object):
         #: Set to None to disable
         self.tcp_keepalive = kwargs.get('tcp_keepalive', (16, 3, 5))
 
+        #: Default deadline (in seconds) for linearizable reads started via
+        #: `SyncObj.linearizableRead` / `SyncObj.consistentRead`. If the read index
+        #: cannot be confirmed and applied locally before the deadline, the read
+        #: fails with `FAIL_REASON.TIMEOUT` instead of returning stale data.
+        self.linearizableReadTimeout = kwargs.get('linearizableReadTimeout', 5.0)
+
     def validate(self):
         assert self.autoTickPeriod > 0
         assert self.commandsQueueSize >= 0
@@ -186,6 +194,7 @@ class SyncObjConf(object):
         assert self.logCompactionMinTime > 0
         assert self.logCompactionBatchSize > 0
         assert self.bindRetryTime > 0
+        assert self.linearizableReadTimeout is None or self.linearizableReadTimeout > 0
         assert (self.deserializer is None) == (self.serializer is None)
         if self.serializer is not None:
             assert self.fullDumpFile is not None
