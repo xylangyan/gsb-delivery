@@ -89,8 +89,28 @@ class Serializer(object):
                 with open(tmpFile, 'wb') as f:
                     with gzip.GzipFile(fileobj=f, mode='wb') as g:
                         pickle.dump(data, g)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except (OSError, AttributeError):
+                        pass
 
             atomicReplace(tmpFile, self.__fileName)
+            try:
+                with open(self.__fileName, 'rb') as f:
+                    os.fsync(f.fileno())
+                directory = os.path.dirname(os.path.abspath(self.__fileName)) or '.'
+                try:
+                    dfd = os.open(directory, os.O_RDONLY)
+                except (OSError, AttributeError):
+                    dfd = None
+                if dfd is not None:
+                    try:
+                        os.fsync(dfd)
+                    finally:
+                        os.close(dfd)
+            except (OSError, AttributeError):
+                pass
             if self.__useFork:
                 os._exit(0)
             else:
@@ -192,10 +212,25 @@ class Serializer(object):
             self.__incomingTransmissionFile = None
             return False
         if isLast:
+            try:
+                self.__incomingTransmissionFile.flush()
+                os.fsync(self.__incomingTransmissionFile.fileno())
+            except (OSError, AttributeError):
+                pass
             self.__incomingTransmissionFile.close()
             self.__incomingTransmissionFile = None
             try:
                 atomicReplace(tmpFile, self.__fileName)
+                directory = os.path.dirname(os.path.abspath(self.__fileName)) or '.'
+                try:
+                    dfd = os.open(directory, os.O_RDONLY)
+                except (OSError, AttributeError):
+                    dfd = None
+                if dfd is not None:
+                    try:
+                        os.fsync(dfd)
+                    finally:
+                        os.close(dfd)
             except:
                 logger.exception('Failed to rename temporary incoming transition file')
                 return False

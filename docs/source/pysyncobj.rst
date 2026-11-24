@@ -35,3 +35,9 @@ SERIALIZER_STATE
 .. autoclass:: pysyncobj.SERIALIZER_STATE
     :members:
 
+Retention receipts
+------------------
+
+.. automodule:: pysyncobj.retention
+    :members:
+

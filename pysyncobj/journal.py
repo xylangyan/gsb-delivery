@@ -44,6 +44,12 @@ class Journal(object):
     def getVotedForNodeId(self):
         raise NotImplementedError
 
+    def setRetention(self, retention, sync = False):
+        raise NotImplementedError
+
+    def getRetention(self):
+        raise NotImplementedError
+
     def onOneSecondTimer(self):
         pass
 
@@ -56,6 +62,7 @@ class MemoryJournal(Journal):
         self.__lastCommitIndex = 0
         self.__currentTerm = 0
         self.__votedForNodeId = None
+        self.__retention = None
 
     def add(self, command, idx, term):
         self.__journal.append((command, idx, term))
@@ -94,6 +101,12 @@ class MemoryJournal(Journal):
     def getVotedForNodeId(self):
         return self.__votedForNodeId
 
+    def setRetention(self, retention, sync = False):
+        self.__retention = retention
+
+    def getRetention(self):
+        return self.__retention
+
 
 
 class ResizableFile(object):
@@ -107,6 +120,7 @@ class ResizableFile(object):
                     f.write(defaultContent)
         self.__f = open(fileName, 'r+b')
         self.__mm = mmap.mmap(self.__f.fileno(), 0)
+        self.__lastFlushedSize = None
         currSize = self.__mm.size()
         if currSize < initialSize:
             try:
@@ -142,7 +156,29 @@ class ResizableFile(object):
         self.__f.close()
 
     def flush(self):
+        size = self.__mm.size()
+        if self.__lastFlushedSize == size:
+            return
         self.__mm.flush()
+        try:
+            os.fsync(self.__f.fileno())
+        except (OSError, AttributeError):
+            pass
+        self.__lastFlushedSize = size
+
+
+def _fsyncDirectory(path):
+    directory = os.path.dirname(os.path.abspath(path)) or '.'
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except (OSError, AttributeError):
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 class MetaStorer(object):
@@ -161,7 +197,12 @@ class MetaStorer(object):
         with open(self.__path + '.tmp', 'wb') as f:
             f.write(dumps(meta))
             f.flush()
+            try:
+                os.fsync(f.fileno())
+            except (OSError, AttributeError):
+                pass
         shutil.move(self.__path + '.tmp', self.__path)
+        _fsyncDirectory(self.__path)
 
     def getPath(self):
         return self.__path
@@ -281,6 +322,19 @@ class FileJournal(Journal):
 
     def getVotedForNodeId(self):
         return self.__meta.get('votedForNodeId', None)
+
+    def setRetention(self, retention, sync = False):
+        self.__meta['retention'] = retention
+        if sync:
+            # A durable acknowledgement must be on stable storage before it
+            # is sent to a leader, so this path bypasses the lazy timer.
+            self.__metaStorer.storeMeta(self.__meta)
+            self.__metaSaved = True
+        else:
+            self.__metaSaved = False
+
+    def getRetention(self):
+        return self.__meta.get('retention')
 
     def onOneSecondTimer(self):
         if not self.__metaSaved:

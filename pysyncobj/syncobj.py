@@ -38,12 +38,13 @@ except ImportError:
 from .serializer import Serializer, SERIALIZER_STATE
 from .node import Node, TCPNode
 from .transport import Transport, TCPTransport, TransportNotReadyError
-from .journal import createJournal
+from .journal import createJournal, FileJournal
 from .config import SyncObjConf, FAIL_REASON
 from .encryptor import HAS_CRYPTO, getEncryptor
 from .version import VERSION
 from .fast_queue import FastQueue
 from .monotonic import monotonic as monotonicTime
+from . import retention as _retention
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ class _COMMAND_TYPE:
     NO_OP = 1
     MEMBERSHIP = 2
     VERSION = 3
+    RETENTION_PUBLISH = 4
+    RETENTION_RECEIPT = 5
 
 _bchr = functools.partial(struct.pack, 'B')
 
@@ -187,6 +190,32 @@ class SyncObj(object):
         self.__noopIDx = None
         self.__destroying = False
         self.__recvTransmission = ''
+
+        # Retention / archived-partition state. The ledger is rebuilt from the
+        # journal meta (and later from the full dump) so a fresh process can
+        # verify a receipt without any in-memory history. Evidence is local
+        # proof; receipts are replicated commands and are never inferred from
+        # the raft commit index alone.
+        self.__retention = _retention.RetentionLedger()
+        self.__retentionState = self.__raftLog.getRetention()
+        if self.__retentionState:
+            try:
+                self.__retention.importState(self.__retentionState, includeEvidence=True)
+            except Exception:
+                logger.exception('failed to restore retention state from journal meta')
+        self.__retentionAcks = {}
+        self.__retentionPending = {}
+        self.__retentionReceiptInFlight = {}
+        self.__retentionLastExchange = 0
+        self.__retentionSnapshotBoundary = None
+        if self.__conf.fullDumpFile is not None and os.path.isfile(self.__conf.fullDumpFile):
+            snapshot = _retention.peekSnapshotBoundary(
+                self.__conf.fullDumpFile, self.__conf.deserializer)
+            if snapshot is not None:
+                self.__retentionSnapshotBoundary = snapshot
+        # Meta evidence may describe a dump that has since been replaced.
+        # Prune it now so a restart cannot use stale snapshot proof.
+        self.__retention.pruneSnapshotEvidence(self.__retentionSnapshotBoundary)
 
         self.__onTickCallbacks = []
         self.__onTickCallbacksLock = threading.Lock()
@@ -398,6 +427,386 @@ class SyncObj(object):
         if not isinstance(node, Node):
             node = self.__nodeClass(node)
         self._applyCommand(pickle.dumps(['rem', node.id, node]), callback, _COMMAND_TYPE.MEMBERSHIP)
+
+    def registerRetentionPublication(self, publicationId, partition, manifest,
+                                     archiveWatermark, callback=None):
+        """Register a publication whose manifest must remain recoverable.
+
+        The publication is replicated through the normal raft log; the
+        existing commit callback is not involved.  Once the registration is
+        committed, every node keeps local durable evidence for the
+        publication.  A retention receipt is only issued after a durable
+        majority has acknowledged the publication at or beyond
+        ``archiveWatermark``.
+
+        :param publicationId: publication number (str/int)
+        :param partition: partition name (str)
+        :param manifest: JSON-serialisable manifest
+        :param archiveWatermark: raft log index archived for this partition
+        :param callback: ordinary commit callback for the registration. It
+            fires as soon as the registration itself commits; it does not
+            wait for the retention receipt. Receipts are reported through
+            ``SyncObjConf.onRetentionReceipt``.
+        """
+        if not self.__conf.retentionEnabled:
+            raise Exception('retention is disabled')
+        if int(archiveWatermark) < 1:
+            raise Exception('archiveWatermark must be a positive raft index')
+        key = _retention.publicationKey(publicationId, partition)
+        record = {
+            'key': key,
+            'publication_id': publicationId,
+            'partition': partition,
+            'manifest': manifest,
+            'manifest_hash': _retention.manifestHash(manifest),
+            'archive_watermark': int(archiveWatermark),
+        }
+        self._applyCommand(pickle.dumps(record), callback,
+                           _COMMAND_TYPE.RETENTION_PUBLISH)
+
+    def getRetentionReceipt(self, publicationId, partition):
+        """Return the newest committed receipt for a publication, if any."""
+        key = _retention.publicationKey(publicationId, partition)
+        return self.__retention.getReceipt(key)
+
+    def getRetentionEvidence(self, publicationId, partition):
+        """Return this node's local durable evidence for a publication."""
+        key = _retention.publicationKey(publicationId, partition)
+        return self.__retention.getEvidence(key)
+
+    def verifyRetentionReceipt(self, receipt):
+        """Verify a receipt without trusting any current in-memory state."""
+        return _retention.verifyReceipt(receipt)
+
+    def receiptSupportsConfiguration(self, receipt, configuration=None):
+        """Check that a receipt still covers a (target) configuration."""
+        if configuration is None:
+            configuration = self.__currentConfiguration()
+        return _retention.receiptSupportsConfiguration(receipt, configuration)
+
+    def retentionReadyFor(self, publicationId, partition, requireConfiguration=None):
+        """Whether a committed receipt permits clearing/retiring the source.
+
+        Returns a dict with ``ready`` plus the reasons it is not ready.  The
+        check never derives readiness from :attr:`raftCommitIndex` alone: a
+        receipt must exist and its durable acknowledgements must cover the
+        required configuration.
+
+        By default the requirement is the *surviving* configuration: when a
+        node is being retired, pass the remaining node ids explicitly so a
+        departed node's acknowledgement cannot be counted as part of the
+        durable majority that authorises the next clear.
+        """
+        key = _retention.publicationKey(publicationId, partition)
+        receipt = self.__retention.getReceipt(key)
+        if receipt is None:
+            publication = self.__retention.getPublication(key)
+            return {'ready': False,
+                    'reason': 'no-committed-receipt' if publication is None
+                              else 'receipt-pending',
+                    'publication': publication,
+                    'receipt': None}
+        verification = _retention.verifyReceipt(receipt)
+        result = {'ready': False, 'receipt': receipt, 'receipt_errors': verification['errors']}
+        if not verification['valid']:
+            result['reason'] = 'invalid-receipt'
+            return result
+        if requireConfiguration is None:
+            requireConfiguration = self.__currentConfiguration()
+        support = _retention.receiptSupportsConfiguration(receipt, requireConfiguration)
+        result.update(support)
+        if not support['supported']:
+            result['reason'] = 'insufficient-target-majority'
+        else:
+            result['ready'] = True
+            result['reason'] = 'ok'
+        return result
+
+    def recoverRetention(self):
+        """Re-read this node's durable retention materials.
+
+        Uses only the file journal meta and the local full dump, i.e. the
+        same materials available after an unclean simultaneous restart.
+        """
+        state = _retention.recoverRetentionState(
+            journalFile=self.__conf.journalFile,
+            dumpFile=self.__conf.fullDumpFile,
+            deserializer=self.__conf.deserializer,
+            nodeId=None if self.__selfNode is None else str(self.__selfNode.id))
+        return state
+
+    def _retentionReceiptState(self):
+        return self.__retention.export()
+
+    def __currentConfiguration(self):
+        nodes = sorted(node.id for node in self.__otherNodes)
+        if self.__selfNode is not None:
+            nodes.append(self.__selfNode.id)
+        return nodes
+
+    def __retentionDurableBoundary(self, publication):
+        """Return the durable evidence boundary for a publication, or None.
+
+        Only the two supported node-storage forms can prove recoverability:
+
+        * a flushed file journal that spans the archived watermark and the
+          publication registration (journal replay reconstructs both);
+        * a local full dump whose boundary is at or beyond the publication
+          registration (so the manifest really is inside the reopenable
+          snapshot).
+
+        A dump may also be the base for a journal tail: the snapshot covers
+        the watermark and the journal is contiguous with it and contains the
+        manifest.  Merely moving the commit index, or having a snapshot
+        boundary beyond the watermark without the manifest, is not proof.
+        In-memory journals are not treated as durable evidence.
+        """
+        watermark = int(publication.get('archive_watermark', 0))
+        registration = int(publication.get('registered_index', 0))
+
+        snapshot = self.__retentionSnapshotBoundary
+        snapIdx = snapshot[0] if snapshot is not None else None
+        snapTerm = snapshot[1] if snapshot is not None else None
+
+        journalAvailable = isinstance(self.__raftLog, FileJournal) and len(self.__raftLog) > 0
+        if journalAvailable:
+            firstIdx = self.__raftLog[0][1]
+            lastIdx = self.__raftLog[-1][1]
+            journalCoversWatermark = firstIdx <= watermark and lastIdx >= watermark
+            manifestInJournal = firstIdx <= registration <= lastIdx
+            journalContiguous = snapIdx is not None and firstIdx <= snapIdx + 1
+        else:
+            journalCoversWatermark = False
+            manifestInJournal = False
+            journalContiguous = False
+
+        snapshotCoversWatermark = snapIdx is not None and snapIdx >= watermark
+        manifestInSnapshot = snapIdx is not None and registration <= snapIdx
+
+        journalPath = journalAvailable and manifestInJournal and \
+            (journalCoversWatermark or (snapshotCoversWatermark and journalContiguous))
+        # The boundary is the last *applied* index, never the journal tail:
+        # the tail may contain uncommitted entries that a restart can legally
+        # truncate, and a moved commit index alone is not proof.
+        boundaryIdx = self.__raftLastApplied
+        if boundaryIdx < 1:
+            return None
+        if journalAvailable and lastIdx < boundaryIdx:
+            return None
+        boundaryTerm = self.__getAppliedTerm(boundaryIdx)
+        if boundaryTerm <= 0:
+            return None
+        if journalPath:
+            try:
+                # An acknowledgement may only be sent after the journal
+                # contents it describes are on stable storage.
+                self.__raftLog.flush()
+            except Exception:
+                logger.exception('failed to flush journal for retention evidence')
+                return None
+            result = {
+                'index': boundaryIdx,
+                'term': boundaryTerm,
+                'storage_kind': _retention.EVIDENCE_JOURNAL,
+            }
+            if snapIdx is not None:
+                result['snapshot_index'] = snapIdx
+                result['snapshot_term'] = snapTerm
+            return result
+
+        if manifestInSnapshot and snapshotCoversWatermark:
+            return {
+                'index': snapIdx,
+                'term': snapTerm,
+                'storage_kind': _retention.EVIDENCE_SNAPSHOT,
+                'snapshot_index': snapIdx,
+                'snapshot_term': snapTerm,
+            }
+        return None
+
+    def __getAppliedTerm(self, index):
+        entries = self.__getEntries(index, 1)
+        if entries:
+            return entries[0][2]
+        return 0
+
+    def __retentionAckFor(self, publication):
+        proof = self.__retentionDurableBoundary(publication)
+        if proof is None:
+            return None
+        return _retention.buildEvidence(
+            publication, str(self.__selfNode.id), self.__raftCurrentTerm,
+            proof['index'], proof['term'], proof['storage_kind'],
+            proof.get('snapshot_index'), proof.get('snapshot_term'))
+
+    def __persistRetention(self, sync=False):
+        state = self.__retention.export()
+        self.__raftLog.setRetention(state, sync=sync)
+        self.__retentionState = state
+        return state
+
+    def __applyRetentionPublication(self, record, index, term):
+        publication = _retention.finalizePublication(record, index, term)
+        key = publication['key']
+        self.__retention.addPublication(publication)
+        # The publication command is now part of applied/durable journal
+        # state on this node. Make that uninterruptible before acknowledging.
+        self.__persistRetention(sync=True)
+        if isinstance(self.__raftLog, FileJournal):
+            try:
+                self.__raftLog.flush()
+            except Exception:
+                logger.exception('failed to flush journal after retention publication')
+        if self.__selfNode is not None:
+            ack = None
+            if isinstance(self.__raftLog, FileJournal) and \
+                    publication.get('archive_watermark', 0) <= index and \
+                    self.__raftLog[0][1] <= publication.get('archive_watermark', 0):
+                # The applied counter advances just after this handler
+                # returns, but the registration entry is already in the
+                # journal and has just been flushed. The ack must cover the
+                # registration itself so the receipt's recoverable boundary
+                # includes the manifest.
+                ack = _retention.buildEvidence(
+                    publication, str(self.__selfNode.id),
+                    self.__raftCurrentTerm, index, term,
+                    _retention.EVIDENCE_JOURNAL)
+            else:
+                ack = self.__retentionAckFor(publication)
+            if ack is not None and ack.get('durable_index', 0) >= \
+                    publication.get('registered_index', 0):
+                self.__retention.addEvidence(ack)
+                self.__retentionAcks.setdefault(key, {})[str(self.__selfNode.id)] = ack
+        self.__retentionPending.setdefault(key, publication)
+        self.__broadcastRetentionEvidence(key)
+        return publication
+
+    def __applyRetentionReceipt(self, receipt, index, term):
+        receipt = _retention.finalizeReceipt(receipt, index, term)
+        verification = _retention.verifyReceipt(receipt)
+        if not verification['valid']:
+            logger.warning('ignoring invalid retention receipt for %s: %s',
+                           receipt.get('publication_key'), verification['errors'])
+            self.__retentionReceiptInFlight.pop(receipt.get('publication_key'), None)
+            return
+        # A receipt is stored on every applying node.  This is what makes an
+        # old receipt survive the normal swap of a disk / a late old-term
+        # acknowledgement; it is keyed by publication, never by "current
+        # commit index".
+        if self.__retention.addReceipt(receipt):
+            self.__persistRetention(sync=True)
+            self.__retentionPending.pop(receipt['publication_key'], None)
+            self.__retentionReceiptInFlight.pop(receipt['publication_key'], None)
+            callback = self.__conf.onRetentionReceipt
+            if callback is not None:
+                try:
+                    callback(receipt)
+                except Exception:
+                    logger.exception('onRetentionReceipt callback failed')
+
+    def __broadcastRetentionEvidence(self, key=None):
+        if not self.__conf.retentionEnabled:
+            return
+        if self.__selfNode is None:
+            return
+        payload = {'acks': []}
+        publicationKeys = [key] if key is not None else list(self.__retention.publications())
+        for publicationKey in publicationKeys:
+            publication = self.__retention.getPublication(publicationKey)
+            if publication is None:
+                continue
+            ack = self.__retentionAcks.get(publicationKey, {}).get(str(self.__selfNode.id))
+            if ack is None:
+                continue
+            payload['acks'].append(ack)
+        if not payload['acks']:
+            return
+        payload['type'] = 'retention_evidence'
+        payload['term'] = self.__raftCurrentTerm
+        for node in self.__otherNodes:
+            self.__transport.send(node, payload)
+
+    def __retentionTick(self):
+        if not self.__conf.retentionEnabled or self.__selfNode is None:
+            return
+        now = monotonicTime()
+        if now - self.__retentionLastExchange < self.__conf.retentionEvidencePeriod:
+            return
+        self.__retentionLastExchange = now
+
+        # Do not drop remote acknowledgements every tick: a majority may
+        # arrive across several exchange rounds.
+        changed = False
+        for key, publication in self.__retention.publications().items():
+            if self.__retention.hasReceipt(key):
+                continue
+            if isinstance(publication.get('registered_index'), int) and \
+                    publication['registered_index'] > self.__raftLastApplied:
+                continue
+            self.__retentionPending.setdefault(key, publication)
+            ack = self.__retentionAckFor(publication)
+            if ack is None:
+                ack = self.__retentionAcks.get(key, {}).get(str(self.__selfNode.id))
+            if ack is None:
+                continue
+            if self.__retention.addEvidence(ack):
+                changed = True
+            self.__retentionAcks.setdefault(key, {})[str(self.__selfNode.id)] = ack
+        if changed:
+            # The meta file is synced before the evidence leaves this process;
+            # an ack is never sent for page-cache-only data.
+            self.__persistRetention(sync=True)
+        self.__broadcastRetentionEvidence()
+        if self.__raftState == _RAFT_STATE.LEADER:
+            self.__tryIssueRetentionReceipts()
+
+    def __tryIssueRetentionReceipts(self):
+        for key in list(self.__retentionPending):
+            publication = self.__retention.getPublication(key)
+            if publication is None:
+                self.__retentionPending.pop(key, None)
+                continue
+            if self.__retention.hasReceipt(key):
+                self.__retentionPending.pop(key, None)
+                continue
+            if key in self.__retentionReceiptInFlight:
+                # A receipt command with this publication has been appended
+                # but not applied yet; do not append duplicates.
+                continue
+            configuration = self.__currentConfiguration()
+            selected = _retention.selectAcks(
+                publication, list(self.__retentionAcks.get(key, {}).values()),
+                configuration, self.__raftCurrentTerm)
+            if len(selected) < _retention.strictMajority(len(configuration)):
+                continue
+            receipt = _retention.buildReceipt(
+                publication, selected, self.__raftCurrentTerm, configuration,
+                configurationIndex=self.__raftLastApplied)
+            if receipt is None:
+                continue
+            self.__retentionReceiptInFlight[key] = True
+            self._applyCommand(pickle.dumps(receipt), None,
+                               _COMMAND_TYPE.RETENTION_RECEIPT)
+
+    def __handleRetentionEvidence(self, node, message):
+        if not self.__conf.retentionEnabled:
+            return
+        if message.get('term', self.__raftCurrentTerm) < self.__raftCurrentTerm:
+            return
+        for ack in message.get('acks', []):
+            if not isinstance(ack, dict):
+                continue
+            if str(ack.get('node_id')) != str(node.id):
+                # A node may only vouch for its own durable storage.
+                continue
+            if ack.get('digest') != _retention.evidenceDigest(ack):
+                continue
+            key = ack.get('publication_key')
+            if not key:
+                continue
+            self.__retentionAcks.setdefault(key, {})[str(node.id)] = ack
+        if self.__raftState == _RAFT_STATE.LEADER:
+            self.__tryIssueRetentionReceipts()
 
     def _setCodeVersion(self, args, callback):
         self.setCodeVersion(args[0], callback)
@@ -698,6 +1107,7 @@ class SyncObj(object):
 
         self._checkCommandsToApply()
         self.__tryLogCompaction()
+        self.__retentionTick()
 
         with self.__onTickCallbacksLock:
             for callback in self.__onTickCallbacks:
@@ -715,7 +1125,7 @@ class SyncObj(object):
                 try:
                     currentTermID = entry[2]
                     subscribers = self.__commandsWaitingCommit.pop(entry[1], [])
-                    res = self.__doApplyCommand(entry[0])
+                    res = self.__doApplyCommand(entry[0], entry[1], entry[2])
                     for subscribeTermID, callback in subscribers:
                         if subscribeTermID == currentTermID:
                             callback(res, FAIL_REASON.SUCCESS)
@@ -867,7 +1277,7 @@ class SyncObj(object):
     def _forceLogCompaction(self):
         self.forceLogCompaction()
 
-    def __doApplyCommand(self, command):
+    def __doApplyCommand(self, command, index=None, term=None):
         commandType = ord(command[:1])
         # Skip no-op and membership change commands
         if commandType == _COMMAND_TYPE.VERSION:
@@ -880,6 +1290,14 @@ class SyncObj(object):
             self.__onSetCodeVersion(ver)
             if callback is not None:
                 callback(oldVer, ver)
+            return
+
+        if commandType == _COMMAND_TYPE.RETENTION_PUBLISH:
+            self.__applyRetentionPublication(pickle.loads(command[1:]), index, term)
+            return
+
+        if commandType == _COMMAND_TYPE.RETENTION_RECEIPT:
+            self.__applyRetentionReceipt(pickle.loads(command[1:]), index, term)
             return
 
         #  This is required only after node restarts and apply journal
@@ -916,6 +1334,12 @@ class SyncObj(object):
                 self.__transferInProgress = True
 
         if message['type'] == 'request_vote' and self.__selfNode is not None:
+
+            if node != self.__selfNode and node not in self.__otherNodes:
+                # A node removed from the configuration keeps campaigning
+                # with ever-higher terms. It is not part of this cluster and
+                # must not be able to disrupt current members.
+                return
 
             if message['term'] > self.__raftCurrentTerm:
                 self.__setCurrentTerm(message['term'], None)
@@ -1039,6 +1463,9 @@ class SyncObj(object):
                 self._applyCommand(message['command'], (node, message['request_id']))
             else:
                 self._applyCommand(message['command'], None)
+
+        if message['type'] == 'retention_evidence':
+            self.__handleRetentionEvidence(node, message)
 
         if message['type'] == 'apply_command_response':
             requestID = message['request_id']
@@ -1247,6 +1674,9 @@ class SyncObj(object):
         for id in sorted(self.__commandsWaitingReply):
             self.__commandsWaitingReply[id](None, FAIL_REASON.LEADER_CHANGED)
         self.__commandsWaitingReply = {}
+        # A receipt appended by the old leader may never commit; allow the
+        # new leader to issue it again.
+        self.__retentionReceiptInFlight = {}
 
     def __sendAppendEntries(self):
         self.__newAppendEntriesTime = monotonicTime() + self.__conf.appendEntriesPeriod
@@ -1426,6 +1856,10 @@ class SyncObj(object):
             self.__lastSerializedTime = currTime
             self.__deleteEntriesTo(serializeID)
             self.__lastSerializedEntry = serializeID
+            # If the just-written dump contains retention evidence, record
+            # that fact.  This is done after the serializer has durably
+            # replaced the dump file.
+            self.__noteSnapshotRetention(serializeID)
 
         if serializeState == SERIALIZER_STATE.FAILED:
             logger.warning('Failed to store full dump')
@@ -1467,7 +1901,86 @@ class SyncObj(object):
         else:
             data = None
         cluster = self.__otherNodes | {self.__selfNode}
-        self.__serializer.serialize((data, lastAppliedEntries[1], lastAppliedEntries[0], cluster), lastAppliedEntries[0][1])
+        retentionState = self.__retention.export()
+        retentionEvidence = []
+        snapshotIdx = lastAppliedEntries[1][1]
+        snapshotTerm = lastAppliedEntries[1][2]
+        for key, publication in self.__retention.publications().items():
+            if publication.get('registered_index', 0) > snapshotIdx:
+                # The manifest is not part of this snapshot, so the snapshot
+                # alone cannot prove recovery for it.
+                continue
+            if snapshotIdx < publication.get('archive_watermark', 0):
+                continue
+            evidenceTerm = publication.get('registered_term', 0)
+            if self.__raftCurrentTerm > evidenceTerm:
+                evidenceTerm = self.__raftCurrentTerm
+            retentionEvidence.append(_retention.buildEvidence(
+                publication, str(self.__selfNode.id), evidenceTerm,
+                snapshotIdx, snapshotTerm,
+                _retention.EVIDENCE_SNAPSHOT,
+                snapshotIndex=snapshotIdx,
+                snapshotTerm=snapshotTerm))
+        # Custom serializers receive data[1:] and are expected to store it
+        # verbatim; the retention fields are part of that payload just like
+        # the cluster configuration was before them.
+        payload = (data, lastAppliedEntries[1], lastAppliedEntries[0], cluster,
+                   retentionState, retentionEvidence)
+        self.__serializer.serialize(payload, lastAppliedEntries[0][1])
+
+    def __noteSnapshotRetention(self, serializeID):
+        """Remember that the local dump holds evidence for the watermarks.
+
+        The serializer has just atomically replaced the dump file, so these
+        records are the ones a fresh process will find in the dump.  They are
+        kept locally and broadcast; they are not proofs merely because the
+        raft commit index moved.
+        """
+        if not self.__conf.retentionEnabled or self.__selfNode is None:
+            return
+        self.__retentionSnapshotBoundary = None
+        try:
+            data = self.__serializer.deserialize()
+        except Exception:
+            logger.exception('failed to inspect full dump retention state')
+            return
+        if not isinstance(data, (tuple, list)) or len(data) < 5:
+            return
+        boundaryIdx = data[1][1]
+        boundaryTerm = data[1][2]
+        self.__retentionSnapshotBoundary = (boundaryIdx, boundaryTerm)
+        snapshotState = data[4]
+        if snapshotState:
+            try:
+                self.__retention.importState(snapshotState, includeEvidence=False)
+            except Exception:
+                logger.exception('failed to merge snapshot retention state')
+        if len(data) >= 6 and data[5]:
+            for evidence in data[5]:
+                if not isinstance(evidence, dict):
+                    continue
+                if evidence.get('snapshot_index') != boundaryIdx:
+                    continue
+                publication = self.__retention.getPublication(evidence['publication_key'])
+                if publication is None:
+                    continue
+                if evidence.get('archive_watermark', 0) > boundaryIdx:
+                    continue
+                if publication.get('registered_index', 0) > boundaryIdx:
+                    # The snapshot does not contain the manifest, so it
+                    # cannot prove recovery of this publication.
+                    continue
+                self.__retention.addEvidence(evidence)
+                self.__retentionAcks.setdefault(evidence['publication_key'],
+                                                {})[str(self.__selfNode.id)] = evidence
+        # Refresh journal-backed acknowledgements: compaction may have just
+        # removed the entries that carried the old proof.
+        for key, publication in self.__retention.publications().items():
+            ack = self.__retentionAckFor(publication)
+            if ack is not None:
+                self.__retention.addEvidence(ack)
+                self.__retentionAcks.setdefault(key, {})[str(self.__selfNode.id)] = ack
+        self.__persistRetention(sync=True)
 
     def __loadDumpFile(self, clearJournal):
         try:
@@ -1506,6 +2019,42 @@ class SyncObj(object):
 
             if self.__conf.dynamicMembershipChange:
                 self.__updateClusterConfiguration([node for node in data[3] if node != self.__selfNode])
+
+            # Merge retention material that was embedded in the dump.  The
+            # journal may have been compacted below the watermark, so this is
+            # the only surviving proof on a node that came up from a snapshot.
+            self.__retentionSnapshotBoundary = (data[1][1], data[1][2])
+            if len(data) >= 5 and data[4]:
+                try:
+                    self.__retention.importState(data[4], includeEvidence=False)
+                except Exception:
+                    logger.exception('failed to restore retention state from full dump')
+            if len(data) >= 6 and data[5]:
+                for evidence in data[5]:
+                    if not isinstance(evidence, dict):
+                        continue
+                    if evidence.get('snapshot_index') != data[1][1]:
+                        continue
+                    if evidence.get('archive_watermark', 0) > data[1][1]:
+                        continue
+                    publication = self.__retention.getPublication(evidence.get('publication_key'))
+                    if publication is None:
+                        continue
+                    if publication.get('registered_index', 0) > data[1][1]:
+                        continue
+                    if self.__retention.addEvidence(evidence):
+                        self.__retentionAcks.setdefault(evidence['publication_key'],
+                                                        {})[str(evidence.get('node_id'))] = evidence
+            # A dump-only knowledge of a publication is not enough: its
+            # evidence must still describe a boundary this node can reopen.
+            for key, publication in ([] if self.__selfNode is None
+                                     else self.__retention.publications().items()):
+                ack = self.__retentionAckFor(publication)
+                if ack is None:
+                    continue
+                if self.__retention.addEvidence(ack):
+                    self.__retentionAcks.setdefault(key, {})[str(self.__selfNode.id)] = ack
+            self.__persistRetention(sync=True)
             self.__onSetCodeVersion(0)
         except:
             logger.exception('failed to load full dump')

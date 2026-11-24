@@ -126,3 +126,28 @@ You can look at [batteries implementation](https://github.com/bakwc/PySyncObj/bl
 ## Publications
 - [Adventures in fault tolerant alerting with Python](https://blog.hostedgraphite.com/2017/05/05/adventures-in-fault-tolerant-alerting-with-python/)
 - [Строим распределенную систему c PySyncObj](https://habrahabr.ru/company/wargaming/blog/301398/)
+
+## Durable retention receipts
+
+Archived partitions are usually cleared only after the application has a
+receipt proving that the archive watermark and the manifest published with it
+can be restored after an ordinary power loss. `SyncObj` keeps that proof in
+the same durable materials it already uses: the file journal's meta sidecar
+and the local full dump.
+
+```python
+syncObj.registerRetentionPublication('pub-2026-11-24', 'part-0',
+                                     manifest, archiveWatermark=commitIndex)
+
+# After the receipt has committed:
+ready = syncObj.retentionReadyFor('pub-2026-11-24', 'part-0')
+if ready['ready']:
+    clearArchivedPartition()
+```
+
+A receipt is issued only after a strict majority of the cluster configuration
+has durably acknowledged this publication at or beyond its watermark. Normal
+command callbacks are unchanged; receipts are reported through
+`SyncObjConf.onRetentionReceipt`, queried with `getRetentionReceipt`, and can
+be verified offline with `pysyncobj.retention.verifyReceipt`. A commit index
+that merely moved forward is never treated as retention proof.

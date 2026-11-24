@@ -163,6 +163,19 @@ class SyncObjConf(object):
         #: onCodeVersionChanged(oldVer, newVer)
         self.onCodeVersionChanged = kwargs.get('onCodeVersionChanged', None)
 
+        #: Enable durable retention receipts. This does not change the normal
+        #: commit path or the existing command callbacks; it only adds the
+        #: evidence/receipt exchange used before archived partitions are
+        #: cleared or an old disk is retired.
+        self.retentionEnabled = kwargs.get('retentionEnabled', True)
+
+        #: This callback will be called once for each newly committed
+        #: retention receipt. Arguments: onRetentionReceipt(receipt).
+        self.onRetentionReceipt = kwargs.get('onRetentionReceipt', None)
+
+        #: Interval (seconds) between exchanges of durable retention evidence.
+        self.retentionEvidencePeriod = kwargs.get('retentionEvidencePeriod', 0.5)
+
         #: TCP socket keepalive
         #: (keepalive_time_seconds, probe_intervals_seconds, max_fails_count)
         #: Set to None to disable
@@ -186,6 +199,7 @@ class SyncObjConf(object):
         assert self.logCompactionMinTime > 0
         assert self.logCompactionBatchSize > 0
         assert self.bindRetryTime > 0
+        assert self.retentionEvidencePeriod > 0
         assert (self.deserializer is None) == (self.serializer is None)
         if self.serializer is not None:
             assert self.fullDumpFile is not None
