@@ -54,3 +54,12 @@ IterQueryResult
 .. autoclass:: clickhouse_driver.result.IterQueryResult
    :members:
    :inherited-members:
+
+
+.. _api-handover:
+
+LowCardinality handover
+-----------------------
+
+.. automodule:: clickhouse_driver.handover
+   :members:

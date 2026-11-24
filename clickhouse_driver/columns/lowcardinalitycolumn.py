@@ -140,3 +140,14 @@ class LowCardinalityColumn(Column):
         keys = keys_column.read_data(n_items, buf)
 
         return tuple(index[x] for x in keys)
+
+    @classmethod
+    def plan_handover(cls, fragments, **kwargs):
+        """
+        Merge native LowCardinality fragments into one nullable column.
+
+        See :mod:`clickhouse_driver.handover` for the plan format.
+        """
+        from .lowcardinalityhandover import plan_handover
+
+        return plan_handover(fragments, **kwargs)

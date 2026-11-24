@@ -515,3 +515,63 @@ Set ``enable_json_type=1`` for to enable json support.
 ``JSON`` columns nested in container columns, e.g. ``Array(JSON)``,
 ``Tuple(String, JSON)``, ``Map(String, JSON)`` and their compositions, can
 be written and read as well.
+
+
+.. _low-cardinality-handover:
+
+Handing over native LowCardinality fragments
+--------------------------------------------
+
+Several native ``LowCardinality(String)`` fragments can be merged into a
+single ``LowCardinality(Nullable(String))`` column with
+:func:`clickhouse_driver.handover.plan_handover`.  Every fragment keeps
+its own dictionary and key segment; the plan produces one shared
+dictionary and a key segment for every fragment, in the original order.
+
+A fragment is either handed over verbatim (its original key bytes are
+reused) or rewritten in full.  Verbatim handover requires that every
+dictionary position the segment actually references keeps its value.  A
+position the segment never references (including a distinct value in its
+dictionary) does not constrain other fragments:
+
+    .. code-block:: python
+
+        >>> from clickhouse_driver.handover import (
+        ...     fragment_from_parts, plan_handover)
+        >>> north = fragment_from_parts(
+        ...     [None, '北站'], [1, 1], name='north')
+        >>> west = fragment_from_parts(
+        ...     [None, '西站'], [1, 1], name='west')
+        >>> plan = plan_handover([north, west])
+        >>> plan.dictionary
+        (None, '北站', '西站')
+        >>> [(s.name, s.action, s.cost) for s in plan.segments]
+        [('north', 'handover', 0), ('west', 'rewrite', 2)]
+        >>> plan.read()
+        ('北站', '北站', '西站', '西站')
+
+Both fragments use position ``1`` but mean different stations, so only
+one can keep it.  The other segment is rewritten in full: a segment is
+never split into a kept subset and a rewritten remainder.
+
+Position ``0`` of a nullable dictionary is the reserved NULL slot.  It is
+not the same value as the empty string, which is an ordinary value at
+its own position.
+
+The key width is derived from the target dictionary size with the same
+formula the driver uses when writing the column.  Adding a value can
+push the dictionary across a 256/65536/``2 ** 24`` entry boundary even
+when all position numbers stay the same.  Original key bytes then stop
+being usable and the affected segment is rewritten.
+
+``fragment.verbatim_only = True`` marks a segment that may only be
+handed over as a whole.  If such segments disagree about a position or a
+value (or if one of them cannot be kept), ``HandoverPermissionError`` is
+raised and its ``segments`` attribute names the complete key segments
+that cannot be used together.
+
+Plans are verified by default: every source segment and the assembled
+column are read back through this driver and compared to the expected
+rows.  A NULL, empty string or ordinary value mismatch raises
+``HandoverVerificationError`` with the failing ``segment`` and row
+``index``; such a plan is never marked as delivered.
