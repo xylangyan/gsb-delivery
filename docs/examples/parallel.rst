@@ -136,13 +136,30 @@ method accepting a row which would force the method to block until a value is
 ready, or the entire decoupled can be consumed by another decoupled table. When
 a decoupled table is consumed by another decoupled table, the values are
 extracted from an instance of :class:`.FutureResult` by the table that needs it
-without blocking the caller of methods on that table. It should however be noted
+without blocking the caller of methods on that table. The result is retained,
+so the caller and any number of consuming tables can all get the same value
+from a :class:`.FutureResult`, also after another user has already fetched it.
+References are also replaced when they occur in nested dicts, lists, and tuples,
+e.g., in a detail structure. It should however be noted
 that any rows passed to an instance of :class:`.DecoupledFactTable` or
 :class:`.DecoupledDimension` should only contain the attributes directly needed
 by the table, as having additional key/value pairs in the :class:`.dict` can
 make pygrametl insert the row before the actual values are ready, leading to
 instances of the class :class:`.FutureResult` being incorrectly passed to the
-database instead.
+database instead. References to values from tables that are not consumed are
+left unchanged.
+
+Calling :meth:`.FutureResult.get` returns the result and advances the work
+needed to produce it, including the work needed by the tables that consume it.
+Work that has not been sent to the table's worker is kept in its original order,
+and only the part of the pending batch that is needed for the requested result
+is sent. The rest remains queued and is handled when the caller later calls
+:meth:`.DecoupledDimension.endload` or :meth:`.DecoupledFactTable.endload`, or
+fetches another result. The same partial advancement can be done with
+:meth:`.DecoupledDimension.getresult`, :meth:`.DecoupledDimension.flush`, or by
+giving the :class:`.FutureResult` to ``endload``, e.g.,
+``factTable.endload(approvedfact)``. This is useful for inspecting a single
+pending fact without making the not yet approved writes take effect.
 
 .. code-block:: python
 

@@ -3384,14 +3384,27 @@ class DecoupledDimension(Decoupled):
         """Invoke lookuprow on the decoupled Dimension in the separate process"""
         return self._enqueue("lookuprow", row, namemapping)
 
-    def endload(self):
+    def endload(self, future=None, until=None):
         """Invoke endload on the decoupled Dimension in the separate process and
-        return when all waiting method calls have been executed
+        return when all waiting method calls have been executed.
+
+        If a FutureResult is given, only the work needed to produce that
+        result is advanced and the remaining work is left for later.
         """
+        if future is None:
+            future = until
+        if future is not None:
+            return self._getresult(future)
         # first add 'endload' to the batch and then send the batch
         self._enqueuenoreturn("endload")
         self._endbatch()
         self._join()
+
+    endloaduntil = endload
+
+    def getresult(self, future):
+        """Return the result of the given FutureResult."""
+        return self._getresult(future)
 
     def scdensure(self, row, namemapping={}):
         "Invoke scdensure on the decoupled Dimension in the separate process"
@@ -3458,13 +3471,26 @@ class DecoupledFactTable(Decoupled):
         """Invoke insert on the decoupled FactTable in the separate process"""
         return self._enqueue("insert", row, namemapping)
 
-    def endload(self):
+    def endload(self, future=None, until=None):
         """Invoke endload on the decoupled FactTable in the separate process and
-        return when all waiting method calls have been executed
+        return when all waiting method calls have been executed.
+
+        If a FutureResult is given, only the work needed to produce that
+        result is advanced and the remaining work is left for later.
         """
+        if future is None:
+            future = until
+        if future is not None:
+            return self._getresult(future)
         self._enqueuenoreturn("endload")
         self._endbatch()
         self._join()
+
+    endloaduntil = endload
+
+    def getresult(self, future):
+        """Return the result of the given FutureResult."""
+        return self._getresult(future)
 
     def lookup(self, row, namemapping={}):
         """Invoke lookup on the decoupled FactTable in the separate process"""

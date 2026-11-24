@@ -4,9 +4,19 @@ Unreleased
   ``UnpivotingSource`` a new class that adds support for reshaping
   wide rows into long rows. (Thanks to Huu Hung Nguyen)
 
+  ``FutureResult.get``, ``FutureResult.result``, ``Decoupled.getresult``,
+  ``Decoupled.flush``, and partial ``endload`` for decoupled tables. They return
+  one requested result while advancing only the work it needs. Pending work
+  that has not been sent to the worker remains queued in its original order.
+
 **Fixed**
   A ``cachesize`` of 0 could lead to an ``AttributeError`` in
   ``SlowlyChangingDimension`` (GitHub issue #98).
+
+  A result from a ``Decoupled`` table could only be fetched once, so the caller
+  and another consuming table could not both get it. Results are now retained
+  and can be fetched by all users, and ``FutureResult`` references are also
+  replaced when nested in dicts, lists, and tuples.
 
   A race condition in ``SharedConnectionWrapperClient.commit()`` due to
   ``JoinableQueue`` not guaranteeing a FIFO order when multiple processes write

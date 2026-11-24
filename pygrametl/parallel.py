@@ -30,6 +30,7 @@ Note that this module in many cases will give better results with Jython
 import copy
 import os
 import sys
+import threading
 from sys import version_info
 
 import pygrametl
@@ -560,6 +561,26 @@ class FutureResult(object):
     def id(self):
         return self.__id
 
+    def __repr__(self):
+        return "FutureResult(creator=%r, id=%r)" % (self.__creator, self.__id)
+
+    def get(self):
+        """Return the actual result, advancing only the work it needs.
+
+        The work needed to produce the result and the work needed by the
+        methods consuming it are executed while all other pending work is
+        left for later.
+        """
+        instance = Decoupled._getinstance(self.__creator)
+        if instance is None:
+            raise ValueError("The creator of the FutureResult is not available")
+        return instance._getresult(self)
+
+    @property
+    def result(self):
+        """The actual result. See :meth:`get`."""
+        return self.get()
+
     def __setstate__(self, state):
         self.__creator = state[0]
         self.__id = state[1]
@@ -576,6 +597,13 @@ class FutureResult(object):
 class Decoupled(object):
     __instances = []
 
+    @classmethod
+    def _getinstance(cls, number):
+        """Return the Decoupled instance with the given instance number."""
+        if 0 <= number < len(cls.__instances):
+            return cls.__instances[number]
+        return None
+
     def __init__(
         self,
         obj,
@@ -588,24 +616,38 @@ class Decoupled(object):
     ):
         self.__instancenumber = len(Decoupled.__instances)
         self.__futurecnt = 0
+        self.__taskseq = 0
         Decoupled.__instances.append(self)
         self._obj = obj
         if hasattr(obj, "_decoupling") and callable(obj._decoupling):
             obj._decoupling()
         self.batchsize = batchsize
         self.__batch = []
+        self.__batchlock = threading.RLock()
+        self.__resultlock = threading.RLock()
         self.__results = {}
+        self.__tasksequence = {}
         self.autowrap = autowrap
         self.__toworker = multiprocessing.JoinableQueue(queuesize)
         if returnvalues:
-            self.__fromworker = multiprocessing.JoinableQueue(queuesize)
+            # The result queue is unbounded such that the worker never blocks
+            # on results that have not been requested yet.
+            self.__fromworker = multiprocessing.JoinableQueue(0)
         else:
             self.__fromworker = None
-        self.__otherqueues = {
-            dcpld.__instancenumber: dcpld.__fromworker for dcpld in consumes
-        }
-        # Will store dicts - see also __decoupledworker
-        self.__otherresults = {}
+        # The needed results are fetched by the process that owns this object
+        # and inserted into the arguments before they are sent to the worker.
+        # Other results are kept such that they can be fetched again later.
+        for dcpld in consumes:
+            if dcpld.__fromworker is None:
+                raise ValueError(
+                    "The consumed %s does not keep its return values"
+                    % (dcpld.__class__.__name__,)
+                )
+        self.__consumed = {dcpld.__instancenumber: dcpld for dcpld in consumes}
+        # Kept for backwards compatibility. References in arguments are now
+        # always replaced recursively, also when a configured position is
+        # missing from a particular row.
         self.__directupdates = directupdatepositions
 
         self.__worker = multiprocessing.Process(target=self.__decoupledworker)
@@ -618,68 +660,10 @@ class Decoupled(object):
 
     # Stuff for the forked process
 
-    def __getresultfromother(self, queuenumber, id):
-        while True:
-            if id in self.__otherresults[queuenumber]:
-                return self.__otherresults[queuenumber].pop(id)
-            # else wait for more results to become available
-            self.__otherresults[queuenumber].update(
-                self.__otherqueues[queuenumber].get()
-            )
-
-    def __replacefuturesindict(self, dct):
-        res = {}
-        for k, v in dct.items():
-            if isinstance(v, FutureResult) and v.creator in self.__otherqueues:
-                res[k] = self.__getresultfromother(v.creator, v.id)
-            elif isinstance(v, list):
-                res[k] = self.__replacefuturesinlist(v)
-            elif isinstance(v, tuple):
-                res[k] = self.__replacefuturesintuple(v)
-            elif isinstance(v, dict):
-                res[k] = self.__replacefuturesindict(v)
-            else:
-                res[k] = v
-        return res
-
-    def __replacefuturesinlist(self, lst):
-        res = []
-        for e in lst:
-            if isinstance(e, FutureResult) and e.creator in self.__otherqueues:
-                res.append(self.__getresultfromother(e.creator, e.id))
-            elif isinstance(e, list):
-                res.append(self.__replacefuturesinlist(e))
-            elif isinstance(e, tuple):
-                res.append(self.__replacefuturesintuple(e))
-            elif isinstance(e, dict):
-                res.append(self.__replacefuturesindict(e))
-            else:
-                res.append(e)
-        return res
-
-    def __replacefuturesintuple(self, tpl):
-        return tuple(self.__replacefuturesinlist(tpl))
-
-    def __replacefuturesdirectly(self, args):
-        for pos in self.__directupdates:
-            if len(pos) == 2:
-                x, y = pos
-                fut = args[x][y]
-                args[x][y] = self.__getresultfromother(fut.creator, fut.id)
-            elif len(pos) == 3:
-                x, y, z = pos
-                fut = args[x][y][z]
-                args[x][y][z] = self.__getresultfromother(fut.creator, fut.id)
-            else:
-                raise ValueError("Positions must be of length 2 or 3")
-
     def __decoupledworker(self):
         sys.excepthook = _getexcepthook()
         if hasattr(self._obj, "_decoupled") and callable(self._obj._decoupled):
             self._obj._decoupled()
-
-        for creatorid in self.__otherqueues:
-            self.__otherresults[creatorid] = {}
 
         while True:
             batch = self.__toworker.get()
@@ -690,16 +674,6 @@ class Decoupled(object):
             ###
             resbatch = []
             for [id, funcname, args] in batch:
-                if self.__otherqueues and args:
-                    if self.__directupdates:
-                        try:
-                            self.__replacefuturesdirectly(args)
-                        except KeyError:
-                            args = self.__replacefuturesintuple(args)
-                        except IndexError:
-                            args = self.__replacefuturesintuple(args)
-                    else:
-                        args = self.__replacefuturesintuple(args)
                 func = getattr(self._obj, funcname)
                 res = func(*args)  # NB: func's side-effects on args are ignored
                 if id is not None:
@@ -721,35 +695,113 @@ class Decoupled(object):
         setattr(self, name, res)  # NB: Values are only read once...
         return res
 
+    def __resolvevalue(self, value, cache):
+        if isinstance(value, FutureResult):
+            if value.creator not in self.__consumed:
+                return value
+            key = (value.creator, value.id)
+            if key not in cache:
+                cache[key] = self.__consumed[value.creator]._getresult(value)
+            return cache[key]
+        elif isinstance(value, dict):
+            return {
+                self.__resolvevalue(key, cache): self.__resolvevalue(element, cache)
+                for key, element in value.items()
+            }
+        elif isinstance(value, list):
+            return [self.__resolvevalue(element, cache) for element in value]
+        elif isinstance(value, tuple):
+            return tuple(self.__resolvevalue(element, cache) for element in value)
+        else:
+            return value
+
+    def __resolveargs(self, args):
+        cache = {}
+        # A missing position in directupdatepositions used to make the fast
+        # path fall back to a recursive replacement. The recursive replacement
+        # is always used here, so nested details are handled in all cases.
+        return tuple(self.__resolvevalue(arg, cache) for arg in args)
+
+    def __resolvebatch(self, batch):
+        return [
+            [id, funcname, self.__resolveargs(args)] for id, funcname, args in batch
+        ]
+
+    def __addtask(self, id, funcname, args):
+        with self.__batchlock:
+            seq = self.__taskseq
+            self.__taskseq += 1
+            if id is not None:
+                self.__tasksequence[id] = seq
+            self.__batch.append([id, funcname, args])
+            if len(self.__batch) >= self.batchsize:
+                self._endbatch()
+
     def _enqueue(self, funcname, *args):
         future = FutureResult(self.__instancenumber, self.__futurecnt)
         self.__futurecnt += 1
-        self.__batch.append([future.id, funcname, args])
-        if len(self.__batch) >= self.batchsize:
-            self._endbatch()
+        self.__addtask(future.id, funcname, args)
         return future
 
     def _enqueuenoreturn(self, funcname, *args):
-        self.__batch.append([None, funcname, args])
-        if len(self.__batch) >= self.batchsize:
-            self._endbatch()
+        self.__addtask(None, funcname, args)
+
+    def __waitforresult(self, id):
+        if self.__fromworker is None:
+            raise RuntimeError("Return values are not kept")
+        while True:
+            if id in self.__results:
+                return self.__results[id]
+            resbatch = self.__fromworker.get()
+            for resultid, result in resbatch:
+                self.__results[resultid] = result
 
     def _getresult(self, future):
         if self.__fromworker is None:
             raise RuntimeError("Return values are not kept")
         if future.creator != self.__instancenumber:
             raise ValueError("Cannot return results from other instances")
-        # else find and return the result
-        while True:
+        with self.__resultlock:
             if future.id in self.__results:
-                return self.__results.pop(future.id)
-            # else wait for results to become available
-            self.__results.update(self.__fromworker.get())
+                return self.__results[future.id]
+            if future.id not in self.__tasksequence:
+                raise ValueError("The FutureResult does not belong to this instance")
+
+            # Send only the prefix that ends with the requested task. The
+            # remaining tasks are left in the batch for later, but the order
+            # of the tasks that are sent is preserved.
+            with self.__batchlock:
+                for index, task in enumerate(self.__batch):
+                    if task[0] == future.id:
+                        prefix = self.__batch[: index + 1]
+                        self.__batch = self.__batch[index + 1 :]
+                        break
+                else:
+                    prefix = []
+            if prefix:
+                self.__toworker.put(self.__resolvebatch(prefix))
+
+            return self.__waitforresult(future.id)
+
+    def flush(self, future):
+        """Return the result of the given FutureResult.
+
+        Only the work needed to produce that result is sent to the worker.
+        Other pending work remains queued.
+        """
+        return self._getresult(future)
+
+    def getresult(self, future):
+        """Return the result of the given FutureResult. See :meth:`flush`."""
+        return self._getresult(future)
 
     def _endbatch(self):
-        if self.__batch:
-            self.__toworker.put(self.__batch)
+        with self.__batchlock:
+            if not self.__batch:
+                return
+            batch = self.__batch
             self.__batch = []
+        self.__toworker.put(self.__resolvebatch(batch))
 
     def _join(self):
         self._endbatch()
@@ -765,6 +817,15 @@ class Decoupled(object):
         self.__toworker.join()
         self.__toworker.close()
         if self.__fromworker is not None:
+            # Keep the results produced by the final tasks available to the
+            # caller and consumers, just like _getresult does.
+            while True:
+                try:
+                    resbatch = self.__fromworker.get_nowait()
+                except Empty:
+                    break
+                for id, result in resbatch:
+                    self.__results[id] = result
             self.__fromworker.close()
         try:
             pygrametl._alltables.remove(self)
