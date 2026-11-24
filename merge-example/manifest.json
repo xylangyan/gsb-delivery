@@ -1,0 +1,65 @@
+{
+  "institutions": [
+    { "id": "alpha", "file": "institutions/alpha/library.bib" },
+    { "id": "beta", "file": "institutions/beta/library.bib" }
+  ],
+  "macros": [
+    {
+      "formal": "conf:base",
+      "candidates": [
+        { "institution": "alpha", "key": "conf:base" },
+        { "institution": "beta", "key": "conf:base" }
+      ]
+    },
+    {
+      "formal": "conf:icse",
+      "candidates": [
+        { "institution": "alpha", "key": "conf:icse" },
+        { "institution": "beta", "key": "conf:icse" }
+      ]
+    },
+    {
+      "formal": "ws:base",
+      "candidates": [
+        { "institution": "alpha", "key": "ws:base" },
+        { "institution": "beta", "key": "ws:base" }
+      ]
+    },
+    {
+      "formal": "ws:proc",
+      "candidates": [
+        { "institution": "alpha", "key": "ws:proc" },
+        { "institution": "beta", "key": "ws:proc" }
+      ]
+    }
+  ],
+  "conferences": [
+    {
+      "formal": "conf:icse-2024",
+      "parents": [
+        { "institution": "alpha", "key": "alpha:conf:icse" },
+        { "institution": "beta", "key": "beta:conf:icse" }
+      ],
+      "children": [
+        { "institution": "alpha", "key": "alpha:icse:1", "formal": "lovelace2024" },
+        { "institution": "beta", "key": "beta:icse:1", "formal": "turing2024" },
+        { "institution": "beta", "key": "beta:icse:2", "formal": "allen2024" }
+      ]
+    },
+    {
+      "formal": "conf:ws-2022",
+      "parents": [
+        { "institution": "alpha", "key": "alpha:conf:ws" },
+        { "institution": "beta", "key": "beta:conf:ws" }
+      ],
+      "children": [
+        { "institution": "alpha", "key": "alpha:ws:1", "formal": "liskov2022" },
+        { "institution": "beta", "key": "beta:ws:1", "formal": "liskov2022" }
+      ]
+    }
+  ],
+  "citations": [
+    { "institution": "alpha", "key": "alpha:j1", "formal": "hopper1952" },
+    { "institution": "beta", "key": "beta:j1", "formal": "hopper1952" }
+  ]
+}

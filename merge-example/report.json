@@ -1,0 +1,306 @@
+{
+  "counts": {
+    "changed_child_fields": 2,
+    "crossref_deletions": 0
+  },
+  "macros": [
+    {
+      "formal": "conf:base",
+      "institution": "beta",
+      "original_key": "conf:base",
+      "candidate_index": 1,
+      "value": "\"Intl. Conf. on Software Engineering\""
+    },
+    {
+      "formal": "conf:icse",
+      "institution": "beta",
+      "original_key": "conf:icse",
+      "candidate_index": 1,
+      "value": "\"Proceedings of \" # conf:base"
+    },
+    {
+      "formal": "ws:base",
+      "institution": "alpha",
+      "original_key": "ws:base",
+      "candidate_index": 0,
+      "value": "\"Workshop on Compilers\""
+    },
+    {
+      "formal": "ws:proc",
+      "institution": "alpha",
+      "original_key": "ws:proc",
+      "candidate_index": 0,
+      "value": "\"Proc. \" # ws:base"
+    }
+  ],
+  "parents": [
+    {
+      "formal": "conf:icse-2024",
+      "institution": "beta",
+      "original_key": "beta:conf:icse",
+      "candidate_index": 1
+    },
+    {
+      "formal": "conf:ws-2022",
+      "institution": "alpha",
+      "original_key": "alpha:conf:ws",
+      "candidate_index": 0
+    }
+  ],
+  "alternatives": [
+    {
+      "formal": "conf:icse-2024",
+      "options": [
+        {
+          "macros": {
+            "conf:icse": "candidate 1",
+            "conf:base": "candidate 1"
+          },
+          "parent": 1,
+          "changed_child_fields": 2
+        },
+        {
+          "macros": {
+            "conf:icse": "candidate 0",
+            "conf:base": "candidate 0"
+          },
+          "parent": 0,
+          "changed_child_fields": 4
+        },
+        {
+          "macros": {
+            "conf:icse": "candidate 0",
+            "conf:base": "candidate 0"
+          },
+          "parent": null,
+          "changed_child_fields": 11
+        },
+        {
+          "macros": {
+            "conf:icse": null,
+            "conf:base": "candidate 1"
+          },
+          "parent": null,
+          "changed_child_fields": 12
+        },
+        {
+          "macros": {
+            "conf:icse": "candidate 0",
+            "conf:base": "candidate 1"
+          },
+          "parent": null,
+          "changed_child_fields": 12
+        },
+        {
+          "macros": {
+            "conf:icse": "candidate 1",
+            "conf:base": "candidate 1"
+          },
+          "parent": null,
+          "changed_child_fields": 12
+        },
+        {
+          "macros": {
+            "conf:icse": "candidate 1",
+            "conf:base": "candidate 0"
+          },
+          "parent": null,
+          "changed_child_fields": 12
+        },
+        {
+          "macros": {
+            "conf:icse": null,
+            "conf:base": "candidate 0"
+          },
+          "parent": null,
+          "changed_child_fields": 12
+        },
+        {
+          "macros": {
+            "conf:icse": null,
+            "conf:base": null
+          },
+          "parent": null,
+          "changed_child_fields": 12
+        }
+      ]
+    },
+    {
+      "formal": "conf:ws-2022",
+      "options": [
+        {
+          "macros": {
+            "ws:proc": "candidate 1",
+            "ws:base": "candidate 1"
+          },
+          "parent": 0,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 1",
+            "ws:base": "candidate 0"
+          },
+          "parent": 0,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 0",
+            "ws:base": "candidate 1"
+          },
+          "parent": 0,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 0",
+            "ws:base": "candidate 0"
+          },
+          "parent": 0,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 1",
+            "ws:base": "candidate 1"
+          },
+          "parent": 1,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 0",
+            "ws:base": "candidate 0"
+          },
+          "parent": 1,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 1",
+            "ws:base": "candidate 0"
+          },
+          "parent": 1,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 0",
+            "ws:base": "candidate 1"
+          },
+          "parent": 1,
+          "changed_child_fields": 0
+        },
+        {
+          "macros": {
+            "ws:proc": null,
+            "ws:base": "candidate 1"
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 0",
+            "ws:base": "candidate 1"
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 0",
+            "ws:base": "candidate 0"
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        },
+        {
+          "macros": {
+            "ws:proc": null,
+            "ws:base": null
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 1",
+            "ws:base": "candidate 1"
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        },
+        {
+          "macros": {
+            "ws:proc": "candidate 1",
+            "ws:base": "candidate 0"
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        },
+        {
+          "macros": {
+            "ws:proc": null,
+            "ws:base": "candidate 0"
+          },
+          "parent": null,
+          "changed_child_fields": 3
+        }
+      ]
+    }
+  ],
+  "child_changes": [
+    {
+      "action": "replace",
+      "field": "booktitle",
+      "from": "conf:icse",
+      "to": "Proc. International Conference on Software",
+      "formal_key": "lovelace2024",
+      "institution": "alpha",
+      "original_key": "alpha:icse:1"
+    },
+    {
+      "action": "add_override",
+      "field": "publisher",
+      "from": null,
+      "to": "ACM",
+      "formal_key": "lovelace2024",
+      "institution": "alpha",
+      "original_key": "alpha:icse:1"
+    }
+  ],
+  "parent_field_changes": [],
+  "components": [
+    {
+      "macros": [
+        "conf:base",
+        "conf:icse"
+      ],
+      "conferences": [
+        "conf:icse-2024"
+      ]
+    },
+    {
+      "macros": [
+        "ws:base",
+        "ws:proc"
+      ],
+      "conferences": [
+        "conf:ws-2022"
+      ]
+    },
+    {
+      "macros": [],
+      "conferences": [],
+      "citations": [
+        "hopper1952"
+      ]
+    }
+  ],
+  "verification": {
+    "status": "ok",
+    "issues": []
+  }
+}

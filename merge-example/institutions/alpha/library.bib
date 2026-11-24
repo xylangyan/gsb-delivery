@@ -1,0 +1,38 @@
+@string{ conf:base = "International Conference on Software" }
+@string{ conf:icse = "Proc. " # conf:base }
+
+@proceedings{alpha:conf:icse,
+  title = conf:icse,
+  year = 2024,
+  publisher = "ACM"
+}
+
+@inproceedings{alpha:icse:1,
+  crossref = {alpha:conf:icse},
+  author = "Ada Lovelace",
+  title = "Notes on the Analytical Engine",
+  booktitle = conf:icse,
+  pages = "1--10"
+}
+
+@string{ ws:base = "Workshop on Compilers" }
+@string{ ws:proc = "Proc. " # ws:base }
+
+@proceedings{alpha:conf:ws,
+  title = ws:proc,
+  year = 2022
+}
+
+@inproceedings{alpha:ws:1,
+  crossref = {alpha:conf:ws},
+  author = "Barbara Liskov",
+  title = "Data Abstraction",
+  pages = "41--50"
+}
+
+@article{alpha:j1,
+  author = "Grace Hopper",
+  title = "The Education of a Computer",
+  journal = "Proceedings of the ACM",
+  year = 1952
+}
