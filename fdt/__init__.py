@@ -37,7 +37,24 @@ __all__     = [
     # core methods
     'parse_dts',
     'parse_dtb',
-    'diff'
+    'diff',
+    # overlay composition
+    'overlay',
+    'compose_overlays',
+    'merge_overlays',
+    'compose_dtbo',
+    'merge_dtbo',
+    'apply_overlay',
+    'apply_overlays',
+    'OverlayComposition',
+    'ComposedOverlay',
+    'CompositionReport',
+    'SourceReference',
+    'OverlayError',
+    'OverlayComposeError',
+    'OverlayTargetNotFound',
+    'OverlayFixupError',
+    'FixupOutOfRangeError'
 ]
 
 
@@ -681,3 +698,33 @@ def diff(fdt1: FDT, fdt2: FDT) -> tuple:
                 fdt_b.add_item(prop_b.copy(), path)
 
     return fdt_same, fdt_a, fdt_b
+
+
+from . import overlay  # noqa: E402
+from .overlay import (  # noqa: E402
+    compose_overlays,
+    merge_overlays,
+    compose_dtbo,
+    merge_dtbo,
+    apply_overlay,
+    apply_overlays,
+    OverlayComposition,
+    ComposedOverlay,
+    CompositionReport,
+    SourceReference,
+    OverlayError,
+    OverlayComposeError,
+    OverlayTargetNotFound,
+    OverlayFixupError,
+    FixupOutOfRangeError,
+)
+
+
+def __getattr__(name):
+    # The overlay feature uses several descriptive alias names.  Resolve any
+    # not explicitly imported from the overlay module instead of forcing
+    # callers to remember one exact historical spelling.
+    try:
+        return getattr(overlay, name)
+    except AttributeError as exc:
+        raise AttributeError("module {!r} has no attribute {!r}".format(__name__, name)) from exc

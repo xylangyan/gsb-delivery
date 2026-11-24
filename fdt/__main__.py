@@ -16,6 +16,7 @@
 
 import os
 import sys
+import json
 import fdt
 import argparse
 
@@ -121,6 +122,24 @@ def merge(out_file: str, in_files: list, file_type: str, tab_size: int):
     print(" Output saved as: {}".format(out_file))
 
 
+def compose(out_file: str, in_files: list, export_labels: list = None,
+            report_file: str = None, base_files: list = None, handoff: dict = None):
+    """Compose ordered DTBO files into one base-independent DTBO."""
+    result = fdt.compose_overlays(
+        in_files,
+        output=out_file,
+        export_labels=export_labels or None,
+        report_path=report_file,
+        bases=base_files,
+        handoff=handoff
+    )
+    print(" Composed DTBO saved as: {}".format(out_file))
+    if report_file:
+        print(" Trace report saved as: {}".format(report_file))
+    if result.base_symbols:
+        print(" Base symbols still required: {}".format(', '.join(result.base_symbols)))
+
+
 def diff(in_file1: str, in_file2: str, file_type: str, out_dir: str):
     """
     The implementation of diff command.
@@ -191,6 +210,28 @@ def main():
     merge_parser.add_argument('-t', dest='type', type=str, choices=['auto', 'dts', 'dtb'], help='Input file type')
     merge_parser.add_argument('-s', dest='tab_size', type=int, default=4, help='Tabulator Size for dts')
 
+    # compose / overlay merge command
+    compose_parser = subparsers.add_parser(
+        'compose',
+        aliases=['compose-overlay', 'compose-overlays', 'compose-dtbo', 'compose-dtbos',
+                 'merge-overlay', 'merge-overlays', 'merge-dtbo', 'merge-dtbos',
+                 'bundle', 'bundle-overlays', 'assemble', 'assemble-overlays'],
+        help='Compose ordered DTBO files into one DTBO with provenance report')
+    compose_parser.add_argument('out_file', nargs='?', help='Output DTBO path')
+    compose_parser.add_argument('in_files', nargs='*', help='Ordered input DTBO paths')
+    compose_parser.add_argument('-i', '--input', dest='input_files', action='append',
+                                default=[], help='Ordered input DTBO path (repeatable)')
+    compose_parser.add_argument('-o', '--output', '--out', '--output-file',
+                                dest='output', type=str, help='Output DTBO path')
+    compose_parser.add_argument('-e', '--export', '--keep-symbol', dest='export_labels',
+                                action='append', default=[], help='Export label to retain')
+    compose_parser.add_argument('--handoff', dest='handoff_file', type=str,
+                                help='JSON handoff manifest with export labels')
+    compose_parser.add_argument('--report', '--trace', dest='report_file', type=str,
+                                help='JSON provenance report path')
+    compose_parser.add_argument('--base', dest='base_files', action='append', default=[],
+                                help='Optional base DTB used to verify required symbols')
+
     # diff command
     diff_parser = subparsers.add_parser('diff', help='Compare two files in *.dtb or *.dts format')
     diff_parser.add_argument('in_file1', nargs=1, help='Path to dts or dtb file')
@@ -219,6 +260,28 @@ def main():
 
         elif args.command == 'merge':
             merge(args.out_file[0], args.in_files, args.type, args.tab_size)
+
+        elif args.command in ('compose', 'compose-overlay', 'compose-overlays',
+                              'compose-dtbo', 'compose-dtbos', 'merge-overlay',
+                              'merge-overlays', 'merge-dtbo', 'merge-dtbos',
+                              'bundle', 'bundle-overlays', 'assemble', 'assemble-overlays'):
+            output_file = args.output
+            input_files = list(args.input_files or []) + list(args.in_files)
+            if output_file:
+                if args.out_file:
+                    input_files.insert(0, args.out_file)
+            else:
+                if not args.out_file:
+                    raise Exception('compose requires an output DTBO path or -o/--output')
+                output_file = args.out_file
+            if not input_files:
+                raise Exception('compose requires at least one input DTBO file')
+            handoff = None
+            if args.handoff_file:
+                with open(args.handoff_file, 'r', encoding='utf-8') as handle:
+                    handoff = json.load(handle)
+            compose(output_file, input_files, args.export_labels or None,
+                    args.report_file, args.base_files or None, handoff)
 
         elif args.command == 'diff':
             out_dir = args.out_dir if args.out_dir else os.path.join(os.getcwd(), 'diff_out')

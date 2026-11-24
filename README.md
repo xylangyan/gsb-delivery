@@ -200,6 +200,35 @@ pydtc merge out.dts test1.dtb test2.dtb
 Output saved as: out.dts
 ```
 
+#### $ pydtc compose [-h] [-o OUTPUT] [-e EXPORT] [--report REPORT] input [input ...]
+
+Compose ordered DTBO files into one base-independent DTBO.  Symbols supplied by
+an earlier input are resolved inside the composite; symbols which must come
+from the base tree remain in its `__fixups__` node.  The JSON report records
+each pending symbol together with its final location and the source input,
+node, property and 32-bit cell.
+
+```python
+import fdt
+
+composite, trace = fdt.compose_overlays(
+    ["01-add-node.dtbo", "02-edit-property.dtbo", "03-replace-property.dtbo"],
+    export_labels=["sensor_hub"],
+)
+with open("batch.dtbo", "wb") as output:
+    output.write(composite.to_dtb(version=17))
+
+print(trace.base_symbols)
+for marker in trace:
+    print(marker["source"], marker["source_node_path"],
+          marker["source_property"], marker["source_cell"])
+```
+
+The same entry point is available as `pydtc compose batch.dtbo 01.dtbo 02.dtbo`.
+Missing source targets and fixup offsets outside a property raise
+`fdt.OverlayTargetNotFound` or `fdt.FixupOutOfRangeError`; both carry the input
+index/name and location attributes.
+
 #### $ pydtc diff [-h] [-t {auto,dts,dtb}] [-o OUT_DIR] in_file1 in_file2
 
 Compare two dtb/dts files and generate 3 dts files (same in 1 and 2, specific for 1, specific for 2)
