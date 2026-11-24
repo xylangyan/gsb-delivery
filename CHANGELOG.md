@@ -1,6 +1,22 @@
 zipstream-ng changelog
 ======================
 
+### [Unreleased]
+- Add `ZipFanout` for fanning a single read-once `ZipStream` source out to many
+  independent subscribers. Each subscriber receives its own valid zip (with its
+  own local-header and central-directory offsets) and can either request the
+  complete package or just specific members.
+- Add bounded staging (`staging_limit`) so slow subscribers can catch up within
+  a fixed byte budget. Subscribers that fall outside the retained window are
+  failed explicitly with `StagingWindowExpired` (reporting
+  `window_end_offset`) instead of stalling the faster subscribers.
+- Add `SourceIncomplete` so a complete-package subscriber (or one that received
+  no complete entry) is never silently handed a truncated zip when the source
+  iterator fails; selective subscribers that can still deliver list the lost
+  members on `subscriber.missing`.
+- Add `ZipStream.entry_frames` to expose the labeled header/data/descriptor
+  frames of an entry without parsing the generated zip bytes.
+
 ### [v1.9.3]
 - Fix length calculation when adding extended ascii filenames (only affects Python 3.13.14+, 3.14.6+, 3.15+)
 

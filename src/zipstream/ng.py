@@ -666,6 +666,59 @@ class ZipStream:
         while (yield from self.file()):
             pass
 
+    def entry_frames(self):
+        """Generate a single queued file entry as a sequence of labeled frames
+
+        Like `.file()`, but yields ``(kind, arcname, data)`` tuples so callers
+        can tell the parts of an entry apart without having to parse the zip
+        data. The frames for an entry are yielded in order:
+
+          - ``("header", arcname, bytes)``: the local file header
+          - zero or more ``("data", arcname, bytes)``: the stored/compressed
+            file data
+          - ``("descriptor", arcname, bytes)``: the data descriptor (files
+            only)
+          - ``("end", arcname, zinfo)``: the completed `.ZipStreamInfo`
+
+        A directory entry only yields a "header" and an "end" frame.
+
+        Returns without yielding anything if no entry is queued or the
+        ZipStream has been finalized.
+        """
+        if self._final:
+            return
+
+        try:
+            kwargs = self._queue.popleft()
+        except IndexError:
+            return
+
+        arcname = kwargs["arcname"]
+
+        # Hold the generation lock for the same reason `.file()` does.
+        with self._gen_lock:
+            gen = self._gen_file_entry(**kwargs)
+
+            first = True
+            last = None
+            for chunk in gen:
+                if first:
+                    yield ("header", arcname, chunk)
+                    first = False
+                else:
+                    # The final chunk of a file entry is the data descriptor -
+                    # hold it back so it can be labeled correctly below.
+                    if last is not None:
+                        yield ("data", arcname, last)
+                    last = chunk
+
+            # Driving the generator to completion also appends the completed
+            # ZipStreamInfo to `self._filelist`.
+            zinfo = self._filelist[-1]
+            if not zinfo.is_dir():
+                yield ("descriptor", arcname, last)
+            yield ("end", arcname, zinfo)
+
     def footer(self):
         """Generate the central directory record, signifying the end of the stream
 

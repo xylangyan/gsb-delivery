@@ -176,6 +176,64 @@ def gen_zipfile():
 ```
 
 
+### One read-once source, many independent zip downloads
+
+Sometimes the same export has to be sent to several consumers at once, and the
+underlying data members come from a stream that can only be read once.
+`ZipFanout` generates the source members a single time and fans the bytes out to
+any number of subscribers. Each subscriber gets its own standalone, valid zip
+(its own local headers, central directory and end-of-central-directory record),
+so the packages are independent even though the source is shared.
+
+A subscriber either asks for the **complete** package or lists the specific
+members it wants:
+
+```python
+from zipstream import ZipStream, ZipFanout
+
+source = ZipStream()
+source.add(read_x_once(), "x")   # an iterable that can only be read once
+source.add(read_y_once(), "y")
+
+fanout = ZipFanout(source, staging_limit=1024 * 1024)
+
+# Promised every member - if the source fails this raises SourceIncomplete
+# instead of silently delivering a zip with missing files.
+auditor_a = fanout.subscribe("auditor-a", complete=True)
+
+# Only wants some members, but still receives a complete, standalone zip whose
+# central directory lists just those members.
+auditor_b = fanout.subscribe("auditor-b", members=["x"])
+auditor_c = fanout.subscribe("auditor-c", members=["y"])
+
+fanout.run_threaded()  # or .run() to drive the source on the current thread
+
+data_a = b"".join(auditor_a)
+data_b = b"".join(auditor_b)
+data_c = b"".join(auditor_c)
+```
+
+Key guarantees:
+
+ - **Read once.** The source members are iterated exactly once. Cancelling a
+   subscriber (`subscriber.close()`) never re-opens a source iterator and never
+   changes the member offsets already published to any other subscriber.
+ - **Independent offsets.** Every subscriber rebuilds local headers and the
+   central directory with its own offsets, so one subscriber's packaging never
+   leaks into another's.
+ - **Bounded staging.** `staging_limit` is the fixed byte budget used to let a
+   slow subscriber catch up. Bytes every remaining subscriber has moved past are
+   reclaimed. A subscriber that falls outside what staging can still hold is
+   failed explicitly with `StagingWindowExpired` (which reports the end of its
+   resumable window via `window_end_offset`) rather than being allowed to stall
+   the faster subscribers.
+ - **No silent previews.** If the source iterator fails partway through, only
+   subscribers that received at least one fully-completed entry can deliver; the
+   members they are missing are listed on `subscriber.missing`. A
+   `complete=True` subscriber (and any subscriber that got no complete entry)
+   raises `SourceIncomplete` instead of delivering a truncated-looking zip.
+
+
 Comparison to stdlib
 --------------------
 Since Python 3.6 it has actually been possible to generate zip files as a stream using just the
