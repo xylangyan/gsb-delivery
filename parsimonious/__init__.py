@@ -8,3 +8,6 @@ from parsimonious.exceptions import (ParseError, IncompleteParseError,
                                      BadGrammar)
 from parsimonious.grammar import Grammar, TokenGrammar
 from parsimonious.nodes import NodeVisitor, VisitationError, rule
+from parsimonious.archive import (Archive, Concat, Decision, Field, Leaf,
+                                  Record, RefFrame, Repeat, Segment,
+                                  SourceStore, Tail, Volume, bytes_grammar)
