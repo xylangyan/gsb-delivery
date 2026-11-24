@@ -1,0 +1,43 @@
+# 交接登记(演示批): 观测册原序、原标签、机器可能用过的 EDTF 设置。
+# 设置 = 历法(gregorian 全程格里历 / julian 全程儒略历 / italy 按登记日
+# 1582-10-15 由儒略历改格里历) + 旧式日期语法开关(legacy)。
+settings:
+  G:  { calendar: gregorian, legacy: false }
+  GL: { calendar: gregorian, legacy: true }
+  J:  { calendar: julian,    legacy: false }
+  JL: { calendar: julian,    legacy: true }
+  I:  { calendar: italy,     legacy: false }
+  IL: { calendar: italy,     legacy: true }
+
+# 不精确记号(?/~)口径: 不放宽候选日,仅作标记。如需放宽,设天数。
+widen: 0
+
+# 观测册,按原来的先后排列; 换设置只发生在两册之间。
+books:
+  - id: 卷一
+    entries:
+      - { event: E1,  label: "1582-09-20" }
+      - { event: E2,  label: "1582-10-05" }
+      - { event: E3,  label: "1582-11-02" }
+      - { event: E10, label: "1582-09-18^julian" }
+  - id: 卷二
+    entries:
+      - { event: E4, label: "1582-10-10^julian" }
+      - { event: E5, label: "1582-10" }
+  - id: 卷三
+    entries:
+      - { event: E2, label: "1582-10-15" }
+      - { event: E6, label: "1582-10-12" }
+  - id: 卷四
+    entries:
+      - { event: E6, label: "1582-10-02" }
+      - { event: E8, label: "[1582-10-04, 1582-10-14]" }
+
+# 已核到绝对日(外推格里历)的观测。
+anchors:
+  E3: "1582-11-12"
+
+# 底片登记: 显影日与观测日相隔的固定天数。
+plates:
+  - { id: P1, event: E4, developed: "1582-10-23", offset: 3 }
+  - { id: P2, event: E8, developed: "1582-10-17", offset: 3 }

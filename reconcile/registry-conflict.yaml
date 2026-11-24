@@ -1,0 +1,21 @@
+# 冲突演示批: 两册抄同一事件却落不到同一绝对日,另有一张底片与所有
+# 可行读法都对不上,用于演示"没共同解释"时的冲突清单。
+settings:
+  G:  { calendar: gregorian, legacy: false }
+  GL: { calendar: gregorian, legacy: true }
+  J:  { calendar: julian,    legacy: false }
+  JL: { calendar: julian,    legacy: true }
+  I:  { calendar: italy,     legacy: false }
+  IL: { calendar: italy,     legacy: true }
+
+books:
+  - id: 卷甲
+    entries:
+      - { event: F1, label: "1582-10-10" }
+      - { event: F2, label: "1582-10-11" }
+  - id: 卷乙
+    entries:
+      - { event: F1, label: "1582-10-21" }
+
+plates:
+  - { id: P9, event: F2, developed: "1582-11-01", offset: 5 }
