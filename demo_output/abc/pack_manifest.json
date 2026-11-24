@@ -1,0 +1,531 @@
+{
+  "seg_y_revision": "1.0",
+  "max_traces_per_reel": 3,
+  "reels": [
+    {
+      "reel_number": 1,
+      "file": "reel_001.segy",
+      "num_traces": 3,
+      "binary_header": {
+        "format_revision_num": 256,
+        "sample_interval_us": 500,
+        "num_samples": 2,
+        "data_sample_format": 3,
+        "fixed_length_trace_flag": 1,
+        "num_extended_textual_headers": 0
+      },
+      "true_start_time_ms": "1",
+      "traces": [
+        {
+          "output_trace_index": 0,
+          "file_sequence_num": 1,
+          "line_sequence_num": 1,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 0,
+          "source_label": "A",
+          "segment_index": 2,
+          "handover_sample_start": 0,
+          "source_sample_start": 4,
+          "source_sample_stop": 6,
+          "num_samples": 2,
+          "true_start_time_ms": "1",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "1",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": 1,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 7,
+          "crossline_number": 7
+        },
+        {
+          "output_trace_index": 1,
+          "file_sequence_num": 2,
+          "line_sequence_num": 2,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 1,
+          "source_label": "B",
+          "segment_index": 2,
+          "handover_sample_start": 0,
+          "source_sample_start": 4,
+          "source_sample_stop": 6,
+          "num_samples": 2,
+          "true_start_time_ms": "1",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "1",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": 1,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 9,
+          "crossline_number": 9
+        },
+        {
+          "output_trace_index": 2,
+          "file_sequence_num": 3,
+          "line_sequence_num": 3,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 2,
+          "source_label": "C",
+          "segment_index": 2,
+          "handover_sample_start": 0,
+          "source_sample_start": 4,
+          "source_sample_stop": 6,
+          "num_samples": 2,
+          "true_start_time_ms": "1",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "1",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": 1,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 9,
+          "crossline_number": 9
+        }
+      ]
+    },
+    {
+      "reel_number": 2,
+      "file": "reel_002.segy",
+      "num_traces": 3,
+      "binary_header": {
+        "format_revision_num": 256,
+        "sample_interval_us": 500,
+        "num_samples": 2,
+        "data_sample_format": 3,
+        "fixed_length_trace_flag": 1,
+        "num_extended_textual_headers": 0
+      },
+      "true_start_time_ms": "0",
+      "traces": [
+        {
+          "output_trace_index": 0,
+          "file_sequence_num": 1,
+          "line_sequence_num": 4,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 0,
+          "source_label": "A",
+          "segment_index": 1,
+          "handover_sample_start": 0,
+          "source_sample_start": 2,
+          "source_sample_stop": 4,
+          "num_samples": 2,
+          "true_start_time_ms": "0",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "0",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": 0,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 7,
+          "crossline_number": 7
+        },
+        {
+          "output_trace_index": 1,
+          "file_sequence_num": 2,
+          "line_sequence_num": 5,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 1,
+          "source_label": "B",
+          "segment_index": 1,
+          "handover_sample_start": 0,
+          "source_sample_start": 2,
+          "source_sample_stop": 4,
+          "num_samples": 2,
+          "true_start_time_ms": "0",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "0",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": 0,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 9,
+          "crossline_number": 9
+        },
+        {
+          "output_trace_index": 2,
+          "file_sequence_num": 3,
+          "line_sequence_num": 6,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 2,
+          "source_label": "C",
+          "segment_index": 1,
+          "handover_sample_start": 0,
+          "source_sample_start": 2,
+          "source_sample_stop": 4,
+          "num_samples": 2,
+          "true_start_time_ms": "0",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "0",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": 0,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 9,
+          "crossline_number": 9
+        }
+      ]
+    },
+    {
+      "reel_number": 3,
+      "file": "reel_003.segy",
+      "num_traces": 3,
+      "binary_header": {
+        "format_revision_num": 256,
+        "sample_interval_us": 500,
+        "num_samples": 2,
+        "data_sample_format": 3,
+        "fixed_length_trace_flag": 1,
+        "num_extended_textual_headers": 0
+      },
+      "true_start_time_ms": "-1",
+      "traces": [
+        {
+          "output_trace_index": 0,
+          "file_sequence_num": 1,
+          "line_sequence_num": 7,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 0,
+          "source_label": "A",
+          "segment_index": 0,
+          "handover_sample_start": 0,
+          "source_sample_start": 0,
+          "source_sample_stop": 2,
+          "num_samples": 2,
+          "true_start_time_ms": "-1",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "-1",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": -1,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 7,
+          "crossline_number": 7
+        },
+        {
+          "output_trace_index": 1,
+          "file_sequence_num": 2,
+          "line_sequence_num": 8,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 1,
+          "source_label": "B",
+          "segment_index": 0,
+          "handover_sample_start": 0,
+          "source_sample_start": 0,
+          "source_sample_stop": 2,
+          "num_samples": 2,
+          "true_start_time_ms": "-1",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "-1",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": -1,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 9,
+          "crossline_number": 9
+        },
+        {
+          "output_trace_index": 2,
+          "file_sequence_num": 3,
+          "line_sequence_num": 9,
+          "source_reel": "legacy_survey",
+          "physical_trace_index": 2,
+          "source_label": "C",
+          "segment_index": 0,
+          "handover_sample_start": 0,
+          "source_sample_start": 0,
+          "source_sample_stop": 2,
+          "num_samples": 2,
+          "true_start_time_ms": "-1",
+          "sample_interval_us": 500,
+          "time_scalar": 1,
+          "true_time_fields": {
+            "uphole_time_at_source": "0",
+            "uphole_time_at_group": "0",
+            "source_static_correction": "0",
+            "group_static_correction": "0",
+            "total_static": "0",
+            "lag_time_a": "0",
+            "lag_time_b": "0",
+            "mute_start_time": "0",
+            "delay_recording_time": "-1",
+            "mute_end_time": "0"
+          },
+          "stored_time_fields": {
+            "uphole_time_at_source": 0,
+            "uphole_time_at_group": 0,
+            "source_static_correction": 0,
+            "group_static_correction": 0,
+            "total_static": 0,
+            "lag_time_a": 0,
+            "lag_time_b": 0,
+            "delay_recording_time": -1,
+            "mute_start_time": 0,
+            "mute_end_time": 0
+          },
+          "inline_number": 9,
+          "crossline_number": 9
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 0,
+      "source_label": "A",
+      "requested_sample_start": 0,
+      "requested_sample_stop": 6,
+      "permitted_cut_after": [
+        2,
+        3,
+        4
+      ],
+      "max_segment_samples": 3,
+      "delivered_segments": [
+        {
+          "reel_number": 3,
+          "segment_index": 0,
+          "source_sample_start": 0,
+          "source_sample_stop": 2
+        },
+        {
+          "reel_number": 2,
+          "segment_index": 1,
+          "source_sample_start": 2,
+          "source_sample_stop": 4
+        },
+        {
+          "reel_number": 1,
+          "segment_index": 2,
+          "source_sample_start": 4,
+          "source_sample_stop": 6
+        }
+      ]
+    },
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 1,
+      "source_label": "B",
+      "requested_sample_start": 0,
+      "requested_sample_stop": 6,
+      "permitted_cut_after": [
+        2,
+        4
+      ],
+      "max_segment_samples": 3,
+      "delivered_segments": [
+        {
+          "reel_number": 3,
+          "segment_index": 0,
+          "source_sample_start": 0,
+          "source_sample_stop": 2
+        },
+        {
+          "reel_number": 2,
+          "segment_index": 1,
+          "source_sample_start": 2,
+          "source_sample_stop": 4
+        },
+        {
+          "reel_number": 1,
+          "segment_index": 2,
+          "source_sample_start": 4,
+          "source_sample_stop": 6
+        }
+      ]
+    },
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 2,
+      "source_label": "C",
+      "requested_sample_start": 0,
+      "requested_sample_stop": 6,
+      "permitted_cut_after": [
+        2,
+        4
+      ],
+      "max_segment_samples": 3,
+      "delivered_segments": [
+        {
+          "reel_number": 3,
+          "segment_index": 0,
+          "source_sample_start": 0,
+          "source_sample_stop": 2
+        },
+        {
+          "reel_number": 2,
+          "segment_index": 1,
+          "source_sample_start": 2,
+          "source_sample_stop": 4
+        },
+        {
+          "reel_number": 1,
+          "segment_index": 2,
+          "source_sample_start": 4,
+          "source_sample_stop": 6
+        }
+      ]
+    }
+  ]
+}

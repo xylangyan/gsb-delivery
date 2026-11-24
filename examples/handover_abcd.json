@@ -1,0 +1,38 @@
+{
+  "max_segment_samples": 3,
+  "max_traces_per_reel": 3,
+  "items": [
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 0,
+      "label": "A",
+      "start_sample": 0,
+      "stop_sample": 6,
+      "permitted_cut_after": [2, 3, 4]
+    },
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 1,
+      "label": "B",
+      "start_sample": 0,
+      "stop_sample": 6,
+      "permitted_cut_after": [2, 4]
+    },
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 2,
+      "label": "C",
+      "start_sample": 0,
+      "stop_sample": 6,
+      "permitted_cut_after": [2, 4]
+    },
+    {
+      "source_reel": "legacy_survey",
+      "physical_trace_index": 3,
+      "label": "D",
+      "start_sample": 0,
+      "stop_sample": 6,
+      "permitted_cut_after": [2, 3, 4]
+    }
+  ]
+}
