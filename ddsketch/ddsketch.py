@@ -183,6 +183,39 @@ class BaseDDSketch(object):
             quantile_value = self._mapping.value(key)
         return quantile_value
 
+    def quantile_difference_bounds(
+        self,
+        low_quantile=0.1,
+        high_quantile=0.9,
+        unit=1,
+    ):
+        """Return exact attainable bounds for a quantile difference.
+
+        This is a convenience wrapper around
+        :func:`ddsketch.bounds.summarize_sketch` and
+        :func:`ddsketch.bounds.quantile_difference_bounds`.  The existing
+        approximate :meth:`get_quantile_value` API is unchanged.
+
+        Args:
+            low_quantile, high_quantile: quantiles in ``[0, 1]``.
+            unit: minimum quantization unit; observations must be exact
+                multiples of this value.
+        """
+        from .bounds import quantile_difference_bounds as _bounds
+        from .bounds import summarize_sketch
+
+        summary = summarize_sketch(self, unit=unit)
+        return _bounds(summary, low_quantile, high_quantile)
+
+    def to_bucket_summary(self, unit=1):
+        """Export this sketch as an exact-unit bucket summary.
+
+        See :func:`ddsketch.bounds.summarize_sketch` for the summary format.
+        """
+        from .bounds import summarize_sketch
+
+        return summarize_sketch(self, unit=unit)
+
     def merge(self, sketch):
         # type: (BaseDDSketch) -> None
         """Merge the given sketch into this one. After this operation, this sketch

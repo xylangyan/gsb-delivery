@@ -53,6 +53,35 @@ sketch.merge(another_sketch)
 ```
 The quantiles of `values` concatenated with `other_values` are still accurate to within the relative error.
 
+## Exact quantile-difference bounds
+
+The sketch summary does not retain the original values. If a downstream
+consumer has the bucket counts, the exact signed sum, the true minimum and
+maximum, and the smallest quantization unit, it can compute the smallest and
+largest attainable difference between two quantiles:
+
+```python
+from ddsketch.bounds import quantile_difference_bounds
+from ddsketch.bounds import summarize_sketch
+
+summary = summarize_sketch(sketch, unit=1)
+result = quantile_difference_bounds(summary, 0.1, 0.9)
+if result.feasible:
+    print(result.minimum, result.maximum)
+    print(result.value_weights_minimum)  # value -> integer weight
+else:
+    print(result.errors, result.conflicts)
+```
+
+Weights are treated as integer multiplicities, so a weight of one million is
+never expanded into a million observations. The two ranks are optimized
+jointly: when both quantiles fall in the same bucket, the pair must still
+reproduce the supplied exact sum and extrema. If both ranks are the same
+observation, the difference is exactly zero. Collapsed buckets are interpreted
+as the full folded key range, not as a concentration at the bucket
+representative. The existing approximate `get_quantile_value` API remains
+available for live dashboards.
+
 ## Development
 
 To work on ddsketch a Python interpreter must be installed. It is recommended to use the provided development

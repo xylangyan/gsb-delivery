@@ -1,0 +1,12 @@
+---
+features:
+  - |
+    Add ``ddsketch.bounds`` with exact attainable bounds for the difference
+    between two quantiles. ``quantile_difference_bounds`` accepts a bucket
+    summary with integer weights, exact signed sum, true extrema and the
+    minimum quantization unit. It reports the joint minimum and maximum
+    difference under the library's ``floor(q * (N - 1))`` sample-rank
+    convention, plus per-value count witnesses that can be re-aggregated
+    without expanding large weights. ``summarize_sketch`` exports a live
+    sketch for this purpose; the existing approximate
+    ``get_quantile_value`` API is unchanged.
