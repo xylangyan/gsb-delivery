@@ -91,6 +91,14 @@ ldaptor.protocols.ldap.ldifprotocol module
     :undoc-members:
     :show-inheritance:
 
+ldaptor.protocols.ldap.merger module
+------------------------------------
+
+.. automodule:: ldaptor.protocols.ldap.merger
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 ldaptor.protocols.ldap.proxy module
 -----------------------------------
 
@@ -103,6 +111,14 @@ ldaptor.protocols.ldap.svcbindproxy module
 ------------------------------------------
 
 .. automodule:: ldaptor.protocols.ldap.svcbindproxy
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+ldaptor.protocols.ldap.roster module
+------------------------------------
+
+.. automodule:: ldaptor.protocols.ldap.roster
     :members:
     :undoc-members:
     :show-inheritance:

@@ -88,6 +88,12 @@ class LDAPClientTestDriver:
         response_controls = None
         while responses:
             r = responses.pop(0)
+            if isinstance(r, tuple) and len(r) == 2 and not isinstance(
+                r, failure.Failure
+            ):
+                # (response, controls) pairs let tests exercise response
+                # controls without inventing a full transport.
+                r, response_controls = r
             if isinstance(r, failure.Failure):
                 d.errback(r)
                 break

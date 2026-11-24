@@ -101,6 +101,23 @@ Fixes
   ``LDAPClientTestDriver`` in ``ldaptor.testutil`` grew a matching
   ``notifyOnDisconnect`` so tests can exercise this path (#231).
 
+Merger roster paging
+~~~~~~~~~~~~~~~~~~~~
+
+- ``MergedLDAPServer`` now supports versioned, ascending roster paging
+  when a search negotiates the RFC 2696 paged-results control.  Each
+  directory is read from one pinned version; a page is released only
+  after every live directory has moved strictly past every personnel
+  number in it, so a later response cannot add fields or sources to an
+  already confirmed page.  Duplicate personnel numbers merge with
+  primary-directory fields taking precedence and report every source
+  plus per-source registration counts.  Continuation cookies are
+  connection-scoped; a new connection resumes after the last confirmed
+  personnel number on the same version.  A directory that really loses
+  the pinned version leaves its earlier range confirmable and reports
+  the unsettled range per query, while other queries keep paging.
+  Plain searches keep the existing merge behaviour.
+
 Docs
 ~~~~
 

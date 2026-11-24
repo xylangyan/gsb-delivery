@@ -11,6 +11,20 @@ class LDAPServerConnectionLostException(ldaperrors.LDAPException):
     pass
 
 
+class ResponseWithControls:
+    """Pair an LDAP response operation with response controls.
+
+    ``BaseLDAPServer._cbHandle`` recognizes this wrapper and queues the
+    operation with the controls attached.  Keeping it separate avoids
+    adding mutable, rarely-used attributes to every ``pureldap`` result
+    object.
+    """
+
+    def __init__(self, op, controls):
+        self.op = op
+        self.controls = controls
+
+
 class BaseLDAPServer(protocol.Protocol):
     debug = False
 
@@ -49,10 +63,10 @@ class BaseLDAPServer(protocol.Protocol):
         """Called when TCP connection has been lost"""
         self.connected = 0
 
-    def queue(self, id, op):
+    def queue(self, id, op, controls=None):
         if not self.connected:
             raise LDAPServerConnectionLostException()
-        msg = pureldap.LDAPMessage(op, id=id)
+        msg = pureldap.LDAPMessage(op, id=id, controls=controls)
         if self.debug:
             log.msg("S->C %s" % repr(msg), debug=True)
         self.transport.write(msg.toWire())
@@ -87,7 +101,10 @@ class BaseLDAPServer(protocol.Protocol):
 
     def _cbHandle(self, response, id):
         if response is not None:
-            self.queue(id, response)
+            if isinstance(response, ResponseWithControls):
+                self.queue(id, response.op, response.controls)
+            else:
+                self.queue(id, response)
 
     def failDefault(self, resultCode, errorMessage):
         return pureldap.LDAPExtendedResponse(
