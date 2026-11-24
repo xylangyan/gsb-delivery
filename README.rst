@@ -51,6 +51,37 @@ Usage example::
     crcint = crcinst.final()
 
 
+The ``crccheck.ledger`` module derives the CRC of an assembled product from
+historical CRC ledger records without retrieving the source volume. Ledger
+records carry the full algorithm parameters, the physical byte interval they
+cover and their recorded result; an assembly manifest references source
+intervals (which may repeat or appear out of order, interleaved with literal
+fill blocks). All reasoning is affine GF(2) algebra over the CRC register, so
+advancing over an unknown run of ``n`` bytes costs O(log n) matrix operations
+and never allocates per-byte state. The engine reports the uniquely
+confirmable CRC, the cheapest permitted re-read plan (overlapping physical
+bytes counted once) when evidence is short, the still undetermined check
+bits when even a full re-read cannot settle them, and any ledger records that
+cannot all be true::
+
+    from crccheck.ledger import Solver, LedgerRecord, AssemblyPiece
+
+    records = [LedgerRecord("r1", params, 0, 64, recorded_result)]
+    manifest = [AssemblyPiece("source", 32, 64),
+                AssemblyPiece("fill", data=b"\\x00\\xff"),
+                AssemblyPiece("source", 0, 32)]
+    report = Solver(params, records, assembly=manifest).run()
+    # report["status"] is "unique", "needs_reread" or "indeterminate"
+
+A JSON work order can be processed from the command line::
+
+    python -m crccheck.ledger work_order.json
+
+The final check can be cross-verified against a fully materialised product
+with ``Solver.verify_with_crccheck``, which runs the ordinary crccheck
+calculation over the whole product and compares it with the symbolic result.
+
+
 License:
     MIT License
 
