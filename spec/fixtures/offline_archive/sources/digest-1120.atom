@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Digest (aggregator)</title>
+  <id>tag:digest.example,2026:2026-11-20</id>
+  <updated>2026-11-20T23:59:00Z</updated>
+  <entry>
+    <id>tag:digest.example,2026:notice-a3</id>
+    <title>Retraction notice</title>
+    <updated>2026-11-20T15:00:00Z</updated>
+    <content type="html">Alpha Daily retracts tag:alpha.example,2026:a3 as published on 2026-11-20.</content>
+  </entry>
+</feed>

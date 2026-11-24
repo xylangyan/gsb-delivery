@@ -23,6 +23,7 @@ require_relative "feedjira/parser/rss"
 require_relative "feedjira/parser/atom_entry"
 require_relative "feedjira/parser/atom"
 require_relative "feedjira/preprocessor"
+require_relative "feedjira/offline_archive"
 require_relative "feedjira/version"
 
 require_relative "feedjira/parser/rss_feed_burner_entry"

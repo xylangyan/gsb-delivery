@@ -1,0 +1,10 @@
+{
+  "audio/a1.mp3": "attachments/audio/a1.mp3",
+  "media/a1.jpg": "attachments/media/a1.jpg",
+  "docs/a2.pdf": "attachments/docs/a2.pdf",
+  "clips/b1.mp4": "attachments/clips/b1.mp4",
+  "pics/b1.jpg": "attachments/clips/b1.mp4",
+  "art/g1.png": "attachments/art/g1.png",
+  "art/g2.jpg": "attachments/art/g2.jpg",
+  "https://alpha.example/editions/2026-11-20/audio/a1.mp3": "attachments/audio/a1.mp3"
+}

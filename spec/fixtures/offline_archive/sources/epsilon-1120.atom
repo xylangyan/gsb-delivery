@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xml:base="https://epsilon.example/2026/11/20/">
+  <title>Epsilon Notes</title>
+  <id>tag:epsilon.example,2026:2026-11-20</id>
+  <updated>2026-11-20T23:55:00Z</updated>
+  <entry>
+    <id>tag:epsilon.example,2026:e1</id>
+    <title>Signed note</title>
+    <updated>2026-11-20T16:00:00Z</updated>
+    <link rel="alternate" type="text/html" href="https://shared.example/story/analysis.html"/>
+    <content type="xhtml"><div xmlns=""><p>Epsilon signed body</p></div></content>
+  </entry>
+  <entry>
+    <id>tag:epsilon.example,2026:e2</id>
+    <title>Epsilon reprint</title>
+    <updated>2026-11-20T16:30:00Z</updated>
+    <link rel="alternate" type="text/html" href="https://shared.example/story/investigation.html"/>
+    <content type="html">&lt;p&gt;Epsilon reprint body&lt;/p&gt;</content>
+  </entry>
+</feed>

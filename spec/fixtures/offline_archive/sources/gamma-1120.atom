@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:media="http://example.org/gamma-media"
+      xml:base="https://gamma.example/2026/11/20/">
+  <title>Gamma Review</title>
+  <id>tag:gamma.example,2026:2026-11-20</id>
+  <updated>2026-11-20T23:45:00Z</updated>
+  <entry>
+    <id>tag:gamma.example,2026:g1</id>
+    <title>Gamma one</title>
+    <updated>2026-11-20T13:00:00Z</updated>
+    <content type="html">&lt;p&gt;Gamma one body&lt;/p&gt;</content>
+    <media:content url="art/g1.png" type="image/png"/>
+  </entry>
+  <entry xmlns:media="http://example.org/gamma-legacy" xml:base="https://gamma.example/assets/">
+    <id>tag:gamma.example,2026:g2</id>
+    <title>Gamma two (rebinds media)</title>
+    <updated>2026-11-20T13:30:00Z</updated>
+    <content type="html">&lt;p&gt;Gamma two body&lt;/p&gt;</content>
+    <media:content url="art/g2.jpg" type="image/jpeg"/>
+  </entry>
+</feed>

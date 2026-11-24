@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xml:base="https://alpha.example/editions/2026-11-21/">
+  <title>Alpha Daily (next day)</title>
+  <id>tag:alpha.example,2026:2026-11-21</id>
+  <updated>2026-11-21T08:00:00Z</updated>
+  <entry>
+    <id>tag:alpha.example,2026:a3</id>
+    <title>Alpha three (new version)</title>
+    <updated>2026-11-21T07:30:00Z</updated>
+    <content type="html">&lt;p&gt;Corrected Alpha three body&lt;/p&gt;</content>
+  </entry>
+</feed>

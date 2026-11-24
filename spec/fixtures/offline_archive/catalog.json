@@ -1,0 +1,157 @@
+{
+  "issues": [
+    {
+      "id": "issue-1",
+      "cutoff": "2026-11-21T00:00:00Z",
+      "page_limit": 5,
+      "sources": [
+        {
+          "name": "alpha",
+          "file": "sources/alpha-1120.atom",
+          "uri": "https://alpha.example/editions/2026-11-20/"
+        },
+        {
+          "name": "digest",
+          "file": "sources/digest-1120.atom",
+          "uri": "https://digest.example/2026/11/20/"
+        }
+      ],
+      "entries": [
+        {
+          "source": "alpha",
+          "id": "tag:alpha.example,2026:a1"
+        },
+        {
+          "source": "alpha",
+          "id": "tag:alpha.example,2026:a2"
+        },
+        {
+          "source": "alpha",
+          "id": "tag:alpha.example,2026:a3"
+        },
+        {
+          "source": "alpha",
+          "id": "tag:alpha.example,2026:a4"
+        }
+      ],
+      "must_group": [
+        [
+          "alpha:tag:alpha.example,2026:a1",
+          "alpha:tag:alpha.example,2026:a2"
+        ]
+      ],
+      "retractions": [
+        {
+          "notice_source": "digest",
+          "original_source": "alpha",
+          "target_source": "alpha",
+          "target_id": "tag:alpha.example,2026:a3",
+          "target_version": "2026-11-20T10:00:00Z",
+          "published_at": "2026-11-20T15:00:00Z",
+          "effective": true,
+          "forwarded": true,
+          "reason": "factual error in the archived edition",
+          "object": "tag:digest.example,2026:notice-a3"
+        }
+      ]
+    },
+    {
+      "id": "issue-2",
+      "cutoff": "2026-11-21T00:00:00Z",
+      "page_limit": 4,
+      "sources": [
+        {
+          "name": "beta",
+          "file": "sources/beta-1120.atom",
+          "uri": "https://beta.example/2026/11/20/"
+        },
+        {
+          "name": "gamma",
+          "file": "sources/gamma-1120.atom",
+          "uri": "https://gamma.example/2026/11/20/"
+        }
+      ],
+      "entries": [
+        {
+          "source": "beta",
+          "id": "tag:beta.example,2026:b1"
+        },
+        {
+          "source": "beta",
+          "id": "tag:beta.example,2026:b3"
+        },
+        {
+          "source": "gamma",
+          "id": "tag:gamma.example,2026:g1"
+        },
+        {
+          "source": "gamma",
+          "id": "tag:gamma.example,2026:g2"
+        }
+      ],
+      "must_group": [
+        [
+          "beta:tag:beta.example,2026:b3",
+          "gamma:tag:gamma.example,2026:g2"
+        ],
+        [
+          "beta:tag:beta.example,2026:b1",
+          "gamma:tag:gamma.example,2026:g1"
+        ]
+      ],
+      "retractions": []
+    },
+    {
+      "id": "issue-3",
+      "cutoff": "2026-11-21T00:00:00Z",
+      "page_limit": 3,
+      "sources": [
+        {
+          "name": "alpha",
+          "file": "sources/alpha-1120.atom",
+          "uri": "https://alpha.example/editions/2026-11-20/"
+        },
+        {
+          "name": "alpha",
+          "file": "sources/alpha-1121.atom",
+          "uri": "https://alpha.example/editions/2026-11-21/"
+        },
+        {
+          "name": "delta",
+          "file": "sources/delta-1120.atom",
+          "uri": "https://delta.example/mirror/"
+        },
+        {
+          "name": "epsilon",
+          "file": "sources/epsilon-1120.atom",
+          "uri": "https://epsilon.example/2026/11/20/"
+        }
+      ],
+      "entries": [
+        {
+          "source": "alpha",
+          "id": "tag:alpha.example,2026:a3"
+        },
+        {
+          "source": "delta",
+          "id": "tag:delta.example,2026:d1"
+        },
+        {
+          "source": "epsilon",
+          "id": "tag:epsilon.example,2026:e1"
+        },
+        {
+          "source": "epsilon",
+          "id": "tag:epsilon.example,2026:e2"
+        }
+      ],
+      "must_group": [
+        [
+          "alpha:tag:alpha.example,2026:a3",
+          "delta:tag:delta.example,2026:d1"
+        ]
+      ],
+      "retractions": []
+    }
+  ]
+}

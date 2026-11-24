@@ -1,0 +1,14 @@
+{
+  "entries": {
+    "epsilon|tag:epsilon.example,2026:e1": {
+      "verified": true,
+      "scope": {
+        "line_ranges": [[5, 20]],
+        "unselected_paths": ["entry/content/p[2]"]
+      }
+    },
+    "alpha|tag:alpha.example,2026:a1": {
+      "verified": true
+    }
+  }
+}

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:media="http://search.yahoo.com/mrss/"
+      xml:base="https://alpha.example/editions/2026-11-20/">
+  <title>Alpha Daily</title>
+  <id>tag:alpha.example,2026:2026-11-20</id>
+  <updated>2026-11-20T23:00:00Z</updated>
+  <entry>
+    <id>tag:alpha.example,2026:a1</id>
+    <title>Alpha one</title>
+    <updated>2026-11-20T08:00:00Z</updated>
+    <content type="html">&lt;p&gt;Alpha one body&lt;/p&gt;</content>
+    <link rel="enclosure" type="audio/mpeg" href="audio/a1.mp3" length="111"/>
+    <media:content url="media/a1.jpg" type="image/jpeg" medium="image"/>
+  </entry>
+  <entry>
+    <id>tag:alpha.example,2026:a2</id>
+    <title>Alpha two</title>
+    <updated>2026-11-20T09:00:00Z</updated>
+    <content type="html">&lt;p&gt;Alpha two body&lt;/p&gt;</content>
+    <link rel="enclosure" type="application/pdf" href="docs/a2.pdf"/>
+  </entry>
+  <entry>
+    <id>tag:alpha.example,2026:a3</id>
+    <title>Alpha three (retracted)</title>
+    <updated>2026-11-20T10:00:00Z</updated>
+    <content type="html">&lt;p&gt;Alpha three body&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <id>tag:alpha.example,2026:a4</id>
+    <title>Alpha four</title>
+    <updated>2026-11-20T11:00:00Z</updated>
+    <content type="html">&lt;p&gt;Alpha four body&lt;/p&gt;</content>
+  </entry>
+</feed>
