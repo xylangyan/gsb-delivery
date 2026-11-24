@@ -401,6 +401,22 @@ module RGeo
       end
       alias [] get
 
+      # Returns the raw MultiPatch parts of the record at the given
+      # 0-based index as Multipatch::RawPart objects. Unlike the normal
+      # geometry reading path, triangle strips and fans are not expanded
+      # or merged, so every measured point and part keeps its source
+      # ordering. Returns nil for non-multipatch shapefiles.
+      def multipatch_parts(index_)
+        return nil unless @opened && @shape_type_code == 31
+
+        previous_index = @cur_record_index
+        seek_index(index_)
+        length_ = @main_file.read(8).unpack("NN")[1]
+        data_ = @main_file.read(length_ * 2)
+        seek_index(previous_index)
+        Multipatch::PartDecoder.new(@factory).decode(data_, index_)
+      end
+
       def _read_next_record # :nodoc:
         length_ = @main_file.read(8).unpack("NN")[1]
         data_ = @main_file.read(length_ * 2)

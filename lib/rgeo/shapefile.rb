@@ -19,4 +19,5 @@ end
 
 # Implementation files
 require "rgeo/shapefile/version"
+require "rgeo/shapefile/multipatch"
 require "rgeo/shapefile/reader"
