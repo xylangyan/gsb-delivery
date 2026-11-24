@@ -3692,3 +3692,24 @@ class FactTablePartitioner(BasePartitioner):
         """Invoke ensure on the relevant part"""
         part = self.getpart(row, namemapping)
         return part.ensure(row, namemapping)
+
+
+from pygrametl.reconciliation import (  # noqa: E402
+    OutboundReconciliationService,
+    ReceiptReconciler,
+    ReconciliationResult,
+    reconcile_receipts,
+)
+
+__all__ += [
+    "OutboundReconciliationService",
+    "ReceiptReconciler",
+    "ReconciliationResult",
+    "reconcile_receipts",
+]
+
+
+def __getattr__(name):
+    from pygrametl import reconciliation
+
+    return getattr(reconciliation, name)

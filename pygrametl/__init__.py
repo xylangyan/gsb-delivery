@@ -1301,3 +1301,34 @@ class Error(_DBBaseException):
 
 class InterfaceError(Error):
     pass
+
+
+from pygrametl.reconciliation import (  # noqa: E402
+    Assignment,
+    OutboundReconciliationService,
+    ReceiptReconciler,
+    ReconciliationResult,
+    duration_hours,
+    match_receipts,
+    optimal_matching,
+    reconcile_receipts,
+    solve_reconciliation,
+)
+
+__all__ += [
+    "Assignment",
+    "OutboundReconciliationService",
+    "ReceiptReconciler",
+    "ReconciliationResult",
+    "duration_hours",
+    "match_receipts",
+    "optimal_matching",
+    "reconcile_receipts",
+    "solve_reconciliation",
+]
+
+
+def __getattr__(name):
+    from pygrametl import reconciliation
+
+    return getattr(reconciliation, name)
