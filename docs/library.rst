@@ -351,6 +351,43 @@ In particular, ``inserted`` alone does not encode insertion positions; consult t
 when order matters. ``Insert.from_node`` is the node being inserted and ``Insert.to_node`` is the container;
 ``Remove.to_node`` is also the container, not a replacement value.
 
+Auditing Occurrence Provenance
+------------------------------
+
+A normal diff reports one cheapest way to transform one tree into another. When every appearance of a row is registered
+separately, that is not enough: two rows can have identical bodies and still be different registered occurrences, and
+an equally cheap alignment that pairs a target with the other copy is evidence, not noise. The
+:mod:`graphtage.lineage` module keeps Graphtage's prices for the base edits that actually occur and reports every
+correspondence that belongs to at least one minimum-price alignment of each adjacent stage.
+
+:func:`graphtage.lineage.audit` takes three versions, the sections that hold occurrences, the reviewed identity table,
+and the third-version registration whose ancestry is wanted::
+
+    >>> from graphtage.lineage import SectionSpec, audit
+    >>> first = {"rows": [{"id": "r1", "body": "same"}, {"id": "r2", "body": "same"}]}
+    >>> second = {"rows": [{"id": "m1", "body": "same"}]}
+    >>> third = {"rows": [{"id": "t1", "body": "same"}]}
+    >>> spec = SectionSpec("rows", registration_key="id", strip_registration_key=True)
+    >>> result = audit([first, second, third], sections=[spec], target="t1")
+    >>> result.confirmed
+    False
+    >>> sorted(result.first_version_registrations)
+    ['r1', 'r2']
+
+A reviewed first-to-third identification resolves the ambiguity::
+
+    >>> result = audit(
+    ...     [first, second, third], sections=[spec], target="t1",
+    ...     identities={"same": [[(0, "r2"), (2, "t1")]]},
+    ... )
+    >>> result.confirmed, result.first_version_registrations
+    (True, ('r2',))
+
+The result distinguishes a confirmed origin, genuinely different explanations (each with a renderable pair of
+adjacent diffs and a trace path), an origin introduced in the middle or third version, and an evidence conflict in
+which satisfying the review would require paying more than a stage's original minimum. A more expensive alignment is
+reported at its required price and is never passed off as the original price.
+
 Diffing Python Source Code
 --------------------------
 
