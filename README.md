@@ -120,6 +120,50 @@ situations:
 - If a function pickled by reference uses a function pickled by value during its execution.
 
 
+Manifest-licensed, auditable exports
+------------------------------------
+
+When rules are shipped to offline machines, two extra guarantees are usually
+needed: explicit control over which module revisions are embedded in the
+payload (by value) versus expected to be pre-installed and loaded by name, and
+a reviewable record of what a payload actually contains. The
+`cloudpickle.exporting` module provides this on top of the regular pickler.
+
+Licenses are registered per receiver job, before the actual serialization:
+
+```python
+from cloudpickle import ExportManifest, export_dumps, ExportError
+
+manifest = ExportManifest(receiver="offline-machine-1")
+manifest.license_by_value(rules)       # this revision may be embedded
+manifest.license_by_name(shared_lib)   # the receiver must pre-install it
+```
+
+`export_dumps` returns both the payload and an `ExportReport` itemizing, for
+every function, class or module actually written, whether it was embedded by
+value or loaded by name, together with its module version and source file:
+
+```python
+payload, report = export_dumps(rules.my_rule, manifest)
+report.by_value  # embedded sources, with version and source file
+report.by_name   # modules the receiver must pre-install
+```
+
+The licensed pickler ignores the process-wide `register_pickle_by_value`
+registry for the duration of an export, so a by-value module temporarily
+registered by another concurrent job never leaks into this payload. Dependencies
+built lazily inside a custom `__reduce__` are discovered too, and each distinct
+dependency is accounted exactly once.
+
+If a written dependency has no license, is licensed by name but cannot be
+imported by reference, or two distinct revisions of a same-named class/module
+would collide at load time, an `ExportError` carrying the offending
+dependencies is raised before sign-off; the partially written bytes are not a
+valid delivery. Standard library modules and cloudpickle's own reconstructors
+are always implicitly loaded by name and need no license. The plain
+`register_pickle_by_value` + `dumps` workflow keeps working unchanged.
+
+
 Running the tests
 -----------------
 

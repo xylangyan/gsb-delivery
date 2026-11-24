@@ -1,6 +1,18 @@
 In development
 ==============
 
+- Add the `cloudpickle.exporting` module for manifest-licensed, auditable
+  exports. An `ExportManifest` records which module revisions may be embedded
+  (by value) or must be pre-installed and loaded by name; `export_dumps` /
+  `export_dump` enforce those licenses, ignore the process-wide by-value
+  registry for the duration of an export (so concurrent jobs cannot leak
+  same-named modules into each other's payloads), and return an itemized
+  `ExportReport` of the dependencies actually written, including objects built
+  lazily inside a custom `__reduce__`. Unlicensed dependencies, by-name
+  licenses that cannot be honored, and same-name distinct-revision collisions
+  raise `ExportError` before sign-off instead of producing a delivery.
+
+
 3.1.3
 =====
 

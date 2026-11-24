@@ -87,6 +87,58 @@ DEFAULT_PROTOCOL = pickle.HIGHEST_PROTOCOL
 # Names of modules whose resources should be treated as dynamic.
 _PICKLE_BY_VALUE_MODULES = set()
 
+# Thread-local hook used to override the global by-value registry. This is used
+# by cloudpickle.exporting.ExportPickler so that a licensed export makes its
+# own by-value/by-name decisions independently of the process-wide registry,
+# without mutating it and without interfering with concurrent exports running
+# in other threads.
+_PICKLE_BY_VALUE_OVERRIDE = threading.local()
+
+
+def _set_pickle_by_value_override(check):
+    """Install a per-thread by-value decision callback.
+
+    The callback receives a module object and returns True if the active
+    pickler should serialize this module by value. Passing None removes the
+    override and restores the default registry-based behavior.
+    """
+    if check is None:
+        if hasattr(_PICKLE_BY_VALUE_OVERRIDE, "check"):
+            del _PICKLE_BY_VALUE_OVERRIDE.check
+    else:
+        _PICKLE_BY_VALUE_OVERRIDE.check = check
+
+
+def _get_pickle_by_value_override():
+    return getattr(_PICKLE_BY_VALUE_OVERRIDE, "check", None)
+
+
+# Thread-local stack of object observers. Each observer is called with every
+# object about to be reduced, which lets an in-progress licensed export collect
+# the dependencies written by nested serializations (including plain
+# cloudpickle.dumps calls performed inside a custom __reduce__).
+_OBJECT_OBSERVERS = threading.local()
+
+
+def _add_object_observer(callback):
+    stack = getattr(_OBJECT_OBSERVERS, "stack", None)
+    if stack is None:
+        stack = []
+        _OBJECT_OBSERVERS.stack = stack
+    stack.append(callback)
+
+
+def _remove_object_observer(callback):
+    stack = getattr(_OBJECT_OBSERVERS, "stack", None)
+    if stack:
+        stack.remove(callback)
+
+
+def _notify_object_observers(obj):
+    stack = getattr(_OBJECT_OBSERVERS, "stack", None)
+    if stack:
+        stack[-1](obj)
+
 # Track the provenance of reconstructed dynamic classes to make it possible to
 # reconstruct instances from the matching singleton class definition when
 # appropriate and preserve the usual "isinstance" semantics of Python objects.
@@ -178,6 +230,9 @@ def list_registry_pickle_by_value():
 
 
 def _is_registered_pickle_by_value(module):
+    override = _get_pickle_by_value_override()
+    if override is not None:
+        return override(module)
     module_name = module.__name__
     if module_name in _PICKLE_BY_VALUE_MODULES:
         return True
@@ -1397,6 +1452,7 @@ class Pickler(pickle.Pickler):
               reducers, such as Exceptions. See
               https://github.com/cloudpipe/cloudpickle/issues/248
             """
+            _notify_object_observers(obj)
             t = type(obj)
             try:
                 is_anyclass = issubclass(t, type)
@@ -1458,6 +1514,7 @@ class Pickler(pickle.Pickler):
             The name of this method is somewhat misleading: all types get
             dispatched here.
             """
+            _notify_object_observers(obj)
             if obj is type(None):  # noqa
                 return self.save_reduce(type, (None,), obj=obj)
             elif obj is type(Ellipsis):
@@ -1484,6 +1541,7 @@ class Pickler(pickle.Pickler):
             Determines what kind of function obj is (e.g. lambda, defined at
             interactive prompt, etc) and handles the pickling appropriately.
             """
+            _notify_object_observers(obj)
             if _should_pickle_by_reference(obj, name=name):
                 return super().save_global(obj, name=name)
             elif PYPY and isinstance(obj.__code__, builtin_code_type):
