@@ -1,0 +1,248 @@
+{
+  "sentences": [
+    {
+      "sent_id": "s_merge",
+      "conllu": "# sent_id = s_merge\n1\tA\t_\t_\t_\t_\t0\troot\t0:root\t_\n2\tX\t_\t_\t_\t_\t1\tdep\t1:r1\t_\n3\tB\t_\t_\t_\t_\t2\tdep\t2:r2\t_\n4\tC\t_\t_\t_\t_\t0\troot\t0:root\t_\n5\tY\t_\t_\t_\t_\t4\tdep\t4:r3\t_\n6\tD\t_\t_\t_\t_\t5\tdep\t5:r4\t_\n\n",
+      "id_map": {
+        "1": "1",
+        "3": "2",
+        "4": "3",
+        "6": "4"
+      },
+      "hidden_roles": [
+        "2",
+        "5"
+      ],
+      "license": {
+        "2.1": [
+          "2",
+          "5"
+        ],
+        "4.1": [
+          "2",
+          "5"
+        ]
+      },
+      "placeholder_rows": {
+        "2.1": {
+          "misc": {
+            "OriginalId": [
+              "X"
+            ]
+          }
+        },
+        "4.1": {
+          "misc": {
+            "OriginalId": [
+              "Y"
+            ]
+          }
+        }
+      },
+      "basic_override": {
+        "3": {
+          "head": "1",
+          "deprel": "dep"
+        },
+        "6": {
+          "head": "3",
+          "deprel": "dep"
+        }
+      },
+      "queries": [
+        {
+          "name": "qAB",
+          "source": "1",
+          "target": "3",
+          "labels": [
+            "r1",
+            "r2"
+          ]
+        },
+        {
+          "name": "qCD",
+          "source": "4",
+          "target": "6",
+          "labels": [
+            "r3",
+            "r4"
+          ]
+        },
+        {
+          "name": "qAD",
+          "source": "1",
+          "target": "6",
+          "labels": [
+            "r1",
+            "r4"
+          ]
+        },
+        {
+          "name": "qCB",
+          "source": "4",
+          "target": "3",
+          "labels": [
+            "r3",
+            "r2"
+          ]
+        }
+      ]
+    },
+    {
+      "sent_id": "s_merge_strict",
+      "conllu": "# sent_id = s_merge_strict\n1\tA\t_\t_\t_\t_\t0\troot\t0:root\t_\n2\tX\t_\t_\t_\t_\t1\tdep\t1:r1\t_\n3\tB\t_\t_\t_\t_\t2\tdep\t2:r2\t_\n4\tC\t_\t_\t_\t_\t0\troot\t0:root\t_\n5\tY\t_\t_\t_\t_\t4\tdep\t4:r3\t_\n6\tD\t_\t_\t_\t_\t5\tdep\t5:r4\t_\n\n",
+      "id_map": {
+        "1": "1",
+        "3": "2",
+        "4": "3",
+        "6": "4"
+      },
+      "hidden_roles": [
+        "2",
+        "5"
+      ],
+      "license": {
+        "2.1": [
+          "2",
+          "5"
+        ]
+      },
+      "basic_override": {
+        "3": {
+          "head": "1",
+          "deprel": "dep"
+        },
+        "6": {
+          "head": "3",
+          "deprel": "dep"
+        }
+      },
+      "queries": [
+        {
+          "name": "qAB",
+          "source": "1",
+          "target": "3",
+          "labels": [
+            "r1",
+            "r2"
+          ]
+        },
+        {
+          "name": "qCD",
+          "source": "4",
+          "target": "6",
+          "labels": [
+            "r3",
+            "r4"
+          ]
+        },
+        {
+          "name": "qAD",
+          "source": "1",
+          "target": "6",
+          "labels": [
+            "r1",
+            "r4"
+          ]
+        },
+        {
+          "name": "qCB",
+          "source": "4",
+          "target": "3",
+          "labels": [
+            "r3",
+            "r2"
+          ]
+        }
+      ]
+    },
+    {
+      "sent_id": "s_keep",
+      "conllu": "# sent_id = s_keep\n1\tP\t_\t_\t_\t_\t0\troot\t0:root\t_\n2\tQ\t_\t_\t_\t_\t3\tdep\t3:b\t_\n3\tH\t_\t_\t_\t_\t1\tdep\t1:a\t_\n\n",
+      "id_map": {
+        "1": "1",
+        "2": "2"
+      },
+      "hidden_roles": [
+        "3"
+      ],
+      "license": {
+        "1.1": [
+          "3"
+        ],
+        "2.1": [
+          "3"
+        ]
+      },
+      "basic_override": {
+        "2": {
+          "head": "1",
+          "deprel": "dep"
+        }
+      },
+      "queries": [
+        {
+          "name": "qVia",
+          "source": "1",
+          "target": "2",
+          "labels": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "name": "qDirect",
+          "source": "1",
+          "target": "2",
+          "labels": [
+            "b"
+          ]
+        }
+      ]
+    },
+    {
+      "sent_id": "s_tie",
+      "conllu": "# sent_id = s_tie\n1\tM\t_\t_\t_\t_\t0\troot\t0:root\t_\n2\tN\t_\t_\t_\t_\t1\tdep\t1:u\t_\n3\tO\t_\t_\t_\t_\t2\tdep\t2:v\t_\n\n",
+      "id_map": {
+        "1": "1",
+        "3": "2"
+      },
+      "hidden_roles": [
+        "2"
+      ],
+      "license": {
+        "1.1": [
+          "2"
+        ],
+        "2.1": [
+          "2"
+        ]
+      },
+      "basic_override": {
+        "3": {
+          "head": "1",
+          "deprel": "dep"
+        }
+      },
+      "queries": [
+        {
+          "name": "qTie",
+          "source": "1",
+          "target": "3",
+          "labels": [
+            "u",
+            "v"
+          ]
+        },
+        {
+          "name": "qNo",
+          "source": "3",
+          "target": "1",
+          "labels": [
+            "v"
+          ]
+        }
+      ]
+    }
+  ]
+}
