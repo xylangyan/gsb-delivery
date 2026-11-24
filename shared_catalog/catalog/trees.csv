@@ -1,0 +1,6 @@
+ID,Name,Description,Tree_Is_Rooted,Tree_Type,Tree_Branch_Length_Unit,Media_ID,Source
+t_shared,1,Common tree; hard conflict at L03/L04/L05 kept as a polytomy,Yes,summary,change,m_shared,
+t_groupA,1,Group A slice; reconciles exactly to raw/groupA_tree.nwk,Yes,summary,change,m_groupA,
+t_groupB,1,Group B slice; reconciles exactly to raw/groupB_tree.nex,Yes,summary,change,m_groupB,
+t_alt1,1,Alternative interpretation 1; see interpretations.csv,Yes,summary,change,m_alt1,
+t_alt2,1,Alternative interpretation 2; see interpretations.csv,Yes,summary,change,m_alt2,

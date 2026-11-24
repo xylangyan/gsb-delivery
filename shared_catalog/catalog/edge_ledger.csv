@@ -1,0 +1,80 @@
+Edge_ID,Catalog_Tree_ID,Clade,Edge_Length,Is_Gap,Evidence_Status,Source_Group,Source_Path,Note
+E001,t_groupA,L01,0.1,No,single_observation,A,raw/groupA_tree.nwk#L01,
+E002,t_groupA,L01 L02,0.05,No,merged_total,A,raw/groupA_tree.nwk#L01 L02,compressed branch: archived total only; not an observation of one common edge
+E003,t_groupA,L01 L02 L11,0.05,No,single_observation,A,raw/groupA_tree.nwk#L01 L02 L11,
+E004,t_groupA,L02,,Yes,single_observation,A,raw/groupA_tree.nwk#L02,archived gap preserved
+E005,t_groupA,L03,0.09,No,single_observation,A,raw/groupA_tree.nwk#L03,
+E006,t_groupA,L03 L04,0.05,No,single_observation,A,raw/groupA_tree.nwk#L03 L04,
+E007,t_groupA,L03 L04 L05,0.04,No,single_observation,A,raw/groupA_tree.nwk#L03 L04 L05,
+E008,t_groupA,L04,0.11,No,single_observation,A,raw/groupA_tree.nwk#L04,
+E009,t_groupA,L05,0.13,No,single_observation,A,raw/groupA_tree.nwk#L05,
+E010,t_groupA,L06,0.01,No,single_observation,A,raw/groupA_tree.nwk#L06,
+E011,t_groupA,L06 L12,0.06,No,single_observation,A,raw/groupA_tree.nwk#L06 L12,
+E012,t_groupA,L07,0.08,No,single_observation,A,raw/groupA_tree.nwk#L07,
+E013,t_groupA,L07 L08,0.07,No,single_observation,A,raw/groupA_tree.nwk#L07 L08,
+E014,t_groupA,L08,0.1,No,single_observation,A,raw/groupA_tree.nwk#L08,
+E015,t_groupA,L11,0.04,No,single_observation,A,raw/groupA_tree.nwk#L11,
+E016,t_groupA,L12,0.09,No,single_observation,A,raw/groupA_tree.nwk#L12,
+E017,t_groupB,L01,0.1,No,single_observation,B,raw/groupB_tree.nex#L01,
+E018,t_groupB,L01 L02,0.02,No,single_observation,B,raw/groupB_tree.nex#L01 L02,
+E019,t_groupB,L01 L02 L13,0.08,No,merged_total,B,raw/groupB_tree.nex#L01 L02 L13,compressed branch: archived total only; not an observation of one common edge
+E020,t_groupB,L02,0.12,No,single_observation,B,raw/groupB_tree.nex#L02,
+E021,t_groupB,L03,0.09,No,single_observation,B,raw/groupB_tree.nex#L03,
+E022,t_groupB,L03 L04 L05,0.04,No,single_observation,B,raw/groupB_tree.nex#L03 L04 L05,
+E023,t_groupB,L04,0.11,No,single_observation,B,raw/groupB_tree.nex#L04,
+E024,t_groupB,L04 L05,0.05,No,single_observation,B,raw/groupB_tree.nex#L04 L05,
+E025,t_groupB,L05,0.13,No,single_observation,B,raw/groupB_tree.nex#L05,
+E026,t_groupB,L06,0.07,No,single_observation,B,raw/groupB_tree.nex#L06,
+E027,t_groupB,L07,0.08,No,single_observation,B,raw/groupB_tree.nex#L07,
+E028,t_groupB,L07 L08,0.07,No,single_observation,B,raw/groupB_tree.nex#L07 L08,
+E029,t_groupB,L08,0.1,No,single_observation,B,raw/groupB_tree.nex#L08,
+E030,t_groupB,L13,0.06,No,single_observation,B,raw/groupB_tree.nex#L13,
+E031,t_groupB,L14,,Yes,single_observation,B,raw/groupB_tree.nex#L14,archived gap preserved
+E032,t_shared,L01,0.1,No,concordant,A+B,trees/shared_summary.nwk,
+E033,t_shared,L01 L02,0.1,No,two_path_totals_equal,A+B,trees/shared_summary.nwk,both groups only see a compressed path total here (see merge_ledger.csv); the equal totals are not two observations of one common edge
+E034,t_shared,L02,,Yes,gap_archive,A+B,trees/shared_summary.nwk,one archive stores a gap here; the other records 0.12; common tree keeps the gap rather than importing the measured value
+E035,t_shared,L03,0.09,No,concordant,A+B,trees/shared_summary.nwk,
+E036,t_shared,L03 L04 L05,0.04,No,unresolved_polytomy,A+B,trees/shared_summary.nwk,"hard A/B conflict below this node; contested inner edges withheld, not averaged; see conflict_report.csv"
+E037,t_shared,L04,0.11,No,concordant,A+B,trees/shared_summary.nwk,
+E038,t_shared,L05,0.13,No,concordant,A+B,trees/shared_summary.nwk,
+E039,t_shared,L06,0.07,No,one_path_total,A+B,trees/shared_summary.nwk,"only one group observes a compressed total on this clade (see merge_ledger.csv); registered as a path total, not a shared edge length"
+E040,t_shared,L07,0.08,No,concordant,A+B,trees/shared_summary.nwk,
+E041,t_shared,L07 L08,0.07,No,concordant,A+B,trees/shared_summary.nwk,
+E042,t_shared,L08,0.1,No,concordant,A+B,trees/shared_summary.nwk,
+E043,t_alt1,L01,0.1,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E044,t_alt1,L01 L02,0.02,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E045,t_alt1,L01 L02 L11 L13,0.05,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E046,t_alt1,L01 L02 L13,0.03,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E047,t_alt1,L02,,Yes,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E048,t_alt1,L03,0.09,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E049,t_alt1,L03 L04,0.05,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E050,t_alt1,L03 L04 L05,0.04,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E051,t_alt1,L04,0.11,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E052,t_alt1,L05,0.13,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E053,t_alt1,L06,0.01,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E054,t_alt1,L06 L12,0.06,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E055,t_alt1,L07,0.08,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E056,t_alt1,L07 L08,0.07,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E057,t_alt1,L08,0.1,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E058,t_alt1,L11,0.04,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E059,t_alt1,L12,0.09,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E060,t_alt1,L13,0.06,No,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E061,t_alt1,L14,,Yes,alternative_split,alt,provenance/alt1_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E062,t_alt2,L01,0.1,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E063,t_alt2,L01 L02,0.02,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E064,t_alt2,L01 L02 L11 L13,0.02,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E065,t_alt2,L01 L02 L13,0.06,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E066,t_alt2,L02,0.12,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E067,t_alt2,L03,0.09,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E068,t_alt2,L03 L04 L05,0.04,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E069,t_alt2,L04,0.11,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E070,t_alt2,L04 L05,0.05,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E071,t_alt2,L05,0.13,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E072,t_alt2,L06,0.07,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E073,t_alt2,L07,0.08,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E074,t_alt2,L07 L08,0.07,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E075,t_alt2,L08,0.1,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E076,t_alt2,L11,0.04,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E077,t_alt2,L12,0.09,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E078,t_alt2,L13,0.06,No,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive
+E079,t_alt2,L14,,Yes,alternative_split,alt,provenance/alt2_backbone.nwk,alternative decomposition; segment totals reconcile to the archive

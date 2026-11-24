@@ -1,0 +1,13 @@
+ID,Name,Macroarea,Latitude,Longitude,Glottocode,ISO639P3code,Coverage_A,Coverage_B
+L01,Talu,,28.4,96.1,talu1234,,Yes,Yes
+L02,Nalu,,28.1,96.4,nalu1235,,Yes,Yes
+L03,Sora,,27.9,95.8,sora1236,,Yes,Yes
+L04,Kira,,27.5,95.5,kira1237,,Yes,Yes
+L05,Vema,,27.2,95.9,vema1238,,Yes,Yes
+L06,Duli,,26.9,96.2,duli1239,,Yes,Yes
+L07,Pesha,,26.6,95.7,pesh1240,,Yes,Yes
+L08,Runa,,26.3,95.4,runa1241,,Yes,Yes
+L11,Koro,,25.8,95.1,koro1311,,Yes,No
+L12,Mori,,25.5,94.8,mori1312,,Yes,No
+L13,Koro,,24.9,94.2,koro1313,,No,Yes
+L14,Mori,,24.6,93.9,mori1314,,No,Yes

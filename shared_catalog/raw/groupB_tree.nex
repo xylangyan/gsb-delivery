@@ -1,0 +1,12 @@
+#NEXUS
+[Group B archived survey tree. Literal LanguageTable IDs. A missing branch length is an archived gap, not zero.]
+
+begin trees;
+ tree groupB = [&R] (
+  (L13:0.06,(L01:0.10,L02:0.12)ZB:0.02)XB:0.08,
+  (L07:0.08,L08:0.10)SB:0.07[&B_bs=91],
+  ((L04:0.11,L05:0.13):0.05,L03:0.09)KFB:0.04,
+  L06:0.07,
+  L14
+ );
+end;

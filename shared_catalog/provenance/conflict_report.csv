@@ -1,0 +1,2 @@
+Conflict_ID,Region,Group_A_Constraint,Group_B_Constraint,Incompatible_Clades,Catalog_Resolution,Trees_Still_Registered
+CF01,L03 L04 L05,"inner clade (L03,L04):0.05 inside (L03,L04,L05):0.04","inner clade (L04,L05):0.05 inside (L03,L04,L05):0.04",L03 L04; L04 L05,"t_shared renders (L03,L04,L05):0.04 as an unresolved polytomy; the contested inner 0.05 edges are withheld, not averaged or merged","t_groupA, t_groupB, t_alt1, t_alt2 register unchanged; only the shared summary is affected"

@@ -1,0 +1,6 @@
+ID,Name,Description,Media_Type,Download_URL,Path_In_Zip
+m_shared,shared_summary.nwk,Common summary on mergeable identities; conflict region unresolved,text/x-nh,file:/trees/shared_summary.nwk,
+m_groupA,groupA_slice.nwk,Group A archived topology and lengths; reconciles to raw Newick,text/x-nh,file:/trees/groupA_slice.nwk,
+m_groupB,groupB_slice.nwk,Group B archived topology and lengths (NEXUS source); gaps preserved,text/x-nh,file:/trees/groupB_slice.nwk,
+m_alt1,alt1_full.nwk,Alternative full reconstruction replaying group A's archive,text/x-nh,file:/trees/alt1_full.nwk,
+m_alt2,alt2_full.nwk,Alternative full reconstruction replaying group B's archive,text/x-nh,file:/trees/alt2_full.nwk,

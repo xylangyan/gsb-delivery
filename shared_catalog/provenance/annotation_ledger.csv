@@ -1,0 +1,3 @@
+Annotation_ID,Source_Group,Raw_Token,Archive_Node,Archive_Clade,Scope,Catalog_Edge_Clade,Independent_Support,Note
+AN01,A,A_bs=94,SA,L07 L08,L01 L02 L03 L04 L05 L06 L07 L08 L11 L12,L07 L08,No,"support computed from group A's selected language set only; not a second independent support value for the shared edge, and no evidence for languages outside A's coverage"
+AN02,B,B_bs=91,SB,L07 L08,L01 L02 L03 L04 L05 L06 L07 L08 L13 L14,L07 L08,No,"support computed from group B's selected language set only; the same-length edge after pruning is one edge with two provenance-tagged annotations, never pooled as independent support"

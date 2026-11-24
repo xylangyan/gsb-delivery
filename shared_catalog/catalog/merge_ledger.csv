@@ -1,0 +1,6 @@
+Merge_ID,Source_Group,Stage,Source_File,Suppressed_Node,Surviving_Clade,Upper_Segment,Lower_Segment,Combined_Total,Contains_Gap,Note
+MG01,A,backbone_to_archive,provenance/alt1_backbone.nwk,F1,L01 L02,0.03,0.02,0.05,No,"merged total spans a bifurcation invisible at this coverage; register as a path total, never as one observed common edge"
+MG02,B,backbone_to_archive,provenance/alt2_backbone.nwk,F2,L01 L02 L13,0.02,0.06,0.08,No,"merged total spans a bifurcation invisible at this coverage; register as a path total, never as one observed common edge"
+MG03,A,archive_to_shared_scope,raw/groupA_tree.nwk,XA,L01 L02,0.05,0.05,0.1,No,"merged total spans a bifurcation invisible at this coverage; register as a path total, never as one observed common edge"
+MG04,A,archive_to_shared_scope,raw/groupA_tree.nwk,MA,L06,0.06,0.01,0.07,No,"merged total spans a bifurcation invisible at this coverage; register as a path total, never as one observed common edge"
+MG05,B,archive_to_shared_scope,raw/groupB_tree.nex,XB,L01 L02,0.08,0.02,0.1,No,"merged total spans a bifurcation invisible at this coverage; register as a path total, never as one observed common edge"
