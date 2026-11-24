@@ -86,3 +86,20 @@ class Wavefront:
     def add_mesh(self, the_mesh):
         self.mesh_list.append(the_mesh)
         self.meshes[the_mesh.name] = the_mesh
+
+    @classmethod
+    def create_blank(cls, file_name):
+        """Construct an empty scene without invoking any parser.
+
+        Used by the incremental archive loader, which fills the scene from
+        cached provenance and expanded buffers instead of re-reading an obj.
+        """
+        scene = cls.__new__(cls)
+        scene.file_name = file_name
+        scene.mtllibs = []
+        scene.materials = {}
+        scene.meshes = {}
+        scene.vertices = []
+        scene.mesh_list = []
+        scene.parser = None
+        return scene

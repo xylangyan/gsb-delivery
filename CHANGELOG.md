@@ -2,6 +2,15 @@
 
 Release history on Github: https://github.com/pywavefront/PyWavefront/releases
 
+## Unreleased
+
+* Added `pywavefront.incremental`: a recording parser that keeps triangle
+  provenance (raw signed indices, resolved record identities, object and
+  material occurrence), range-based supplemental patch application with
+  identity-based positive indices and pool-relative negative indices, and
+  versioned archives so historical revisions stay inspectable.
+* `Material` now records its source mtl file and material revision.
+
 ## 1.3.3
 
 * Support objects with one vertex statement

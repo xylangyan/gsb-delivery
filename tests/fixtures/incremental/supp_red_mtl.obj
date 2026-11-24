@@ -1,0 +1,4 @@
+# Supplemental batch p-red-mtl
+# Material-only correction: no records and no faces are shipped.
+# The RedPart geometry cache is reused verbatim.
+usemtl seal

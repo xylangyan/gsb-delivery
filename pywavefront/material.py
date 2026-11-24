@@ -84,6 +84,13 @@ class Material:
         self.vertex_format = ""
         self.vertices = []
 
+        # Provenance: which mtl file (or "<obj>::<material>" cache key) this
+        # material instance was loaded from, and at which material revision.
+        # Materials sharing a name but coming from different files must stay
+        # distinct, so the key is never just the material name.
+        self.source_file = None
+        self.mtl_revision = None
+
         self.gl_floats = None
 
     @property
@@ -157,19 +164,23 @@ class Material:
 class MaterialParser(Parser):
     """Object to parse lines of a materials definition file."""
 
-    def __init__(self, file_name, strict=False, encoding="utf-8", parse=True, collect_faces=False):
+    def __init__(self, file_name, strict=False, encoding="utf-8", parse=True,
+                 collect_faces=False, revision=None):
         """
         Create a new material parser
         :param file_name: file name and path of obj file to read
         :param strict: Enable strict mode
         :param encoding: Encoding to read the text files
         :param parse: Should parse be called immediately or manually called later?
+        :param revision: Optional material file revision (version) to stamp
+                         on every parsed material
         """
         super(MaterialParser, self).__init__(file_name, strict=strict, encoding=encoding)
 
         self.materials = {}
         self.this_material = None
         self.collect_faces = collect_faces
+        self.revision = revision
 
         if parse:
             self.parse()
@@ -177,6 +188,8 @@ class MaterialParser(Parser):
     @auto_consume
     def parse_newmtl(self):
         self.this_material = Material(self.values[1], has_faces=self.collect_faces)
+        self.this_material.source_file = str(self.file_name)
+        self.this_material.mtl_revision = self.revision
         self.materials[self.this_material.name] = self.this_material
 
     @auto_consume

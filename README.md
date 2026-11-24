@@ -131,6 +131,65 @@ Json file example:
 These files will **not be recreated until you delete them**.
 The bin file is also compressed with gzip to greatly reduce size.
 
+## Incremental Patches
+
+For inspection pipelines where a supplier delivers small supplemental
+batches instead of a complete obj, the `pywavefront.incremental` module
+keeps the per-object expanded caches, triangle provenance and material
+revisions without ever re-expanding an untouched object.
+
+The first delivery is scanned once with the recording parser. Its float
+output is identical to a normal `Wavefront` load, but each triangle also
+remembers the raw signed face tokens, the resolved source record
+identities (`v:7`, `vt:3`, ...), its object and the material occurrence
+that bound it.
+
+```python
+from pywavefront.incremental import record_scene, apply_patch, write_archive
+
+scene = record_scene(
+    'fixture.obj',
+    revision='r0',
+    mtl_revisions={'red.mtl': 'red-r1', 'blue.mtl': 'blue-r1'})
+```
+
+A patch is described by a json manifest: the base revision, the target
+object, exact 1-based insert/delete ranges for the `v`/`vt`/`vn` pools and
+the triangle ranges whose face text is replaced. A partial obj carries the
+new records and replacement face lines.
+
+```python
+apply_patch(scene, 'manifest_blue_vt.json', 'supp_blue_vt.obj')
+write_archive(scene, 'fixture.obj')
+```
+
+Index semantics follow the Wavefront rules instead of raw coordinates:
+
+* A positive index is a record identity. Inserting records in front of it
+  shifts its position but keeps it bound to the same record, so a
+  neighbouring face referencing old entries is not rebuilt.
+* A negative index is relative to the current end of pool and is
+  re-resolved after every patch, so `-1` picks up the new last entry.
+* A material-only patch (new mtl revision, no data changes) reuses the
+  existing geometry buffers verbatim; a data patch re-expands only the
+  triangles whose provenance actually changed.
+
+Materials are keyed by source library plus name, so two mtl files that
+both define `seal` stay distinct, and each group records the mtl revision
+it was bound with.
+
+`write_archive()` stores the canonical `.pywf.json` / `.pywf.bin` cache.
+Every patch also snapshots the state it replaced, and older revisions
+remain openable with the exact material and vertex combination archived at
+that time:
+
+```python
+from pywavefront.incremental import load_archive
+
+current = load_archive('fixture.obj')
+historical = load_archive('fixture.obj', revision='r0')
+```
+
 ## Visualization
 
 [Pyglet](http://www.pyglet.org/) is required to use the visualization module.

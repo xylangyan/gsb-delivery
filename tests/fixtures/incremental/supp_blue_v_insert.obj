@@ -1,0 +1,6 @@
+# Supplemental batch p-blue-v-insert
+# A vertex inserted in front of the BluePart vertex block.  The negative
+# face follows the pool end semantics; the positive face keeps its record
+# identities and must not be shifted to the new vertex.
+v 9.0 9.0 9.0
+f -3/-3/-1 -2/-2/-1 -1/-1/-1

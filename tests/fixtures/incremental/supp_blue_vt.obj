@@ -1,0 +1,7 @@
+# Supplemental batch p-blue-vt
+# One texture coordinate appended at the end of the vt pool.  The face text
+# is intentionally unchanged: its negative indices are relative to the pool
+# end, so -1 now resolves to this new last entry.  The neighbouring face uses
+# explicit positive indices and must keep pointing at the old records.
+vt 5.0 5.0
+f -3/-3/-1 -2/-2/-1 -1/-1/-1

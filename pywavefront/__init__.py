@@ -36,6 +36,17 @@ import logging
 from pywavefront.exceptions import PywavefrontException
 from pywavefront.obj import ObjParser
 from pywavefront.wavefront import Wavefront
+from pywavefront.incremental import (
+    RecordingObjParser,
+    PatchManifest,
+    Pool,
+    record_scene,
+    apply_patch,
+    parse_supplemental,
+    write_archive,
+    load_archive,
+    snapshot_version,
+)
 
 __version__ = '1.3.3'
 

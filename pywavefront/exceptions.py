@@ -36,3 +36,8 @@
 class PywavefrontException(Exception):
     """Generic exception for this package to separate from common ones"""
     pass
+
+
+class IncrementalPatchError(PywavefrontException):
+    """Raised when an incremental patch cannot be applied to a scene"""
+    pass

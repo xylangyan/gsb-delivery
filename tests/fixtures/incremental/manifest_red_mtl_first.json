@@ -1,0 +1,14 @@
+{
+  "patch_id": "p-red-mtl-first",
+  "base_revision": "r0",
+  "new_revision": "r1",
+  "object": "RedPart",
+  "material": "seal",
+  "mtllib": {
+    "name": "red.mtl",
+    "file": "red_v2.mtl",
+    "revision": "red-r2"
+  },
+  "data_changes": {},
+  "face_replacements": []
+}

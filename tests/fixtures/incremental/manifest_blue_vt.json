@@ -1,0 +1,14 @@
+{
+  "patch_id": "p-blue-vt",
+  "base_revision": "r0",
+  "new_revision": "r1",
+  "object": "BluePart",
+  "data_changes": {
+    "vt": [
+      {"op": "insert", "start": 8, "count": 1}
+    ]
+  },
+  "face_replacements": [
+    {"start": 0, "count": 1}
+  ]
+}
