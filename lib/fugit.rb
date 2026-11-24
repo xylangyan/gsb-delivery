@@ -14,6 +14,7 @@ require 'et-orbi'
 
 require 'fugit/misc'
 require 'fugit/cron'
+require 'fugit/phase_planner'
 require 'fugit/duration'
 require 'fugit/nat'
 require 'fugit/at'
