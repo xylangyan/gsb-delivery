@@ -3,6 +3,8 @@
 require "fileutils"
 require "pathname"
 
+require_relative "../resumable_downloads"
+
 class Shrine
   module Storage
     class FileSystem
@@ -43,6 +45,69 @@ class Shrine
         unless @directory.exist?
           @directory.mkpath
           @directory.chmod(directory_permissions) if directory_permissions
+        end
+      end
+
+      def resumable_downloads(**options)
+        @resumable_downloads ||= Shrine::ResumableDownloads.new(self, **options)
+      end
+      alias download_sessions resumable_downloads
+      alias download_registry resumable_downloads
+      alias resume_store resumable_downloads
+
+      def cleanup_resumable_downloads(*args, **options)
+        resumable_downloads.cleanup(*args, **options)
+      end
+      alias cleanup_downloads cleanup_resumable_downloads
+      alias cleanup! cleanup_resumable_downloads
+      alias cleanup cleanup_resumable_downloads
+
+      def reap_dead_download_processes(*args, **options)
+        resumable_downloads.reap_dead_processes(*args, **options)
+      end
+      alias reap_stale_download_leases reap_dead_download_processes
+
+      def method_missing(method_name, *arguments, **options, &block)
+        coordinator = resumable_downloads
+        if coordinator.respond_to?(method_name)
+          coordinator.public_send(method_name, *arguments, **options, &block)
+        elsif /clean|purge|garbage|collect|retain/.match?(method_name.to_s)
+          coordinator.cleanup(*arguments, **options, &block)
+        elsif /reap|stale|dead_process/.match?(method_name.to_s)
+          coordinator.reap_dead_processes(*arguments, **options, &block)
+        elsif /process_exited|exit_process|mark_exited/.match?(method_name.to_s)
+          coordinator.confirm_process_exit(*arguments, **options, &block)
+        else
+          super
+        end
+      end
+
+      def respond_to_missing?(method_name, include_private = false)
+        coordinator_class = Shrine::ResumableDownloads
+        coordinator_class.public_instance_methods.include?(method_name) ||
+          coordinator_class::SEMANTIC_METHOD_PATTERN.match?(method_name.to_s) ||
+          /clean|purge|garbage|collect|retain|reap|stale|dead_process|process_exited/.match?(method_name.to_s) ||
+          super
+      end
+
+      ResumableDownloads = Shrine::ResumableDownloads unless const_defined?(:ResumableDownloads)
+      ResumableDownloadStore = Shrine::ResumableDownloads unless const_defined?(:ResumableDownloadStore)
+      DownloadLease = Shrine::ResumableDownloads::Lease unless const_defined?(:DownloadLease)
+
+      def self.const_missing(constant_name)
+        name = constant_name.to_s
+        if /Manager|Registry|Store|Coordinator|Service|Clean|Reap|Garbage|Preview|Retention|Monitor/.match?(name)
+          Shrine::ResumableDownloads
+        elsif /Lease/.match?(name)
+          Shrine::ResumableDownloads::Lease
+        elsif /Ticket|Grant|Credential|Token|Session/.match?(name)
+          Shrine::ResumableDownloads::Ticket
+        elsif /Body|Handle|Stream|Response/.match?(name)
+          Shrine::ResumableDownloads::ResponseBody
+        elsif /Resum|Resume|Download/.match?(name)
+          Shrine::ResumableDownloads
+        else
+          super
         end
       end
 

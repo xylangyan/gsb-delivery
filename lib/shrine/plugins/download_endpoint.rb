@@ -2,6 +2,9 @@
 
 require 'openssl'
 require 'base64'
+require 'digest'
+
+require_relative "../resumable_downloads"
 
 class Shrine
   module Plugins
@@ -163,12 +166,17 @@ class Shrine
     def handle_request(request)
       _, serialized, * = request.path_info.split("/")
       signature, expires_at = request.params.values_at("signature", "expires_at")
+      request_id = resume_request_id(request)
 
-      check_signature!(serialized, signature, expires_at) if @secret_key
+      check_signature!(serialized, signature, expires_at, allow_expired_recovery: !request_id.nil?) if @secret_key
 
       uploaded_file = get_uploaded_file(serialized)
 
-      serve_file(uploaded_file, request)
+      if request_id && resume_enabled?
+        serve_resumable_file(uploaded_file, request, request_id, expires_at)
+      else
+        serve_file(uploaded_file, request)
+      end
     end
 
     # Streams or redirects to the uploaded file.
@@ -192,6 +200,85 @@ class Shrine
       response[1]["Cache-Control"] = "max-age=#{365*24*60*60}" # cache for a year
 
       response
+    end
+
+    def serve_resumable_file(uploaded_file, request, request_id, expires_at)
+      coordinator = resume_coordinator(uploaded_file)
+      recipient = resume_recipient(uploaded_file, request)
+      range_header = request.env["HTTP_RANGE"]
+      if_range = request.env["HTTP_IF_RANGE"]
+
+      coordinator.process_request(
+        request_id: request_id,
+        recipient: recipient,
+        file_id: uploaded_file.id,
+        size: uploaded_file.size,
+        etag: strong_file_etag(uploaded_file),
+        range: range_header,
+        if_range: if_range,
+        url_expires_at: expires_at ? Time.at(expires_at.to_i) : nil,
+        accept_until: resume_accept_until(expires_at),
+        pid: Process.pid
+      )
+    end
+
+    def resume_enabled?
+      return false if @resumable_downloads == false || @resume_enabled == false
+
+      true
+    end
+
+    def resume_coordinator(uploaded_file)
+      return @resumable_downloads if @resumable_downloads.is_a?(Shrine::ResumableDownloads)
+      return @resume_store if @resume_store.is_a?(Shrine::ResumableDownloads)
+
+      Shrine::ResumableDownloads.new(
+        uploaded_file.storage,
+        shrine_class: @shrine_class,
+        storage_key: uploaded_file.storage_key,
+        state_path: @resume_state_path || @state_path,
+        clock: @clock || Time,
+        recipient_resolver: @recipient_resolver,
+        process_alive: @process_alive
+      )
+    end
+
+    def resume_recipient(uploaded_file, request)
+      resolver = @recipient_resolver || @resume_recipient
+      return resolver.call(uploaded_file, request) if resolver&.arity == 2
+      return resolver.call(request) if resolver&.arity == 1
+      return resolver.call if resolver
+
+      request.env["resumable.recipient"] || request.params["recipient"] ||
+        request.env["HTTP_X_RECIPIENT_ID"] || request.env["REMOTE_USER"]
+    end
+
+    def resume_request_id(request)
+      request.env["HTTP_X_REQUEST_ID"] ||
+        request.env["HTTP_X_REQUEST_NUMBER"] ||
+        request.params["request_id"] ||
+        request.params["request_number"] ||
+        request.params["idempotency_key"]
+    end
+
+    def resume_accept_until(expires_at)
+      return @resume_expires_at if @resume_expires_at
+      return unless expires_at
+
+      grace = @resume_grace || @resume_expires_in || 300
+      Time.at(expires_at.to_i + grace.to_i)
+    end
+
+    def strong_file_etag(uploaded_file)
+      if uploaded_file.storage.is_a?(Shrine::Storage::FileSystem)
+        path = uploaded_file.storage.path(uploaded_file.id)
+        return %("#{Digest::MD5.file(path).hexdigest}") if File.file?(path)
+      end
+
+      seed = "#{uploaded_file.shrine_class}-#{uploaded_file.storage_key}-#{uploaded_file.id}"
+      %("#{Digest::SHA256.hexdigest(seed).byteslice(0, 32)}")
+    rescue StandardError
+      nil
     end
 
     # Redirects to the uploaded file's direct URL or the specified URL proc.
@@ -225,8 +312,8 @@ class Shrine
       bad_request!("Invalid serialized file")
     end
 
-    def check_signature!(serialized, signature, expires_at)
-      if expires_at && expires_at.to_i < Time.now.to_i
+    def check_signature!(serialized, signature, expires_at, allow_expired_recovery: false)
+      if expires_at && expires_at.to_i < Time.now.to_i && !allow_expired_recovery
         error!(400, "URL has expired")
       end
 
@@ -236,7 +323,7 @@ class Shrine
         "#{serialized}--#{expires_at}"
       )
 
-      if !Rack::Utils.secure_compare(signature, Base64.urlsafe_encode64(calculated_signature))
+      if !Rack::Utils.secure_compare(signature.to_s, Base64.urlsafe_encode64(calculated_signature))
         error!(403, "Signature does not match")
       end
     end

@@ -49,14 +49,14 @@ class Shrine
         # "Content-Disposition" headers, whose values are extracted from
         # metadata. Also returns the correct "Content-Range" header on ranged
         # requests.
-        def rack_headers(filename: nil, type: nil, disposition: "inline", range: false, etag: nil)
+        def rack_headers(filename: nil, type: nil, disposition: "inline", range: false, etag: nil, strong_etag: false, **)
           {
             "Content-Length"      => content_length(range),
             "Content-Type"        => content_type(type),
             "Content-Disposition" => content_disposition(disposition, filename),
             "Content-Range"       => content_range(range),
             "Accept-Ranges"       => accept_ranges(range),
-            "ETag"                => etag || self.etag,
+            "ETag"                => etag || (strong_etag ? self.strong_etag : self.etag),
           }.compact
         end
 
@@ -93,6 +93,16 @@ class Shrine
           digest = Digest::SHA256.hexdigest("#{file.shrine_class}-#{file.storage_key}-#{file.id}")
 
           %(W/"#{digest.byteslice(0, 32)}")
+        end
+
+        def strong_etag
+          if defined?(Storage::FileSystem) && file.storage.is_a?(Storage::FileSystem)
+            path = file.storage.path(file.id)
+            return %("#{Digest::MD5.file(path).hexdigest}") if File.file?(path)
+          end
+
+          digest = Digest::SHA256.hexdigest("#{file.shrine_class}-#{file.storage_key}-#{file.id}")
+          %("#{digest.byteslice(0, 32)}")
         end
 
         # Returns an object that responds to #each and #close, which yields
