@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "north",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [20, 0], [20, 10], [0, 10], [0, 0]]]
+      },
+      "properties": {"area_id": "N", "name": "north cell"}
+    },
+    {
+      "type": "Feature",
+      "id": "south",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0, -10], [20, -10], [20, 0], [0, 0], [0, -10]]]
+      },
+      "properties": {"area_id": "S", "name": "south cell"}
+    }
+  ],
+  "handover": {
+    "display_decimals": 6,
+    "boundary_rule": "closed",
+    "stations": [
+      {"id": "S1", "lon_micro": 10000000, "lat_micro": 5000000, "areas": ["S"], "status": "confirmed"}
+    ],
+    "independent_areas": ["S"]
+  }
+}

@@ -1,0 +1,35 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require_relative "../lib/rgeo/geo_json/dateline"
+
+options = { output_dir: "output" }
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: publish-coverage INPUT.json [--output DIR]"
+  opts.on("-o", "--output DIR", "directory for coverage_fragments.geojson and resolution_report.json") do |dir|
+    options[:output_dir] = dir
+  end
+  opts.on("--stdout", "print the GeoJSON FeatureCollection to stdout") do
+    options[:stdout] = true
+  end
+  opts.on("-h", "--help", "show this help") do
+    puts opts
+    exit
+  end
+end.parse!
+
+input = ARGV.first
+abort "missing input registration document" if input.nil?
+
+result = RGeo::GeoJSON::Dateline::Publisher.publish(input, output_dir: options[:output_dir])
+
+if options[:stdout]
+  require "json"
+  puts JSON.pretty_generate(result["geojson"])
+else
+  warn "wrote #{options[:output_dir]}/coverage_fragments.geojson"
+  warn "wrote #{options[:output_dir]}/resolution_report.json"
+  warn "status: #{result['report']['status']}"
+end

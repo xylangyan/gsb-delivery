@@ -1,0 +1,140 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "coastal-a",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              170.0,
+              0.0
+            ],
+            [
+              190.0,
+              0.0
+            ],
+            [
+              190.0,
+              10.0
+            ],
+            [
+              170.0,
+              10.0
+            ],
+            [
+              170.0,
+              0.0
+            ]
+          ],
+          [
+            [
+              175.0,
+              2.0
+            ],
+            [
+              185.0,
+              2.0
+            ],
+            [
+              185.0,
+              8.0
+            ],
+            [
+              175.0,
+              8.0
+            ],
+            [
+              175.0,
+              2.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "area_id": "A",
+        "name": "coastal area A"
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "coastal-b",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              160.0,
+              0.0
+            ],
+            [
+              170.0,
+              0.0
+            ],
+            [
+              170.0,
+              10.0
+            ],
+            [
+              160.0,
+              10.0
+            ],
+            [
+              160.0,
+              0.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "area_id": "B",
+        "name": "coastal area B"
+      }
+    }
+  ],
+  "handover": {
+    "display_decimals": 6,
+    "boundary_rule": "closed",
+    "shared_edges": [
+      {
+        "edges": [
+          {
+            "area_id": "A",
+            "edge_id": "A/r0/e3",
+            "direction": "forward"
+          },
+          {
+            "area_id": "B",
+            "edge_id": "B/r0/e1",
+            "direction": "reverse"
+          }
+        ]
+      }
+    ],
+    "stations": [
+      {
+        "id": "S1",
+        "lon_micro": 185000000,
+        "lat_micro": 5000000,
+        "areas": [
+          "A"
+        ],
+        "status": "confirmed"
+      },
+      {
+        "id": "S2",
+        "lon_micro": 165000000,
+        "lat_micro": 5000000,
+        "areas": [
+          "B"
+        ],
+        "status": "confirmed"
+      }
+    ],
+    "independent_areas": [
+      "B"
+    ]
+  }
+}

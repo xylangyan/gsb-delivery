@@ -1,0 +1,165 @@
+{
+  "type": "FeatureCollection",
+  "properties": {
+    "status": "ok",
+    "display_decimals": 6,
+    "boundary_rule": "closed"
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "A:t-1:0",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -180.0,
+              0.0
+            ],
+            [
+              -170.0,
+              0.0
+            ],
+            [
+              -170.0,
+              10.0
+            ],
+            [
+              -180.0,
+              10.0
+            ],
+            [
+              -180.0,
+              0.0
+            ]
+          ],
+          [
+            [
+              -180.0,
+              2.0
+            ],
+            [
+              -175.0,
+              2.0
+            ],
+            [
+              -175.0,
+              8.0
+            ],
+            [
+              -180.0,
+              8.0
+            ],
+            [
+              -180.0,
+              2.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "area_id": "A",
+        "piece_id": "A:t-1:0",
+        "side": "east",
+        "shift_micro": -360000000
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "A:t0:0",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              180.0,
+              10.0
+            ],
+            [
+              170.0,
+              10.0
+            ],
+            [
+              170.0,
+              0.0
+            ],
+            [
+              180.0,
+              0.0
+            ],
+            [
+              180.0,
+              10.0
+            ]
+          ],
+          [
+            [
+              180.0,
+              8.0
+            ],
+            [
+              175.0,
+              8.0
+            ],
+            [
+              175.0,
+              2.0
+            ],
+            [
+              180.0,
+              2.0
+            ],
+            [
+              180.0,
+              8.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "area_id": "A",
+        "piece_id": "A:t0:0",
+        "side": "whole",
+        "shift_micro": 0
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "B:t0:0",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              160.0,
+              0.0
+            ],
+            [
+              170.0,
+              0.0
+            ],
+            [
+              170.0,
+              10.0
+            ],
+            [
+              160.0,
+              10.0
+            ],
+            [
+              160.0,
+              0.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "area_id": "B",
+        "piece_id": "B:t0:0",
+        "side": "whole",
+        "shift_micro": 0
+      }
+    }
+  ]
+}

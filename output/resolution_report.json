@@ -1,0 +1,635 @@
+{
+  "status": "ok",
+  "display_decimals": 6,
+  "boundary_rule": "closed",
+  "signed_areas": [
+    "A",
+    "B"
+  ],
+  "fragment_count": 3,
+  "station_ownership": [
+    {
+      "station_id": "S1",
+      "owners": [
+        "A"
+      ],
+      "on_edge": [],
+      "status": "confirmed"
+    },
+    {
+      "station_id": "S2",
+      "owners": [
+        "B"
+      ],
+      "on_edge": [],
+      "status": "confirmed"
+    }
+  ],
+  "ambiguous_stations": [],
+  "withheld_areas": [],
+  "unreadable_areas": [],
+  "overlaps": [],
+  "junction_records": [
+    {
+      "piece_id": "A:t-1:0",
+      "area_id": "A",
+      "kind": "dateline_crossing",
+      "edge_id": "A/r0/e0",
+      "t": 0.5,
+      "t_fraction": "1/2",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          0
+        ],
+        "to_micro": [
+          190000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 180000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": -180000000,
+        "lat_micro": 0
+      },
+      "display": [
+        -180.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "A:t-1:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e0",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          0
+        ],
+        "to_micro": [
+          190000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 190000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": -170000000,
+        "lat_micro": 0
+      },
+      "display": [
+        -170.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "A:t-1:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e1",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          190000000,
+          0
+        ],
+        "to_micro": [
+          190000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 190000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": -170000000,
+        "lat_micro": 0
+      },
+      "display": [
+        -170.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "A:t-1:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e1",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          190000000,
+          0
+        ],
+        "to_micro": [
+          190000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 190000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": -170000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        -170.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "A:t-1:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e2",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          190000000,
+          10000000
+        ],
+        "to_micro": [
+          170000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 190000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": -170000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        -170.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "A:t-1:0",
+      "area_id": "A",
+      "kind": "dateline_crossing",
+      "edge_id": "A/r0/e2",
+      "t": 0.5,
+      "t_fraction": "1/2",
+      "original_edge": {
+        "from_micro": [
+          190000000,
+          10000000
+        ],
+        "to_micro": [
+          170000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 180000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": -180000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        -180.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "A:t0:0",
+      "area_id": "A",
+      "kind": "dateline_crossing",
+      "edge_id": "A/r0/e2",
+      "t": 0.5,
+      "t_fraction": "1/2",
+      "original_edge": {
+        "from_micro": [
+          190000000,
+          10000000
+        ],
+        "to_micro": [
+          170000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 180000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 180000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        180.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "A:t0:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e2",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          190000000,
+          10000000
+        ],
+        "to_micro": [
+          170000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        170.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "A:t0:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e3",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          10000000
+        ],
+        "to_micro": [
+          170000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        170.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "A:t0:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e3",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          10000000
+        ],
+        "to_micro": [
+          170000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "display": [
+        170.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "A:t0:0",
+      "area_id": "A",
+      "kind": "vertex",
+      "edge_id": "A/r0/e0",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          0
+        ],
+        "to_micro": [
+          190000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "display": [
+        170.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "A:t0:0",
+      "area_id": "A",
+      "kind": "dateline_crossing",
+      "edge_id": "A/r0/e0",
+      "t": 0.5,
+      "t_fraction": "1/2",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          0
+        ],
+        "to_micro": [
+          190000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 180000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 180000000,
+        "lat_micro": 0
+      },
+      "display": [
+        180.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e0",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          160000000,
+          0
+        ],
+        "to_micro": [
+          170000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 0
+      },
+      "display": [
+        160.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e0",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          160000000,
+          0
+        ],
+        "to_micro": [
+          170000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "display": [
+        170.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e1",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          0
+        ],
+        "to_micro": [
+          170000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 0
+      },
+      "display": [
+        170.0,
+        0.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e1",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          0
+        ],
+        "to_micro": [
+          170000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        170.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e2",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          10000000
+        ],
+        "to_micro": [
+          160000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 170000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        170.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e2",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          170000000,
+          10000000
+        ],
+        "to_micro": [
+          160000000,
+          10000000
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        160.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e3",
+      "t": 0.0,
+      "t_fraction": "0/1",
+      "original_edge": {
+        "from_micro": [
+          160000000,
+          10000000
+        ],
+        "to_micro": [
+          160000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 10000000
+      },
+      "piece_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 10000000
+      },
+      "display": [
+        160.0,
+        10.0
+      ]
+    },
+    {
+      "piece_id": "B:t0:0",
+      "area_id": "B",
+      "kind": "vertex",
+      "edge_id": "B/r0/e3",
+      "t": 1.0,
+      "t_fraction": "1/1",
+      "original_edge": {
+        "from_micro": [
+          160000000,
+          10000000
+        ],
+        "to_micro": [
+          160000000,
+          0
+        ]
+      },
+      "original_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 0
+      },
+      "piece_point_micro": {
+        "lon_micro": 160000000,
+        "lat_micro": 0
+      },
+      "display": [
+        160.0,
+        0.0
+      ]
+    }
+  ],
+  "interpretations": {}
+}
