@@ -1,0 +1,44 @@
+{
+  "case_id": "DEMO-UNDO-ROOT-HANDOFF",
+  "common_history_tids": [
+    "0x040d3c118b4231cc",
+    "0x040d3c118b431577",
+    "0x040d3c118b436b44"
+  ],
+  "output_dir": "demo-archive",
+  "range": {
+    "start_tid": "0x040d3c118b4231cc",
+    "through_tid": "0x040d3c118b436b44"
+  },
+  "roots": [
+    {
+      "key": "P",
+      "label": "root:P"
+    },
+    {
+      "key": "R1",
+      "label": "root:R1-shared-P"
+    },
+    {
+      "key": "D",
+      "label": "root:D-removed-then-restored"
+    }
+  ],
+  "sources": [
+    {
+      "blob_dir": "demo-source/primary/blobs",
+      "fs_path": "demo-source/primary/Data.fs",
+      "name": "primary",
+      "role": "primary",
+      "verified": true
+    },
+    {
+      "blob_dir": "demo-source/archive/blobs",
+      "borrow": true,
+      "fs_path": "demo-source/archive/Data.fs",
+      "name": "sealed-archive",
+      "role": "archive",
+      "verified": true
+    }
+  ]
+}

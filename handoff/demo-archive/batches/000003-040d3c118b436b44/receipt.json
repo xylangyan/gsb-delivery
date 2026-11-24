@@ -1,0 +1,17 @@
+{
+  "batch_id": "000003-040d3c118b436b44",
+  "batch_sha256": "55f167f1db5d4cd49f7b208253c630c4a2e8ffce3f4df6e6347078e665e75ac4",
+  "issue_count": 0,
+  "parent_receipt_sha256": "f910c561f3c00986c118d65aae65063c81edf16c82f443ba43564a715dbaa3d3",
+  "receipt_sha256": "125b657494f8b5db8c85a8538c851e59f2724c4834c144ed502cf504f7ef321e",
+  "root_status": {
+    "root:D-removed-then-restored": "verified",
+    "root:P": "verified",
+    "root:R1-shared-P": "verified"
+  },
+  "schema": "zodb-incremental-handoff/1",
+  "seq": 3,
+  "status": "verified",
+  "tid": "040d3c118b436b44",
+  "write_count": 2
+}

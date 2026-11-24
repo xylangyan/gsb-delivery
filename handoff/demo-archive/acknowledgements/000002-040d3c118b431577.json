@@ -1,0 +1,19 @@
+{
+  "ack_sha256": "94a6cae9290ca0c502e1e9aa2a221f7f526e5fba70c5383d47649c6e72b3af1d",
+  "acknowledged_at": "2026-11-24T16:53:26.625151+00:00",
+  "acknowledged_by": "demo-receiver",
+  "batch_id": "000002-040d3c118b431577",
+  "batch_sha256": "3c2b17dcc5c9d7b2b398ec14057150f56b1fdcc0cb39f459f3ce3c9d270f5a5c",
+  "receipt_sha256": "f910c561f3c00986c118d65aae65063c81edf16c82f443ba43564a715dbaa3d3",
+  "replay_report": {
+    "archive": "handoff/demo-archive",
+    "batches_checked": 2,
+    "errors": [],
+    "ok": true,
+    "partial_batches": [],
+    "target_fs": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-target/Data.fs"
+  },
+  "schema": "zodb-incremental-handoff/1",
+  "seq": 2,
+  "tid": "040d3c118b431577"
+}

@@ -1,0 +1,48 @@
+{
+  "case_id": "GSB1109-ZODB-HANDOFF",
+  "output_dir": "archive",
+  "range": {
+    "start_tid": "0x0000000000000000",
+    "through_tid": "0x替换为封卷终点TID"
+  },
+  "common_history_tids": [
+    "0x共同历史TID1",
+    "0x共同历史TID2"
+  ],
+  "sources": [
+    {
+      "name": "primary",
+      "role": "primary",
+      "verified": true,
+      "fs_path": "../old-db-1/Data.fs",
+      "blob_dir": "../old-db-1/blobs"
+    },
+    {
+      "name": "sealed-archive",
+      "role": "archive",
+      "verified": true,
+      "borrow": true,
+      "fs_path": "../verified-archive/Data.fs",
+      "blob_dir": "../verified-archive/blobs"
+    }
+  ],
+  "roots": [
+    {
+      "label": "验货笔录根-P",
+      "key": "P"
+    },
+    {
+      "label": "多根共享-P",
+      "key": "R1"
+    },
+    {
+      "label": "直接OID根",
+      "oid": "0x0000000000000010"
+    },
+    {
+      "label": "嵌套清单根",
+      "key": "invoices",
+      "path": ["2026", "GSB1109"]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "batch_id": "000001-040d3c118b4231cc",
+  "batch_sha256": "74c421a946d74c02394ff742333f7636e64670faa62963c7724857650e6ed22a",
+  "issue_count": 0,
+  "parent_receipt_sha256": null,
+  "receipt_sha256": "a10822cd58ae463bd0429a1d18ea84ecd1a65b3e0c657c5a508e2b64e17f9ba0",
+  "root_status": {
+    "root:D-removed-then-restored": "verified",
+    "root:P": "verified",
+    "root:R1-shared-P": "verified"
+  },
+  "schema": "zodb-incremental-handoff/1",
+  "seq": 1,
+  "status": "verified",
+  "tid": "040d3c118b4231cc",
+  "write_count": 5
+}

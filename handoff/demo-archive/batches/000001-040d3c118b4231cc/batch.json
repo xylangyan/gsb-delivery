@@ -1,0 +1,360 @@
+{
+  "batch_id": "000001-040d3c118b4231cc",
+  "checkpoints": [
+    {
+      "anchor_oid": "0000000000000001",
+      "checkpoint_tid": "040d3c118b4231cc",
+      "edges": [
+        {
+          "from_oid": "0000000000000001",
+          "from_rev_tid": "040d3c118b4231cc",
+          "to_oid": "0000000000000004"
+        }
+      ],
+      "issue_ids": [],
+      "label": "root:P",
+      "objects": [
+        {
+          "blob_status": "not_expected",
+          "class_name": "__main__.Inspection",
+          "oid": "0000000000000001",
+          "payload_sha256": "3f9f540ff2f2b595984644c83c2f40104fbc983a9d34ebd12f5d9563084c702d",
+          "provenance": {
+            "borrowed": false,
+            "data_txn": null,
+            "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+            "payload_sha256": "3f9f540ff2f2b595984644c83c2f40104fbc983a9d34ebd12f5d9563084c702d",
+            "record_offset": 649,
+            "source": "primary"
+          },
+          "reference_oids": [
+            "0000000000000004"
+          ],
+          "rev_tid": "040d3c118b4231cc",
+          "size": 124
+        },
+        {
+          "blob": {
+            "borrowed": false,
+            "lookup_tid": "040d3c118b4231cc",
+            "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x04/0x040d3c118b4231cc.blob",
+            "replica_locations": [
+              {
+                "borrowed": false,
+                "lookup_tid": "040d3c118b4231cc",
+                "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x04/0x040d3c118b4231cc.blob",
+                "sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+                "size": 3,
+                "source": "primary"
+              },
+              {
+                "borrowed": true,
+                "lookup_tid": "040d3c118b4231cc",
+                "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/archive/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x04/0x040d3c118b4231cc.blob",
+                "sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+                "size": 3,
+                "source": "sealed-archive"
+              }
+            ],
+            "sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+            "size": 3,
+            "source": "primary"
+          },
+          "blob_status": "present",
+          "class_name": "ZODB.blob.Blob",
+          "oid": "0000000000000004",
+          "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+          "provenance": {
+            "borrowed": false,
+            "data_txn": null,
+            "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+            "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+            "record_offset": 815,
+            "source": "primary"
+          },
+          "reference_oids": [],
+          "rev_tid": "040d3c118b4231cc",
+          "size": 25
+        }
+      ],
+      "root_record_oid": "0000000000000000",
+      "spec": {
+        "key": "P",
+        "label": "root:P"
+      },
+      "status": "verified"
+    },
+    {
+      "anchor_oid": "0000000000000001",
+      "checkpoint_tid": "040d3c118b4231cc",
+      "edges": [
+        {
+          "from_oid": "0000000000000001",
+          "from_rev_tid": "040d3c118b4231cc",
+          "to_oid": "0000000000000004"
+        }
+      ],
+      "issue_ids": [],
+      "label": "root:R1-shared-P",
+      "objects": [
+        {
+          "blob_status": "not_expected",
+          "class_name": "__main__.Inspection",
+          "oid": "0000000000000001",
+          "payload_sha256": "3f9f540ff2f2b595984644c83c2f40104fbc983a9d34ebd12f5d9563084c702d",
+          "provenance": {
+            "borrowed": false,
+            "data_txn": null,
+            "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+            "payload_sha256": "3f9f540ff2f2b595984644c83c2f40104fbc983a9d34ebd12f5d9563084c702d",
+            "record_offset": 649,
+            "source": "primary"
+          },
+          "reference_oids": [
+            "0000000000000004"
+          ],
+          "rev_tid": "040d3c118b4231cc",
+          "size": 124
+        },
+        {
+          "blob": {
+            "borrowed": false,
+            "lookup_tid": "040d3c118b4231cc",
+            "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x04/0x040d3c118b4231cc.blob",
+            "replica_locations": [
+              {
+                "borrowed": false,
+                "lookup_tid": "040d3c118b4231cc",
+                "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x04/0x040d3c118b4231cc.blob",
+                "sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+                "size": 3,
+                "source": "primary"
+              },
+              {
+                "borrowed": true,
+                "lookup_tid": "040d3c118b4231cc",
+                "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/archive/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x04/0x040d3c118b4231cc.blob",
+                "sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+                "size": 3,
+                "source": "sealed-archive"
+              }
+            ],
+            "sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+            "size": 3,
+            "source": "primary"
+          },
+          "blob_status": "present",
+          "class_name": "ZODB.blob.Blob",
+          "oid": "0000000000000004",
+          "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+          "provenance": {
+            "borrowed": false,
+            "data_txn": null,
+            "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+            "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+            "record_offset": 815,
+            "source": "primary"
+          },
+          "reference_oids": [],
+          "rev_tid": "040d3c118b4231cc",
+          "size": 25
+        }
+      ],
+      "root_record_oid": "0000000000000000",
+      "spec": {
+        "key": "R1",
+        "label": "root:R1-shared-P"
+      },
+      "status": "verified"
+    },
+    {
+      "anchor_oid": "0000000000000002",
+      "checkpoint_tid": "040d3c118b4231cc",
+      "edges": [
+        {
+          "from_oid": "0000000000000002",
+          "from_rev_tid": "040d3c118b4231cc",
+          "to_oid": "0000000000000003"
+        }
+      ],
+      "issue_ids": [],
+      "label": "root:D-removed-then-restored",
+      "objects": [
+        {
+          "blob_status": "not_expected",
+          "class_name": "__main__.Inspection",
+          "oid": "0000000000000002",
+          "payload_sha256": "2657384d615911885ec11da3dfe1fba401b86e07bf3a28d029beb36e6e6ec536",
+          "provenance": {
+            "borrowed": false,
+            "data_txn": null,
+            "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+            "payload_sha256": "2657384d615911885ec11da3dfe1fba401b86e07bf3a28d029beb36e6e6ec536",
+            "record_offset": 416,
+            "source": "primary"
+          },
+          "reference_oids": [
+            "0000000000000003"
+          ],
+          "rev_tid": "040d3c118b4231cc",
+          "size": 124
+        },
+        {
+          "blob": {
+            "borrowed": false,
+            "lookup_tid": "040d3c118b4231cc",
+            "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x03/0x040d3c118b4231cc.blob",
+            "replica_locations": [
+              {
+                "borrowed": false,
+                "lookup_tid": "040d3c118b4231cc",
+                "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x03/0x040d3c118b4231cc.blob",
+                "sha256": "aa7c0aae7df2aa227cedc731deb961340e89eb853c15d6b90d474e2bb66277e3",
+                "size": 3,
+                "source": "primary"
+              },
+              {
+                "borrowed": true,
+                "lookup_tid": "040d3c118b4231cc",
+                "path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/archive/blobs/0x00/0x00/0x00/0x00/0x00/0x00/0x00/0x03/0x040d3c118b4231cc.blob",
+                "sha256": "aa7c0aae7df2aa227cedc731deb961340e89eb853c15d6b90d474e2bb66277e3",
+                "size": 3,
+                "source": "sealed-archive"
+              }
+            ],
+            "sha256": "aa7c0aae7df2aa227cedc731deb961340e89eb853c15d6b90d474e2bb66277e3",
+            "size": 3,
+            "source": "primary"
+          },
+          "blob_status": "present",
+          "class_name": "ZODB.blob.Blob",
+          "oid": "0000000000000003",
+          "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+          "provenance": {
+            "borrowed": false,
+            "data_txn": null,
+            "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+            "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+            "record_offset": 582,
+            "source": "primary"
+          },
+          "reference_oids": [],
+          "rev_tid": "040d3c118b4231cc",
+          "size": 25
+        }
+      ],
+      "root_record_oid": "0000000000000000",
+      "spec": {
+        "key": "D",
+        "label": "root:D-removed-then-restored"
+      },
+      "status": "verified"
+    }
+  ],
+  "issues": [],
+  "parent_receipt_sha256": null,
+  "schema": "zodb-incremental-handoff/1",
+  "seq": 1,
+  "status": "verified",
+  "tid": "040d3c118b4231cc",
+  "transaction": {
+    "description_hex": "54312068616e646f666620626173656c696e653a205020616e64207031",
+    "description_text": "T1 handoff baseline: P and p1",
+    "extension_hex": "",
+    "source_digests": {
+      "primary": {
+        "history_digest": "68fff91d1707b45d8313997e699a2514b8983f805670644c583c91fdaeb0a447",
+        "record_count": 5
+      },
+      "sealed-archive": {
+        "history_digest": "68fff91d1707b45d8313997e699a2514b8983f805670644c583c91fdaeb0a447",
+        "record_count": 5
+      }
+    },
+    "tid": "040d3c118b4231cc",
+    "user_hex": ""
+  },
+  "writes": [
+    {
+      "blob_sha256": null,
+      "kind": "revision",
+      "oid": "0000000000000001",
+      "origin_tid": null,
+      "payload_sha256": "3f9f540ff2f2b595984644c83c2f40104fbc983a9d34ebd12f5d9563084c702d",
+      "provenance": {
+        "borrowed": false,
+        "data_txn": null,
+        "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+        "payload_sha256": "3f9f540ff2f2b595984644c83c2f40104fbc983a9d34ebd12f5d9563084c702d",
+        "record_offset": 649,
+        "source": "primary"
+      },
+      "rev_key": "0000000000000001:040d3c118b4231cc",
+      "serial_tid": "040d3c118b4231cc"
+    },
+    {
+      "blob_sha256": "2dc43a466a3fb5896dace477dcf43876b5ff20c59d83a45c26229b743987893e",
+      "kind": "revision",
+      "oid": "0000000000000004",
+      "origin_tid": null,
+      "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+      "provenance": {
+        "borrowed": false,
+        "data_txn": null,
+        "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+        "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+        "record_offset": 815,
+        "source": "primary"
+      },
+      "rev_key": "0000000000000004:040d3c118b4231cc",
+      "serial_tid": "040d3c118b4231cc"
+    },
+    {
+      "blob_sha256": null,
+      "kind": "revision",
+      "oid": "0000000000000002",
+      "origin_tid": null,
+      "payload_sha256": "2657384d615911885ec11da3dfe1fba401b86e07bf3a28d029beb36e6e6ec536",
+      "provenance": {
+        "borrowed": false,
+        "data_txn": null,
+        "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+        "payload_sha256": "2657384d615911885ec11da3dfe1fba401b86e07bf3a28d029beb36e6e6ec536",
+        "record_offset": 416,
+        "source": "primary"
+      },
+      "rev_key": "0000000000000002:040d3c118b4231cc",
+      "serial_tid": "040d3c118b4231cc"
+    },
+    {
+      "blob_sha256": "aa7c0aae7df2aa227cedc731deb961340e89eb853c15d6b90d474e2bb66277e3",
+      "kind": "revision",
+      "oid": "0000000000000003",
+      "origin_tid": null,
+      "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+      "provenance": {
+        "borrowed": false,
+        "data_txn": null,
+        "fs_path": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-ZODB-01/workspace/handoff/demo-source/primary/Data.fs",
+        "payload_sha256": "d9ff0d8416a09cd4c07e44d84700371969398bf5b73371c906eeb3bfebd8b18d",
+        "record_offset": 582,
+        "source": "primary"
+      },
+      "rev_key": "0000000000000003:040d3c118b4231cc",
+      "serial_tid": "040d3c118b4231cc"
+    },
+    {
+      "generated": true,
+      "kind": "root_binding",
+      "mapping": {
+        "D": "0000000000000002",
+        "P": "0000000000000001",
+        "R1": "0000000000000001"
+      },
+      "oid": "0000000000000000",
+      "payload_sha256": "8b34547349afa9dd13d3d16e3a4b722add4e4ab9cb0157064845e69f191c1060",
+      "rev_key": "0000000000000000:040d3c118b4231cc",
+      "serial_tid": "040d3c118b4231cc"
+    }
+  ]
+}
