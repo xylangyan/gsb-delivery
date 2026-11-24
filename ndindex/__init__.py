@@ -40,6 +40,10 @@ from .chunking import ChunkSize
 
 __all__ += ['ChunkSize']
 
+from .migration import IndexPlan, MigrationReport, verify_migration
+
+__all__ += ['IndexPlan', 'MigrationReport', 'verify_migration']
+
 from ._version import get_versions
 __version__ = get_versions()['version']
 del get_versions

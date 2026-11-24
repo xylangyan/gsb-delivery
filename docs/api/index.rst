@@ -17,4 +17,5 @@ API Reference Index
    index-types.rst
    shapetools.rst
    chunking.rst
+   migration.rst
    internal.rst

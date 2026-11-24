@@ -1,5 +1,11 @@
 # ndindex Changelog
 
+## Unreleased
+
+### Major Changes
+
+- Add {any}`verify_migration`, an entry point that checks whether two multi-step indexing plans select the same original cells in the same output order on every allowed array shape, using only finite per-axis length ranges and optional equal-axis constraints. It supports integers, slices, ellipses, newaxes and small integer array indices (including advanced indices separated by slices or newaxes), never reads array data, and reports the lexicographically earliest counterexample with the failing step, differing result shapes, or the output coordinate and the two original cells it maps to.
+
 ## Version 1.10.1 (2025-11-19)
 
 ### Minor Changes
