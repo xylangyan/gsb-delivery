@@ -5,7 +5,12 @@
 6.5 (unreleased)
 ================
 
-- Nothing changed yet.
+- Add ``ZODB.batch``, which delivers object graphs from legacy databases
+  into a group of ordinary ``FileStorage`` databases one release slip at
+  a time.  Slips are receipted, redelivery is idempotent, weak references
+  survive later releases, and unsatisfied strong references are reported
+  under the releasing root.  Published generations are replaced
+  atomically.
 
 
 6.4 (2026-10-12)

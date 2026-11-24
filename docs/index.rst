@@ -34,6 +34,7 @@ Learning more
    ConflictResolution
    collaborations
    cross-database-references
+   incremental-delivery
    event
    historical_connections
    persistentclass
