@@ -42,6 +42,16 @@ PrefixSet class
 .. autoclass:: pygtrie.PrefixSet
    :members:
 
+Canonical prefix matches
+------------------------
+
+.. autoclass:: pygtrie.NFDPrefixMatch
+   :members:
+
+.. automethod:: pygtrie.CharTrie.nfd_prefixes
+
+.. autofunction:: pygtrie.nfd_prefixes
+
 Custom exceptions
 -----------------
 

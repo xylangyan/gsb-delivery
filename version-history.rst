@@ -1,6 +1,21 @@
 Version History
 ---------------
 
+Unreleased
+
+- Add :func:`~pygtrie.CharTrie.nfd_prefixes` which finds trie keys equal to
+  the Unicode NFD form of prefixes of a text.  Only boundaries of the
+  original characters are considered: canonical reordering can move
+  a combining mark ahead of an earlier one, and a key built from such
+  a reordered prefix must not be reported if no original prefix produces
+  it.  Each :class:`~pygtrie.NFDPrefixMatch` contains the original UTF-8
+  byte end offset alongside the key and its value, so lookups can be
+  attributed to the exact point in the source text.
+
+  Scanning is linear in the input and keeps a lazily rebuilt index on the
+  trie, so it is not quadratic on long runs of combining marks and repeated
+  queries do not copy the trie.
+
 2.6.2: 2026/09/14
 
 - Optimise code and type annotations to reduce overhead introduced by

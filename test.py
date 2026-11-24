@@ -11,6 +11,8 @@ import base64
 import collections
 import copy
 import pickle
+import random
+import unicodedata
 import unittest
 import warnings
 
@@ -1175,6 +1177,258 @@ class MergeTest(unittest.TestCase):
              True)
         test({'foo/bar': 42, 'q/u/x': 2}, pygtrie.Trie({'qux': 2}), False)
         test({'foo/bar': 42, 'q/u/x': 2}, pygtrie.CharTrie({'qux': 2}), False)
+
+
+def _nfd(text):
+    return unicodedata.normalize('NFD', text)
+
+
+def _brute_force(trie, text):
+    """Reference implementation: normalise every original-character prefix."""
+    matches = []
+    for end in range(1, len(text) + 1):
+        prefix = text[:end]
+        key = _nfd(prefix)
+        if key in trie:
+            matches.append((len(prefix.encode('utf-8')), key, trie[key]))
+    return matches
+
+
+def _matches(trie, text):
+    return [(m.byte_end, m.key, m.value) for m in trie.nfd_prefixes(text)]
+
+
+class NfdPrefixesTest(unittest.TestCase):
+
+    def test_reordered_marks_are_not_reported(self):
+        text = 'á̧tail'
+        trie = pygtrie.CharTrie({
+            'á': ['acute'],
+            'a̧': ['cedilla'],
+        })
+        self.assertEqual(
+            [(3, 'á', ['acute'])], _matches(trie, text))
+
+    def test_each_original_boundary_is_checked(self):
+        text = 'á̧tail'
+        keys = (_nfd('a'), _nfd('á'), _nfd('á̧'),
+                _nfd('á̧t'))
+        trie = pygtrie.CharTrie({key: [key] for key in keys})
+        self.assertEqual(
+            [(1, _nfd('a'), [_nfd('a')]),
+             (3, _nfd('á'), [_nfd('á')]),
+             (5, _nfd('á̧'), [_nfd('á̧')]),
+             (6, _nfd('á̧t'), [_nfd('á̧t')])],
+            _matches(trie, text))
+
+    def test_decomposed_character_does_not_have_inner_endpoints(self):
+        # U+AC01 decomposes into three code points.  A prefix ending inside the
+        # decomposition is not an end of an original character.
+        text = '각x'
+        trie = pygtrie.CharTrie({
+            'ᄀ': ['choseong'],
+            '가': ['jungseong'],
+            _nfd('각'): ['syllable'],
+        })
+        self.assertEqual(
+            [(3, _nfd('각'), ['syllable'])], _matches(trie, text))
+
+    def test_multiple_ids_for_the_same_key_are_retained(self):
+        key = 'á'
+        ids = ['id-1', 'id-2', 'id-3']
+        trie = pygtrie.CharTrie({key: ids})
+        matches = list(trie.nfd_prefixes(key + 'suffix'))
+        self.assertEqual(1, len(matches))
+        self.assertIs(ids, matches[0].value)
+        self.assertEqual(ids, matches[0].ids)
+
+    def test_byte_offsets_are_utf8_lengths(self):
+        key = _nfd('é')
+        trie = pygtrie.CharTrie({key: ['eacute']})
+        matches = list(trie.nfd_prefixes('é\x00'))
+        self.assertEqual([(2, key, ['eacute'])],
+                         [(m.byte_end, m.key, m.value) for m in matches])
+        self.assertEqual(2, matches[0].end)
+
+    def test_match_shape(self):
+        key = 'á'
+        match = next(pygtrie.CharTrie({key: 42}).nfd_prefixes(key))
+        self.assertEqual((3, key, 42), tuple(match))
+        self.assertEqual(3, match.byte_end)
+        self.assertEqual(3, match.end)
+        self.assertEqual(42, match.value)
+        self.assertEqual(42, match.ids)
+
+    def test_no_matches(self):
+        trie = pygtrie.CharTrie({'foo': 1, 'á': 2})
+        self.assertEqual([], list(trie.nfd_prefixes('bar')))
+        self.assertEqual([], list(trie.nfd_prefixes('')))
+        self.assertEqual([], list(pygtrie.CharTrie().nfd_prefixes('á')))
+
+    def test_non_string_input(self):
+        trie = pygtrie.CharTrie({'a': 1})
+        self.assertRaises(TypeError, trie.nfd_prefixes, 42)
+        self.assertRaises(TypeError, trie.nfd_prefixes, object())
+        self.assertRaises(UnicodeDecodeError, trie.nfd_prefixes, b'\xff')
+
+    def test_bytes_input(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: ['id']})
+        expected = [(3, key, ['id'])]
+        self.assertEqual(expected, _matches(trie, key.encode('utf-8') + b'x'))
+        self.assertEqual(expected,
+                         _matches(trie, bytearray(key.encode('utf-8') + b'x')))
+
+    def test_result_is_lazy(self):
+        trie = pygtrie.CharTrie({'a': 1})
+        result = trie.nfd_prefixes('abc')
+        self.assertFalse(isinstance(result, list))
+        self.assertEqual([(1, 'a', 1)], [(m.byte_end, m.key, m.value)
+                                        for m in result])
+
+    def test_index_is_rebuilt_after_mutation(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: ['old']})
+        self.assertEqual([(3, key, ['old'])], _matches(trie, key + 'x'))
+
+        trie[key] = ['new']
+        self.assertEqual([(3, key, ['new'])], _matches(trie, key + 'x'))
+
+        trie[key + 'y'] = ['longer']
+        self.assertEqual(
+            [(3, key, ['new']), (4, key + 'y', ['longer'])],
+            _matches(trie, key + 'yx'))
+
+        del trie[key]
+        self.assertEqual([(4, key + 'y', ['longer'])],
+                         _matches(trie, key + 'yx'))
+
+        trie.clear()
+        self.assertEqual([], _matches(trie, key + 'yx'))
+
+    def test_step_value_change_is_observed(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: 'first'})
+        self.assertEqual([(3, key, 'first')], _matches(trie, key))
+        trie.longest_prefix(key).value = 'second'
+        self.assertEqual([(3, key, 'second')], _matches(trie, key))
+
+    def test_merge_invalidates_index(self):
+        key = 'á'
+        dst = pygtrie.CharTrie({key: 1})
+        self.assertEqual([(3, key, 1)], _matches(dst, key))
+        dst.merge(pygtrie.CharTrie({key + 'b': 2}))
+        self.assertEqual([(3, key, 1), (4, key + 'b', 2)],
+                         _matches(dst, key + 'b'))
+
+    def test_copies_do_not_share_index(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: 1})
+        self.assertEqual([(3, key, 1)], _matches(trie, key))
+
+        shallow = copy.copy(trie)
+        deep = copy.deepcopy(trie)
+        shallow[key + 'b'] = 2
+        deep[key + 'c'] = 3
+
+        self.assertEqual([(3, key, 1)], _matches(trie, key + 'bc'))
+        self.assertEqual([(3, key, 1), (4, key + 'b', 2)],
+                         _matches(shallow, key + 'bc'))
+        self.assertEqual([(3, key, 1), (4, key + 'c', 3)],
+                         _matches(deep, key + 'c'))
+
+    def test_pickling(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: ['id']})
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            restored = pickle.loads(pickle.dumps(trie, protocol))
+            self.assertEqual(_matches(trie, key + 'x'),
+                             _matches(restored, key + 'x'))
+
+    def test_catalog_index_is_not_copied_per_query(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: 1})
+        self.assertEqual([(3, key, 1)], _matches(trie, key))
+        # pylint: disable=protected-access
+        index = trie._nfd_index
+        for text in (key, key + 'x', key + 'xy'):
+            list(trie.nfd_prefixes(text))
+        self.assertIs(index, trie._nfd_index)
+        # pylint: enable=protected-access
+
+    def test_matches_every_key_prefix_of_an_input(self):
+        alphabet = ['a', 'b', 'e', 'é', 'Ǆ', '각', 'ཱི',
+                    'ẛ', 'ﬁ', '́', '̧', '̣',
+                    '̖', 'ͅ', '̈́', '़', '्',
+                    'ཱ', 'ི', 'ུ']
+        rng = random.Random(20261124)
+        for _ in range(200):
+            text = ''.join(rng.choice(alphabet)
+                           for _ in range(rng.randrange(0, 12)))
+            values = {}
+            for end in range(1, len(text) + 1):
+                values.setdefault(_nfd(text[:end]), 'v%d' % end)
+            trie = pygtrie.CharTrie(values)
+            self.assertEqual(_brute_force(trie, text), _matches(trie, text),
+                             repr(text))
+
+    def test_long_combining_run(self):
+        # All combining classes which appear in the block are present many
+        # times.  If each original boundary re-normalised and re-sorted the
+        # whole prefix, this input would be quadratic.
+        marks = [chr(cp) for cp in range(0x300, 0x370)
+                 if unicodedata.combining(chr(cp))]
+        keys = {_nfd('a' + mark): mark for mark in marks}
+        trie = pygtrie.CharTrie(keys)
+
+        text = 'a' + ''.join(marks * 3)
+        self.assertEqual(_brute_force(trie, text), _matches(trie, text))
+
+        # The first mark boundary matches a single-mark key.  Later boundaries
+        # accumulate all earlier marks and are not reported as single-mark keys
+        # merely because the first mark was a prefix of a reordered normalised
+        # text.
+        first_key = _nfd('a' + marks[0])
+        first_match = [(3, first_key, keys[first_key])]
+        self.assertEqual(first_match, _matches(trie, text))
+
+        text = 'a' + ''.join(marks * 40)
+        self.assertEqual(first_match, _matches(trie, text))
+
+    def test_hash_collisions_do_not_create_false_matches(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: 'yes'})
+        self.assertEqual([(3, key, 'yes')], _matches(trie, key))
+
+        # Put a different key under the same digest to simulate a collision.
+        # The scanner must compare candidates rather than trusting the hash.
+        # pylint: disable=protected-access
+        index = trie._nfd_index
+        digest = next(iter(index._buckets))
+        index._buckets[digest].insert(0, ('collision', 'no'))
+        # pylint: enable=protected-access
+        self.assertEqual([(3, key, 'yes')], _matches(trie, key))
+
+    def test_module_level_function_and_aliases(self):
+        key = 'á'
+        trie = pygtrie.CharTrie({key: ['id']})
+        expected = [(3, key, ['id'])]
+        self.assertEqual(expected, _matches(trie, key))
+        self.assertEqual(expected, [(m.byte_end, m.key, m.value)
+                                    for m in pygtrie.nfd_prefixes(trie, key)])
+        self.assertEqual(expected, [(m.byte_end, m.key, m.value)
+                                    for m in trie.nfd_matches(key)])
+        self.assertEqual(expected, [(m.byte_end, m.key, m.value)
+                                    for m in trie.nfd_prefix_scan(key)])
+
+    def test_empty_text(self):
+        trie = pygtrie.CharTrie({'': 'empty', 'a': 'a'})
+        self.assertEqual([], _matches(trie, ''))
+
+    def test_same_key_multiple_business_ids(self):
+        key = 'a̧'
+        trie = pygtrie.CharTrie({key: ['b1', 'b2']})
+        self.assertEqual([(3, key, ['b1', 'b2'])], _matches(trie, 'a̧'))
 
 
 class NoCopyTest(unittest.TestCase):

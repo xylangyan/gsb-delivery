@@ -36,10 +36,13 @@ __copyright__ = ('Copyright 2014-2017 Google LLC',
                  'Copyright 2018-2026 Michał Nazarewicz <mina86@mina86.com>')
 # __version__ = '' # set by setup.py sdist or build
 
-__all__ = ('Trie', 'CharTrie', 'StringTrie', 'PrefixSet')
+__all__ = ('Trie', 'CharTrie', 'StringTrie', 'PrefixSet', 'NFDPrefixMatch',
+           'nfd_prefixes')
 
+import bisect as _bisect
 import copy as _copy
 import collections.abc as _abc
+import unicodedata as _unicodedata
 import warnings as _warnings
 import types as _types
 import typing as _t
@@ -59,6 +62,108 @@ class _SupportsKeysAndGetItem(_t.Protocol[K, V_co]):
     def __getitem__(self, key: K, /) -> V_co: ...
 
 _Other = _SupportsKeysAndGetItem[K, V] | _t.Iterable[tuple[K, V]]
+
+
+class NFDPrefixMatch(_t.NamedTuple, _t.Generic[V]):
+    """A key found by :func:`CharTrie.nfd_prefixes`.
+
+    Attributes:
+        byte_end: Number of UTF-8 bytes from the beginning of the input to the
+            end of the original character at which the key matched.
+        key: The matching key as stored in the trie (i.e. in NFD form).
+        value: Value associated with the key.  If the key represents several
+            business identifiers, all of them are retained in this value.
+    """
+
+    byte_end: int
+    key: str
+    value: V
+
+    @property
+    def end(self) -> int:
+        """Alias for :attr:`byte_end`."""
+        return self.byte_end
+
+    @property
+    def ids(self) -> V:
+        """Alias for :attr:`value`."""
+        return self.value
+
+
+class _PrefixHashIndex(_t.Generic[V]):
+    """Hash index over NFD keys used by :func:`CharTrie.nfd_prefixes`.
+
+    Python's Unicode normalisation may reorder combining marks.  Consequently,
+    the NFD form of a prefix of a string is not necessarily a prefix of the NFD
+    form of the whole string.  To check every original character boundary in
+    linear time, the scanner maintains hashes of the NFD traversal state: the
+    current starter and the canonical order of the combining marks seen since
+    that starter.  This index maps each key's hash to the key's stored value so
+    a digest can be looked up without walking the trie (or a copy of it) for
+    every character.
+
+    The index is a non-authoritative cache: collisions are resolved by comparing
+    the candidate key with a freshly normalised slice of the input, so a hash
+    match never produces a false positive.  Changes to the trie invalidate the
+    cache and it's rebuilt lazily on the next query.
+    """
+
+    __slots__ = ('_buckets', '_stamp')
+
+    # Large odd multipliers for two independent 64-bit polynomial hashes.
+    _MUL1 = 0x9E3779B185EBCA87
+    _MUL2 = 0xC2B2AE3D27D4EB4F
+    _MASK = (1 << 64) - 1
+
+    def __init__(self) -> None:
+        self._buckets: dict[tuple[int, int, int], list[tuple[str, V]]] = {}
+        self._stamp: int | None = None
+
+    def _build(self, trie: 'CharTrie[V]') -> None:
+        buckets: dict[tuple[int, int, int], list[tuple[str, V]]] = {}
+        for key, value in trie.iteritems():
+            buckets.setdefault(self._digest_key(key), []).append((key, value))
+        self._buckets = buckets
+        self._stamp = trie._mod_count  # pylint: disable=protected-access
+
+    def _ensure_current(self, trie: 'CharTrie[V]') -> None:
+        if self._stamp != trie._mod_count:  # pylint: disable=protected-access
+            self._build(trie)
+
+    def lookup(self,
+               digest: tuple[int, int, int],
+               text: str,
+               char_end: int,
+               byte_end: int) -> _t.Iterator[NFDPrefixMatch[V]]:
+        """Yields matches for the given prefix digest.
+
+        The normalised prefix is compared with candidates as a collision
+        check.  It is built only when the digest has candidates, so this work
+        happens per potential match rather than at every input character.
+
+        Args:
+            digest: Digest of the NFD form of ``text[:char_end]``.
+            text: Original text being scanned.
+            char_end: End of the prefix in original characters.
+            byte_end: UTF-8 byte offset corresponding to ``char_end``.
+        """
+        bucket = self._buckets.get(digest)
+        if not bucket:
+            return
+        want = _unicodedata.normalize('NFD', text[:char_end])
+        for key, value in bucket:
+            if key == want:
+                yield NFDPrefixMatch(byte_end, key, value)
+
+    @classmethod
+    def _digest_key(cls, key: str) -> tuple[int, int, int]:
+        h1 = h2 = 0
+        mask = cls._MASK
+        for ch in key:
+            cp = ord(ch)
+            h1 = (h1 * cls._MUL1 + cp) & mask
+            h2 = (h2 * cls._MUL2 + cp) & mask
+        return (len(key), h1, h2)
 
 
 class _MakeCopy(_t.Protocol):
@@ -807,6 +912,7 @@ class _Step(_t.Generic[K, V, S]):
     @value.setter
     def value(self, value: V) -> None:
         self._node.value = value
+        self._trie._touch()  # pylint: disable=protected-access
 
     @property
     def is_set(self) -> bool:
@@ -833,12 +939,14 @@ class _Step(_t.Generic[K, V, S]):
             '_Step.set() is deprecated; use `step.value = expr` instead.',
             DeprecationWarning, stacklevel=2)
         self._node.value = value
+        self._trie._touch()  # pylint: disable=protected-access
 
     def setdefault(self, value: V) -> V:
         """Assigns value to the node if one is not set then returns it."""
         if _is_value(self._node.value):
             return self._node.value
         self._node.value = value
+        self._trie._touch()  # pylint: disable=protected-access
         return value
 
     def __str__(self) -> str:
@@ -987,6 +1095,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
         """
         self._root = _Node()
         self._items_callback = self._ITEMS_CALLBACKS[0]
+        self._mod_count = 0
         self.update(other, **kwargs)
 
     _ITEMS_CALLBACKS = (lambda x: x.items(), lambda x: x.sorted_items())
@@ -1048,17 +1157,23 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
         # encode self._items_callback as self._sorted when pickling
         state = self.__dict__.copy()
         callback = state.pop('_items_callback', None)
+        # The NFD prefix index is a derived cache.  It is rebuilt lazily after
+        # unpickling so it does not bloat pickles or leak between objects.
+        state.pop('_nfd_index', None)
         state['_sorted'] = callback is self._ITEMS_CALLBACKS[1]
         return state
 
     def __setstate__(self, state: dict[str, _t.Any]) -> None:
         # translate self._sorted back to _items_callback when unpickling
         self.__dict__ = state
+        self._mod_count = getattr(self, '_mod_count', 0)
+        self._nfd_index: _PrefixHashIndex[_t.Any] = _PrefixHashIndex()
         self.enable_sorting(state.pop('_sorted'))
 
     def clear(self) -> None:
         """Removes all the values from the trie."""
         self._root = _Node()
+        self._touch()
 
     def merge(self, other: 'Trie[_t.Any, V, S]', overwrite: bool=False) -> None:
         """Moves nodes from other trie into this one.
@@ -1137,6 +1252,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
             overwrite: Whether to overwrite existing values in this trie.
         """
         self._root.merge(other._root, overwrite=overwrite)  # pylint: disable=protected-access
+        self._touch()
         other.clear()
 
     def __copy(self, make_copy: _MakeCopy=lambda x: x) -> _t.Self:
@@ -1148,6 +1264,10 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
         """
         cpy: _t.Self = self.__class__()
         cpy.__dict__ = dict(self.__dict__, _root=self._root.copy(make_copy))
+        if hasattr(cpy, '_nfd_index'):
+            # Derived caches must not be shared between trie objects.
+            cpy._nfd_index = _PrefixHashIndex()
+        cpy._touch()
         return cpy
 
     def copy(self) -> _t.Self:
@@ -1251,6 +1371,10 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
             trace.append((step, node))
         return node, trace
 
+    def _touch(self) -> None:
+        """Marks the trie as modified so cached derived indexes are rebuilt."""
+        self._mod_count = getattr(self, '_mod_count', 0) + 1
+
     def _set_node(self,
                   key: K,
                   value: V,
@@ -1271,6 +1395,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
             node = node.children.require(node, step)
         if node.value is _NOVAL or not only_if_missing:
             node.value = value
+        self._touch()
         return node
 
     def _set_node_if_no_prefix(self: 'Trie[K, _t.Literal[True], S]',
@@ -1293,6 +1418,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
         except StopIteration:
             node.value = True
             node.children = _NO_CHILDREN
+        self._touch()
 
     def __iter__(self) -> _t.Iterator[K]:
         return self.iterkeys()
@@ -1714,6 +1840,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
         try:
             _, trace = self._get_node(key)
             value = self._pop_value(trace)
+            self._touch()
             if _is_value(value):
                 return value
             raise ShortKeyError(key)
@@ -1746,6 +1873,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
             trace.append((step, node))
         key = self._key_from_path((step for step, _ in trace[1:]))
         self._pop_value(trace)
+        self._touch()
         return key, value
 
     def __delitem__(self, key_or_slice: K | 'slice[K, None, None]') -> None:
@@ -1789,6 +1917,7 @@ class Trie(_t.Generic[K, V, S], _abc.MutableMapping[K, V]):
         elif node.value is _NOVAL:
             raise ShortKeyError(key)
         self._pop_value(trace)
+        self._touch()
 
     # Re-exported here mostly for backwards compatibility.
     _Step: _t.TypeAlias = _Step
@@ -2340,12 +2469,217 @@ class CharTrie(Trie[str, V, str]):
         >>> trie.keys()
         ['foo', 'bar']
 
+    The class additionally supports looking up canonical decompositions of
+    prefixes of a string while retaining information about where each match
+    ended in the original string.  See :func:`nfd_prefixes`.
+
     **Typing:** The class takes one generic argument ``V``.  It specifies the
     type of values stored in the trie.  The key type is ``str``.
     """
 
+    _nfd_index: _PrefixHashIndex[V]
+
+    def __init__(self, other: _Other[str, V]=(), /, **kwargs: V) -> None:
+        """Initialises the trie.
+
+        Arguments are interpreted the same way :func:`Trie.update` interprets
+        them.
+        """
+        super().__init__(other, **kwargs)
+        self._nfd_index = _PrefixHashIndex()
+
     def _key_from_path(self, path: _t.Iterable[str]) -> str:
         return ''.join(path)
+
+    def nfd_prefixes(
+            self, text: str | bytes | bytearray
+    ) -> _t.Iterator[NFDPrefixMatch[V]]:
+        """Finds keys matching canonical decompositions of prefixes of a text.
+
+        The trie is expected to contain keys in Unicode NFD form (e.g. after
+        ``unicodedata.normalize('NFD', key)``).  For every position in
+        ``text`` that ends at a boundary of an original character (as opposed
+        to a position in the middle of a character's decomposition), this
+        normalises ``text[:end]`` to NFD and yields the key equal to that
+        normalisation if it exists in the trie.
+
+        Normalising the whole text at once and finding its prefixes is not
+        sufficient.  Canonical reordering can move a combining mark which
+        occurs later in the original text before an earlier one (e.g. U+0327
+        and U+0301 both combine with a preceding ``a`` but have different
+        combining classes).  A key made of the reordered prefix may therefore
+        be a prefix of the normalised text even though no original-character
+        boundary produces that key.  Conversely, a key which does match needs
+        to be reported at the byte offset where the original text ends.
+
+        This method reports only genuine matches.  Each result carries the
+        original character's UTF-8 byte end offset (``byte_end``), the matching
+        key and the value associated with it.  If several business identifiers
+        are stored as a value, the value is returned unmodified, so all
+        identifiers are retained.
+
+        Complexity is linear in the length of the text plus the number of
+        matches (and the size of the trie when the cached index needs to be
+        rebuilt after the trie has been modified).  In particular, scanning
+        a long run of combining marks does not perform work quadratic in the
+        text length and the trie itself is not copied for each query.  The
+        index is shared by all queries on the same trie and invalidated lazily
+        when the trie is changed.
+
+        Example::
+
+            >>> import unicodedata
+            >>> import pygtrie
+            >>> t = pygtrie.CharTrie()
+            >>> t[unicodedata.normalize('NFD', 'a\\u0301')] = 'A-ACUTE'
+            >>> t[unicodedata.normalize('NFD', 'a\\u0327')] = 'A-CEDILLA'
+            >>> text = 'a\\u0301\\u0327tail'
+            >>> list(t.nfd_prefixes(text))
+            [NFDPrefixMatch(byte_end=3, key='a\\u0301', value='A-ACUTE')]
+
+        Args:
+            text: A valid UTF-8 string (or its UTF-8 bytes) to scan from its
+                beginning.
+
+        Returns:
+            An iterator of :class:`NFDPrefixMatch` objects ordered by the byte
+            offset at which they end.  Multiple keys ending at the same offset
+            are reported in unspecified order.
+
+        Raises:
+            TypeError: If ``text`` is not a string or byte-like object.
+            UnicodeDecodeError: If ``text`` is bytes but not valid UTF-8.
+        """
+        if isinstance(text, (bytes, bytearray)):
+            text = bytes(text).decode('utf-8')
+        elif not isinstance(text, str):
+            raise TypeError('text must be a string or valid UTF-8 bytes')
+
+        index = self._nfd_index
+        index._ensure_current(self)  # pylint: disable=protected-access
+        return self._scan_nfd_prefixes(text, index)
+
+    nfd_matches = nfd_prefixes
+    nfd_prefix_scan = nfd_prefixes
+
+    def _scan_nfd_prefixes(
+            self,
+            text: str,
+            index: _PrefixHashIndex[V],
+    ) -> _t.Iterator[NFDPrefixMatch[V]]:
+        """Implements :func:`nfd_prefixes` using a prebuilt hash index."""
+        # pylint: disable=protected-access
+        mul1, mul2 = _PrefixHashIndex._MUL1, _PrefixHashIndex._MUL2
+        mask = _PrefixHashIndex._MASK
+        # pylint: enable=protected-access
+
+        # Powers of the hash multipliers.  Index ``i`` holds mul**i mod 2**64.
+        pow1 = [1]
+        pow2 = [1]
+
+        def ensure_powers(n: int) -> None:
+            while len(pow1) <= n:
+                pow1.append((pow1[-1] * mul1) & mask)
+                pow2.append((pow2[-1] * mul2) & mask)
+
+        # Hash of the current canonical prefix.  ``completed`` holds the part
+        # made of preceding characters, while the current character is being
+        # decomposed into ``starter`` followed by combining marks grouped by
+        # their canonical combining class.
+        completed_h1 = completed_h2 = completed_len = 0
+        starter: str | None = None
+        starter_cp = 0
+
+        # The current character's combining marks.  Canonical ordering groups
+        # marks by combining class and preserves order within each class.  To
+        # compute the canonical order without re-sorting a growing prefix at
+        # every boundary, bucket marks by class.  The classes are stored in
+        # sorted order in ``active_classes``; each bucket keeps its own hash and
+        # length.  Rebuilding only the digest walks the (few) active classes,
+        # not all marks seen so far.
+        class_hash1 = [0] * 256
+        class_hash2 = [0] * 256
+        class_len = [0] * 256
+        active_classes: list[int] = []
+
+        def current_digest() -> tuple[int, int, int]:
+            """Returns hash and length of current character's decomposition."""
+            h1 = starter_cp
+            h2 = starter_cp
+            length = 1 if starter is not None else 0
+            for ccc in active_classes:
+                n = class_len[ccc]
+                ensure_powers(n)
+                h1 = (h1 * pow1[n] + class_hash1[ccc]) & mask
+                h2 = (h2 * pow2[n] + class_hash2[ccc]) & mask
+                length += n
+            return h1, h2, length
+
+        def finish_character() -> None:
+            """Merges the current character into the completed prefix."""
+            nonlocal completed_h1, completed_h2, completed_len
+            nonlocal starter, starter_cp
+            h1, h2, length = current_digest()
+            if length:
+                ensure_powers(length)
+                completed_h1 = (completed_h1 * pow1[length] + h1) & mask
+                completed_h2 = (completed_h2 * pow2[length] + h2) & mask
+                completed_len += length
+            for ccc in active_classes:
+                class_hash1[ccc] = 0
+                class_hash2[ccc] = 0
+                class_len[ccc] = 0
+            active_classes.clear()
+            starter = None
+            starter_cp = 0
+
+        def full_digest() -> tuple[int, int, int]:
+            """Returns digest of the whole prefix processed so far.
+
+            Always called after at least one character has been processed, so
+            ``length`` is non-zero.
+            """
+            h1, h2, length = current_digest()
+            ensure_powers(length)
+            return (completed_len + length,
+                    (completed_h1 * pow1[length] + h1) & mask,
+                    (completed_h2 * pow2[length] + h2) & mask)
+
+        def check(byte_end: int,
+                  char_end: int) -> _t.Iterator[NFDPrefixMatch[V]]:
+            yield from index.lookup(full_digest(), text, char_end, byte_end)
+
+        # Only ends of original characters are considered; the position before
+        # the first character is not an end of any character.
+        byte_end = 0
+        for char_end, character in enumerate(text, 1):
+            for decomposed in _unicodedata.normalize('NFD', character):
+                ccc = _unicodedata.combining(decomposed)
+                cp = ord(decomposed)
+                if ccc == 0:
+                    finish_character()
+                    starter = decomposed
+                    starter_cp = cp
+                else:
+                    if not class_len[ccc]:
+                        _bisect.insort(active_classes, ccc)
+                    class_hash1[ccc] = (class_hash1[ccc] * mul1 + cp) & mask
+                    class_hash2[ccc] = (class_hash2[ccc] * mul2 + cp) & mask
+                    class_len[ccc] += 1
+            byte_end += len(character.encode('utf-8'))
+            yield from check(byte_end, char_end)
+
+
+def nfd_prefixes(
+        trie: CharTrie[V],
+        text: str | bytes | bytearray,
+) -> _t.Iterator[NFDPrefixMatch[V]]:
+    """Finds NFD prefix matches of ``text`` in ``trie``.
+
+    This is equivalent to :func:`CharTrie.nfd_prefixes` and is provided for
+    callers which keep the trie as a separate catalog object.
+    """
+    return trie.nfd_prefixes(text)
 
 
 class StringTrie(Trie[str, V, str]):
