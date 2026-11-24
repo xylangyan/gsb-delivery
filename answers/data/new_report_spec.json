@@ -1,0 +1,45 @@
+{
+  "intervals": [
+    [
+      0.0,
+      4.0
+    ],
+    [
+      4.0,
+      8.0
+    ]
+  ],
+  "new_calibration": [
+    {
+      "range": [
+        0.0,
+        4.0
+      ],
+      "scale": 1.1,
+      "offset": 0.2
+    },
+    {
+      "range": [
+        4.0,
+        8.0
+      ],
+      "scale": 0.95,
+      "offset": 0.05
+    }
+  ],
+  "flow_calibration": "extend_nearest_interval",
+  "error_mode": "kERRORMEAN",
+  "stat_overflows": "kConsider",
+  "output_bin_edges": [
+    0.0,
+    2.0,
+    4.0,
+    6.0,
+    8.0
+  ],
+  "groups": [
+    "temp",
+    "humid",
+    "press"
+  ]
+}
