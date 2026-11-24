@@ -229,6 +229,20 @@ class TextFixerConfig(NamedTuple):
     max_decode_length: int = 1000000
     explain: bool = True
 
+    def fix_volume(self, source: Any = None, **kwargs: Any) -> Any:
+        """Spool and fix one complete large volume."""
+        from ftfy.streaming import fix_volume as _fix_volume
+
+        return _fix_volume(source, self, **kwargs)
+
+    def stream_fix_and_explain(self, source: Any = None, **kwargs: Any) -> Any:
+        """Alias for :meth:`fix_volume`."""
+        return self.fix_volume(source, **kwargs)
+
+    def fix_and_explain_stream(self, source: Any = None, **kwargs: Any) -> Any:
+        """Alias for :meth:`fix_volume`."""
+        return self.fix_volume(source, **kwargs)
+
 
 def _config_from_kwargs(config: TextFixerConfig, kwargs: dict[str, Any]) -> TextFixerConfig:
     """
@@ -375,6 +389,22 @@ def fix_and_explain(
         config = TextFixerConfig()
     if isinstance(text, bytes):
         raise UnicodeError(BYTES_ERROR_TEXT)
+
+    stream_requested = kwargs.pop("stream", False) or kwargs.pop("spool", False)
+    looks_like_chunk_source = (
+        not isinstance(text, str)
+        and not isinstance(text, bytes)
+        and (
+            hasattr(text, "read")
+            or hasattr(text, "__iter__")
+            or hasattr(text, "__fspath__")
+        )
+    )
+    if stream_requested or looks_like_chunk_source:
+        from ftfy.streaming import fix_volume as _fix_volume
+
+        return _fix_volume(text, config, **kwargs)
+
     config = _config_from_kwargs(config, kwargs)
 
     if config.unescape_html == "auto" and "<" in text:
@@ -795,3 +825,61 @@ def explain_unicode(text: str) -> None:
                 name=unicodedata.name(char, "<unknown>"),
             )
         )
+
+
+from ftfy.streaming import (  # noqa: E402
+    ChunkIterator,
+    LargeTextFixer,
+    SpooledFixer,
+    SpooledTextFixer,
+    StreamFixResult,
+    StreamingFixer,
+    StreamingTextFixer,
+    VolumeFixer,
+    chunked_fix_and_explain,
+    fix_and_explain_chunked,
+    fix_and_explain_in_stream,
+    fix_and_explain_spooled,
+    fix_and_explain_stream,
+    fix_large_text,
+    fix_volume,
+    fix_volume_and_explain,
+    iter_fixed_utf8,
+    stream_fix_and_explain,
+    streaming_fix_and_explain,
+)
+from ftfy.streaming import *  # noqa: E402,F403
+
+__all__ = [
+    "ChunkIterator",
+    "ExplanationStep",
+    "ExplainedText",
+    "FIXERS",
+    "LargeTextFixer",
+    "SpooledFixer",
+    "SpooledTextFixer",
+    "StreamFixResult",
+    "StreamingFixer",
+    "StreamingTextFixer",
+    "TextFixerConfig",
+    "VolumeFixer",
+    "apply_plan",
+    "chunked_fix_and_explain",
+    "fix_and_explain",
+    "fix_and_explain_chunked",
+    "fix_and_explain_in_stream",
+    "fix_and_explain_spooled",
+    "fix_and_explain_stream",
+    "fix_encoding",
+    "fix_encoding_and_explain",
+    "fix_file",
+    "fix_large_text",
+    "fix_text",
+    "fix_text_segment",
+    "fix_volume",
+    "fix_volume_and_explain",
+    "guess_bytes",
+    "iter_fixed_utf8",
+    "stream_fix_and_explain",
+    "streaming_fix_and_explain",
+]
