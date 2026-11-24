@@ -70,6 +70,7 @@ from ._utils.time import (  # noqa # import needed for backwards compat
     current_time_millis,
     millis_to_seconds,
 )
+from .inventory import HandoverLedger, InventoryQuery, answer_queries, query_inventory
 
 __author__ = "The python-zeroconf authors"  # full history in COPYING and git
 __maintainer__ = "J. Nick Koston <nick@koston.org>"
@@ -84,7 +85,9 @@ __all__ = [
     # Exceptions
     "Error",
     "EventLoopBlocked",
+    "HandoverLedger",
     "IPVersion",
+    "InventoryQuery",
     "IncomingDecodeError",
     "InterfaceChoice",
     "NamePartTooLongException",
@@ -100,5 +103,7 @@ __all__ = [
     "Zeroconf",
     "ZeroconfServiceTypes",
     "__version__",
+    "answer_queries",
     "current_time_millis",
+    "query_inventory",
 ]

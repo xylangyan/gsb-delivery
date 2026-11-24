@@ -1,0 +1,81 @@
+{
+  "offset_range": [1, 2],
+  "cleanups": [2001],
+  "queries": [
+    {
+      "id": "at-2099",
+      "at": 2099,
+      "service": "inst._tcp.local.",
+      "txt_hex": "76657273696f6e3d6e6577",
+      "ipv4": "1.2.3.4"
+    },
+    {
+      "id": "at-2100",
+      "at": 2100,
+      "service": "inst._tcp.local.",
+      "txt_hex": "76657273696f6e3d6e6577",
+      "ipv4": "1.2.3.4"
+    }
+  ],
+  "packets": [
+    {
+      "id": "a-old",
+      "source": "a",
+      "seq": 1,
+      "time": 1000,
+      "records": [
+        {"type": "A", "name": "host.local.", "address": "1.2.3.4", "ttl": 1},
+        {
+          "type": "SRV",
+          "name": "inst._tcp.local.",
+          "target": "host.local.",
+          "port": 80,
+          "ttl": 1000000
+        }
+      ]
+    },
+    {
+      "id": "b-flush-new-address",
+      "source": "b",
+      "seq": 1,
+      "time": 2000,
+      "records": [
+        {
+          "type": "A",
+          "name": "host.local.",
+          "address": "5.6.7.8",
+          "ttl": 1000000,
+          "cache_flush": true
+        }
+      ]
+    },
+    {
+      "id": "a-new-txt",
+      "source": "a",
+      "seq": 2,
+      "time": 2099,
+      "records": [
+        {
+          "type": "TXT",
+          "name": "inst._tcp.local.",
+          "txt_hex": "76657273696f6e3d6e6577",
+          "ttl": 1000000
+        }
+      ]
+    },
+    {
+      "id": "b-txt-withdraw",
+      "source": "b",
+      "seq": 2,
+      "time": 2099,
+      "records": [
+        {
+          "type": "TXT",
+          "name": "inst._tcp.local.",
+          "txt_hex": "76657273696f6e3d6e6577",
+          "ttl": 0
+        }
+      ]
+    }
+  ]
+}
