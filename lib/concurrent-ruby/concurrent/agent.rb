@@ -55,6 +55,35 @@ module Concurrent
   #
   # Unlike in Clojure, `Agent` cannot participate in `Concurrent::TVar` transactions.
   #
+  # ## Tracked Dispatches and Receipts
+  #
+  # The tracked variants of the send methods (`#send_tracked`,
+  # `#send_off_tracked`, `#send_via_tracked` and their bang counterparts)
+  # return an {Agent::Receipt} instead of a bare boolean. A receipt is the
+  # batch-level acknowledgement of one piece of material: it reports the
+  # outcome of the action which was directly dispatched (the root of the
+  # batch) together with every follow-on action that was actually accepted,
+  # i.e. every action nested by an already accepted action, directly or
+  # transitively, on any Agent.
+  #
+  # Follow-on work is always attributed to the receipt of the action which
+  # actually caused it to be enqueued. A second dispatch made by the same
+  # thread, and work that happens to be interleaved into the same Agents from
+  # other threads, keep their own receipts and never appear on this one.
+  #
+  # A follow-on action is held back and cannot touch its Agent until the
+  # enclosing action has actually run and passed its own Agent's validation.
+  # If the enclosing action raises or fails validation, none of the work it
+  # dispatched is processed: the enclosing action is reported as rejected and
+  # the held work is reported as cancelled. Once the enclosing action is
+  # accepted, the held work is released and reported according to its own
+  # fate.
+  #
+  # Waiting on a receipt never blocks an Agent action and may time out: the
+  # same receipt can be queried again later. When a failed Agent is restarted,
+  # queued work that is retained is still awaited to completion; work discarded
+  # with `:clear_actions` is reported, item by item, as cancelled.
+  #
   # ## Example
   #
   # ```
@@ -141,7 +170,7 @@ module Concurrent
   # @!macro thread_safe_variable_comparison
   #
   # @see http://clojure.org/Agents Clojure Agents
-  # @see http://clojure.org/state Values and Change - Clojure's approach to Identity and State
+  # @see http://clojure.org/state Values and Change - Clojure's approach to Identity and Change
   class Agent < Synchronization::LockableObject
     include Concern::Observable
 
@@ -160,8 +189,225 @@ module Concurrent
     DEFAULT_VALIDATOR = ->(value) { true }
     private_constant :DEFAULT_VALIDATOR
 
-    Job = Struct.new(:action, :args, :executor, :caller)
+    # Status of an action whose body completed and whose new value passed the
+    # validator of the Agent it ran on.
+    COMPLETED = :completed
+    private_constant :COMPLETED
+
+    # Status of an action whose body raised, or whose returned value failed the
+    # validator of the Agent it ran on.
+    REJECTED = :rejected
+    private_constant :REJECTED
+
+    # Status of an enqueued, not yet started action that was discarded before it
+    # could run, either because the action that dispatched it was rejected or
+    # because the failed Agent holding it was restarted with `:clear_actions`.
+    CANCELLED = :cancelled
+    private_constant :CANCELLED
+
+    # Status of an action that is still queued or running.
+    PENDING = :pending
+    private_constant :PENDING
+
+    Job = Struct.new(:action, :args, :executor, :caller, :receipt, :outcome,
+                     :agent, :gate, :posted)
     private_constant :Job
+
+    # Receipt and gate of the tracked action currently running on this thread.
+    # These are shared across every Agent because an action running on one
+    # Agent may dispatch follow-on work to a different Agent from the same
+    # thread.
+    CURRENT_RECEIPT = Concurrent::ThreadLocalVar.new(nil)
+    private_constant :CURRENT_RECEIPT
+
+    CURRENT_GATE = Concurrent::ThreadLocalVar.new(nil)
+    private_constant :CURRENT_GATE
+
+    # Holds the follow-on jobs dispatched during one tracked action until the
+    # action's validation result is known. A closed gate blocks every job
+    # carrying it from being posted to an executor.
+    #
+    # @!visibility private
+    class Gate
+      def initialize
+        @open = Concurrent::AtomicReference.new(false)
+        @jobs = []
+      end
+
+      def open?
+        @open.value
+      end
+
+      def open!
+        @open.value = true
+      end
+
+      def add(job)
+        @jobs << job
+      end
+
+      def jobs
+        @jobs.dup
+      end
+    end
+    private_constant :Gate
+
+    # One reported line of an {Agent::Receipt}: the fate of a single action
+    # within the batch identified by the receipt.
+    #
+    # The root action is reported first. Every further entry is a follow-on
+    # action that was actually accepted, attributed to the Agent it ran on.
+    class ReceiptItem
+      # @return [Agent] the Agent on which the action was dispatched
+      attr_reader :agent
+      # @return [Symbol] one of `:completed`, `:rejected`, `:cancelled`, `:pending`
+      attr_reader :status
+      # @return [Object] the validated new value when `:completed`
+      attr_reader :value
+      # @return [Exception, nil] the error raised by the action or validation
+      attr_reader :error
+
+      # @!visibility private
+      def initialize(agent, status, value = nil, error = nil)
+        @agent  = agent
+        @status = status
+        @value  = value
+        @error  = error
+      end
+
+      # @return [Boolean] true when the action ran and passed validation
+      def completed?
+        status == COMPLETED
+      end
+
+      # @return [Boolean] true when the action raised or failed validation
+      def rejected?
+        status == REJECTED
+      end
+
+      # @return [Boolean] true when the action was discarded before running
+      def cancelled?
+        status == CANCELLED
+      end
+
+      # @return [Boolean] true when the action has not reached a final state yet
+      def pending?
+        status == PENDING
+      end
+
+      # @!visibility private
+      def settle(status, value = nil, error = nil)
+        @status = status
+        @value  = value
+        @error  = error
+      end
+    end
+
+    # The batch acknowledgement returned by the tracked send methods. A receipt
+    # covers one directly dispatched root action and every follow-on action it
+    # actually caused, across every Agent involved.
+    #
+    # A receipt is queryable at any time. Until every attributed action has a
+    # final state, waits may time out and the same receipt can be waited on
+    # again later.
+    class Receipt < Synchronization::LockableObject
+      # @!visibility private
+      def initialize
+        super()
+        @items      = []
+        @root       = nil
+        @finalized = false
+      end
+
+      # The outcome of the root action, once it has been processed.
+      #
+      # @return [Agent::ReceiptItem, nil] nil while the root action has not run
+      def root
+        synchronize { @root }
+      end
+
+      # A snapshot of every action attributed to this receipt at the time of the
+      # call. The root action, when processed, is always first. Follow-on
+      # actions appear in the order they were accepted.
+      #
+      # @return [Array<Agent::ReceiptItem>]
+      def items
+        synchronize { @items.dup }
+      end
+
+      # Blocks until every attributed action has reached a final state, or the
+      # timeout elapses. Never raises on timeout; the same receipt can be waited
+      # on again.
+      #
+      # @param [Float, nil] timeout the maximum number of seconds to wait,
+      #   nil waits indefinitely
+      # @return [Boolean] true when the receipt is complete, false on timeout
+      def wait(timeout = nil)
+        deadline = timeout ? Concurrent.monotonic_time + timeout.to_f : nil
+        synchronize do
+          loop do
+            return true if @finalized
+            remaining = deadline ? deadline - Concurrent.monotonic_time : nil
+            return false if remaining && remaining <= 0
+            ns_wait(remaining)
+          end
+        end
+      end
+
+      # @return [Boolean] true when every attributed action has a final state
+      def complete?
+        synchronize { @finalized }
+      end
+
+      # True only when the root action is settled and accepted, and every
+      # accepted follow-on action is also completed. This is the acceptance
+      # condition: the root is decided and every accepted follow-on has a
+      # concrete, successful destination.
+      #
+      # @return [Boolean]
+      def accepted?
+        synchronize do
+          @finalized && @root && @root.completed? && @items.all?(&:completed?)
+        end
+      end
+
+      # @return [Array<Agent::ReceiptItem>] items that never reached completion
+      def outstanding
+        synchronize { @items.reject(&:completed?).dup }
+      end
+
+      # @!visibility private
+      def add_pending(agent)
+        synchronize do
+          item = ReceiptItem.new(agent, PENDING)
+          @items << item
+          item
+        end
+      end
+
+      # @!visibility private
+      def mark_root(item)
+        synchronize do
+          @root = item
+          @items.delete(item)
+          @items.unshift(item)
+        end
+      end
+
+      # @!visibility private
+      def settle(item, status, value = nil, error = nil)
+        synchronize { item.settle(status, value, error) }
+      end
+
+      # @!visibility private
+      def finalize
+        synchronize do
+          @finalized = @root && !@root.pending? && @items.none?(&:pending?)
+          ns_broadcast if @finalized
+          @finalized
+        end
+      end
+    end
 
     # Raised during action processing or any other time in an Agent's lifecycle.
     class Error < StandardError
@@ -333,6 +579,60 @@ module Concurrent
       self
     end
 
+    # Like {#send} but the returned {Agent::Receipt} accounts for this action
+    # and every follow-on action it actually causes.
+    #
+    # @return [Agent::Receipt, nil] the receipt, or nil if the Agent is
+    #   {#failed?} and the action could not be enqueued
+    def send_tracked(*args, &action)
+      enqueue_tracked_action_job(action, args, Concurrent.global_fast_executor)
+    end
+
+    # @see #send_tracked
+    # @raise [Concurrent::Agent::Error] if the Agent is {#failed?}
+    # @return [Agent::Receipt]
+    def send_tracked!(*args, &action)
+      receipt = send_tracked(*args, &action)
+      raise Error.new unless receipt
+      receipt
+    end
+
+    # Like {#send_off} but returns an {Agent::Receipt}, see {#send_tracked}.
+    #
+    # @return [Agent::Receipt, nil]
+    def send_off_tracked(*args, &action)
+      enqueue_tracked_action_job(action, args, Concurrent.global_io_executor)
+    end
+
+    # @see #send_off_tracked
+    # @raise [Concurrent::Agent::Error] if the Agent is {#failed?}
+    # @return [Agent::Receipt]
+    def send_off_tracked!(*args, &action)
+      receipt = send_off_tracked(*args, &action)
+      raise Error.new unless receipt
+      receipt
+    end
+
+    # Like {#send_via} but returns an {Agent::Receipt}, see {#send_tracked}.
+    #
+    # @param [Concurrent::ExecutorService] executor the executor on which the
+    #   action is to be dispatched
+    # @return [Agent::Receipt, nil]
+    def send_via_tracked(executor, *args, &action)
+      enqueue_tracked_action_job(action, args, executor)
+    end
+
+    # @see #send_via_tracked
+    # @raise [Concurrent::Agent::Error] if the Agent is {#failed?}
+    # @param [Concurrent::ExecutorService] executor the executor on which the
+    #   action is to be dispatched
+    # @return [Agent::Receipt]
+    def send_via_tracked!(executor, *args, &action)
+      receipt = send_via_tracked(executor, *args, &action)
+      raise Error.new unless receipt
+      receipt
+    end
+
     # Blocks the current thread (indefinitely!) until all actions dispatched
     # thus far, from this thread or nested by the Agent, have occurred. Will
     # block when {#failed?}. Will never return if a failed Agent is {#restart}
@@ -414,6 +714,10 @@ module Concurrent
     # remain failed with its old {#value} and {#error}. Observers, if any, will
     # not be notified of the new state.
     #
+    # Tracked jobs discarded by a clearing restart are reported on their
+    # receipts as `:cancelled`, identifying the Agent (this one) whose queue
+    # dropped them.
+    #
     # @param [Object] new_value the new value for the Agent once restarted
     # @param [Hash] opts the configuration options
     # @option opts [Symbol] :clear_actions true if all enqueued but unprocessed
@@ -428,7 +732,10 @@ module Concurrent
         raise ValidationError unless ns_validate(new_value)
         @current.value = new_value
         @error.value   = nil
-        @queue.clear if clear_actions
+        if clear_actions
+          ns_cancel_queued_tracked_jobs
+          @queue.clear
+        end
         ns_post_next_job unless @queue.empty?
       end
       true
@@ -509,15 +816,30 @@ module Concurrent
 
     def enqueue_action_job(action, args, executor)
       raise ArgumentError.new('no action given') unless action
-      job = Job.new(action, args, executor, @caller.value || Thread.current.object_id)
+      job = Job.new(action, args, executor, @caller.value || Thread.current.object_id,
+                    nil, nil, self, nil, false)
       synchronize { ns_enqueue_job(job) }
+    end
+
+    def enqueue_tracked_action_job(action, args, executor)
+      raise ArgumentError.new('no action given') unless action
+      receipt = CURRENT_RECEIPT.value || Receipt.new
+      gate    = CURRENT_GATE.value
+      job     = Job.new(action, args, executor,
+                        @caller.value || Thread.current.object_id,
+                        receipt, nil, self, gate, false)
+      synchronize do
+        return nil if failed?
+        ns_enqueue_job(job)
+      end
+      receipt
     end
 
     def enqueue_await_job(latch)
       synchronize do
         if (index = ns_find_last_job_for_thread)
           job = Job.new(AWAIT_ACTION, [latch], Concurrent.global_immediate_executor,
-                        Thread.current.object_id)
+                        Thread.current.object_id, nil, nil, self, nil, false)
           ns_enqueue_job(job, index+1)
         else
           latch.count_down
@@ -530,6 +852,10 @@ module Concurrent
       # a non-nil index means this is an await job
       return false if index.nil? && failed?
       index ||= @queue.length
+      if job.receipt
+        job.outcome = job.receipt.add_pending(self)
+        job.gate.add(job) if job.gate
+      end
       @queue.insert(index, job)
       # if this is the only job, post to executor
       ns_post_next_job if @queue.length == 1
@@ -537,27 +863,50 @@ module Concurrent
     end
 
     def ns_post_next_job
-      @queue.first.executor.post { execute_next_job }
+      return if failed?
+      job = @queue.first
+      return unless job
+      return if job.gate && !job.gate.open?
+      return if job.posted
+      job.posted = true
+      job.executor.post { execute_next_job }
     end
 
     def execute_next_job
       job       = synchronize { @queue.first }
+      return unless job
       old_value = @current.value
+      gate      = nil
 
-      @caller.value = job.caller # for nested actions
-      new_value     = job.action.call(old_value, *job.args)
-      @caller.value = nil
+      previous_caller  = @caller.value
+      previous_receipt = CURRENT_RECEIPT.value
+      previous_gate    = CURRENT_GATE.value
+      @caller.value      = job.caller # for nested actions
+      CURRENT_RECEIPT.value = job.receipt
+      gate               = job.receipt ? Gate.new : nil
+      CURRENT_GATE.value  = gate
+      begin
+        new_value = job.action.call(old_value, *job.args)
+      ensure
+        @caller.value        = previous_caller
+        CURRENT_RECEIPT.value = previous_receipt
+        CURRENT_GATE.value    = previous_gate
+      end
 
       return if new_value == AWAIT_FLAG
 
       if ns_validate(new_value)
         @current.value = new_value
         observers.notify_observers(Time.now, old_value, new_value)
+        ns_accept_tracked_job(job, new_value, gate) if job.receipt
       else
-        handle_error(ValidationError.new)
+        error = ValidationError.new
+        handle_error(error)
+        ns_reject_tracked_job(job, error, gate) if job.receipt
       end
     rescue => error
       handle_error(error)
+      ns_reject_tracked_job(job, error, gate) if job&.receipt
     ensure
       synchronize do
         @queue.shift
@@ -565,6 +914,48 @@ module Concurrent
           ns_post_next_job
         end
       end
+    end
+
+    # Record the accepted outcome of a tracked job and release every follow-on
+    # job it dispatched; they were held until this action passed validation.
+    def ns_accept_tracked_job(job, new_value, gate)
+      receipt = job.receipt
+      receipt.mark_root(job.outcome) if receipt.root.nil?
+      receipt.settle(job.outcome, COMPLETED, new_value, nil)
+      if gate
+        gate.open!
+        gate.jobs.each { |gated| gated.agent.release_gated_job(gated) }
+      end
+      receipt.finalize
+    end
+
+    # Record the rejected outcome of a tracked job. None of the follow-on jobs
+    # it dispatched may run, so remove them from their Agents' queues and report
+    # them as cancelled.
+    def ns_reject_tracked_job(job, error, gate)
+      receipt = job.receipt
+      receipt.mark_root(job.outcome) if receipt.root.nil?
+      if gate
+        gate.jobs.each do |gated|
+          gated.agent.cancel_gated_job(gated)
+          receipt.settle(gated.outcome, CANCELLED) if gated.outcome
+        end
+      end
+      receipt.settle(job.outcome, REJECTED, nil, error)
+      receipt.finalize
+    end
+
+    # Restart with `:clear_actions`: every still-queued tracked job is dropped.
+    # Settle its receipt item as cancelled so waiting receipts can finish.
+    def ns_cancel_queued_tracked_jobs
+      touched = {}
+      @queue.each do |queued|
+        receipt = queued.receipt
+        next unless receipt
+        receipt.settle(queued.outcome, CANCELLED) if queued.outcome
+        touched[receipt] = true
+      end
+      touched.each_key(&:finalize)
     end
 
     def ns_validate(value)
@@ -583,6 +974,29 @@ module Concurrent
 
     def ns_find_last_job_for_thread
       @queue.rindex { |job| job.caller == Thread.current.object_id }
+    end
+
+    public
+
+    # @!visibility private
+    #
+    # Called by the Agent running the action that dispatched `job` once that
+    # action has passed validation. Posts `job` if it is still the head of this
+    # Agent's queue; otherwise the normal queue chain will pick it up.
+    def release_gated_job(job)
+      synchronize { ns_post_next_job if @queue.first.equal?(job) }
+    end
+
+    # @!visibility private
+    #
+    # Called by the Agent running the action that dispatched `job` when that
+    # action was rejected. Removes the never-started job from this queue and
+    # keeps the remaining queue moving.
+    def cancel_gated_job(job)
+      synchronize do
+        removed = @queue.delete(job)
+        ns_post_next_job if removed && !@queue.empty? && !failed?
+      end
     end
   end
 end
