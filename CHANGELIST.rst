@@ -1,3 +1,10 @@
+Unreleased
+~~~~~~~~~~
+
+- ``capture_http`` now binds each recorded request to the archive active when the request is actually sent, independent of which thread opened the pooled connection or which thread later reads the response. Each request/response pair gets its own recorder, so a response finished on a background thread after the capturing scope exits is still written to the correct archive.
+- A response body read only partially is now written with a ``WARC-Truncated`` header while keeping the original HTTP headers and every byte actually received; full reads, chunked completion, HEAD and zero-length responses are distinguished from truncation.
+- Repeated response closes write each pair only once, pooled connections keep working unchanged when recording is disabled, exceptions in one capture flush its in-flight interactions without affecting other captures, and a file opened by the library is closed only after every interaction it accepted has been written (caller-supplied writers remain caller-owned).
+
 1.8.2
 ~~~~~
 
