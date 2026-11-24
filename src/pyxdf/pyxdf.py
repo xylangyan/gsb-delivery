@@ -10,6 +10,7 @@
 This function is closely following the load_xdf reference implementation.
 """
 
+import copy
 import functools
 import gzip
 import io
@@ -123,6 +124,17 @@ def load_xdf(
     clock_reset_threshold_offset_stds=10,
     winsor_threshold=0.0001,
     verbose=None,
+    archive=None,
+    use_archive=False,
+    archive_reader=None,
+    range_reader=None,
+    window=None,
+    time_window=None,
+    start_time=None,
+    end_time=None,
+    exclusions=None,
+    excluded_ranges=None,
+    exclude=None,
 ):
     """Import an XDF file.
 
@@ -235,6 +247,43 @@ def load_xdf(
         >>> streams, fileheader = load_xdf('myrecording.xdf')
     """
     logger.info(f"Importing XDF file {filename}...")
+
+    if (
+        use_archive
+        or archive is not None
+        or archive_reader is not None
+        or range_reader is not None
+        or window is not None
+        or time_window is not None
+        or start_time is not None
+        or exclusions is not None
+        or excluded_ranges is not None
+        or exclude is not None
+    ):
+        return _load_xdf_via_archive(
+            filename,
+            select_streams=select_streams,
+            archive=archive,
+            archive_reader=archive_reader,
+            range_reader=range_reader,
+            window=window,
+            time_window=time_window,
+            start_time=start_time,
+            end_time=end_time,
+            exclusions=exclusions,
+            excluded_ranges=excluded_ranges,
+            exclude=exclude,
+            synchronize_clocks=synchronize_clocks,
+            handle_clock_resets=handle_clock_resets,
+            dejitter_timestamps=dejitter_timestamps,
+            jitter_break_threshold_seconds=jitter_break_threshold_seconds,
+            jitter_break_threshold_samples=jitter_break_threshold_samples,
+            clock_reset_threshold_seconds=clock_reset_threshold_seconds,
+            clock_reset_threshold_stds=clock_reset_threshold_stds,
+            clock_reset_threshold_offset_seconds=clock_reset_threshold_offset_seconds,
+            clock_reset_threshold_offset_stds=clock_reset_threshold_offset_stds,
+            winsor_threshold=winsor_threshold,
+        )
 
     # if select_streams is an int or a list of int, load only streams associated with
     # the corresponding stream IDs
@@ -1143,3 +1192,91 @@ def _read_chunks(f):
 def _parse_streamheader(xml):
     """Parse stream header XML."""
     return {el.tag: el.text for el in xml if el.tag != "desc"}
+
+
+def _load_xdf_via_archive(filename, **kwargs):
+    """Delegate a window/exclusion query to the reusable archive index."""
+    from .archive import XdfArchive, read_window, register_archive
+
+    select_streams = kwargs.pop("select_streams", None)
+    archive = kwargs.pop("archive", None)
+    reader = kwargs.pop("archive_reader", None) or kwargs.pop("range_reader", None)
+    window = kwargs.pop("window", None) or kwargs.pop("time_window", None)
+    start_time = kwargs.pop("start_time", None)
+    end_time = kwargs.pop("end_time", None)
+    exclusions = (
+        kwargs.pop("exclusions", None)
+        or kwargs.pop("excluded_ranges", None)
+        or kwargs.pop("exclude", None)
+    )
+
+    if window is None and start_time is not None:
+        window = (start_time, end_time if end_time is not None else np.inf)
+    if window is None:
+        window = (-np.inf, np.inf)
+
+    if isinstance(archive, XdfArchive):
+        index = archive
+    elif archive is not None and hasattr(archive, "read_window"):
+        index = archive
+    else:
+        index = register_archive(filename)
+
+    if select_streams is None:
+        stream_ids = list(index.streams)
+    elif isinstance(select_streams, int):
+        stream_ids = [select_streams]
+    else:
+        stream_ids = [int(sid) for sid in select_streams]
+
+    streams = []
+    for stream_id in stream_ids:
+        result = read_window(
+            index,
+            stream_id,
+            window[0],
+            window[1],
+            exclusions=exclusions,
+            reader=reader,
+            **kwargs,
+        )
+        stream_archive = index.get(stream_id) if isinstance(index, XdfArchive) else None
+        header = copy.deepcopy(stream_archive.header) if stream_archive else {}
+        info = header.setdefault("info", {})
+        info["stream_id"] = stream_id
+        info["effective_srate"] = result.effective_srate
+        info["segments"] = result.segments
+        info["clock_segments"] = result.clock_segments
+        stream = dict(header)
+        stream["info"] = info
+        stream["time_series"] = result.time_series
+        stream["time_stamps"] = result.time_stamps
+        stream["sample_indices"] = result.sample_indices
+        if stream_archive is not None:
+            stream["clock_times"] = stream_archive.clock_times
+            stream["clock_values"] = stream_archive.clock_values
+        streams.append(stream)
+    return streams, getattr(index, "fileheader", None)
+
+
+_ARCHIVE_LAZY_NAMES = {
+    "ArchiveIndex",
+    "ByteRange",
+    "XdfArchive",
+    "build_archive",
+    "index_xdf",
+    "open_archive",
+    "read_window",
+    "read_xdf_window",
+    "register_archive",
+    "windowed_load_xdf",
+}
+
+
+def __getattr__(name):
+    """Expose archival helpers from the implementation submodule."""
+    from . import archive as _archive
+
+    if name in _ARCHIVE_LAZY_NAMES or hasattr(_archive, name):
+        return getattr(_archive, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

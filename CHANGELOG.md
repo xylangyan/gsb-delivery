@@ -1,5 +1,6 @@
-## [UNRELEASED] - YYYY-MM-DD
+## [UNRELEASED] - 2026-11-25
 ### Added
+- Add reusable byte-range archive indexing for repeated window queries with original-index sample exclusions, clock synchronization, and jitter removal options
 - Add support for Python 3.15 ([#184](https://github.com/xdf-modules/pyxdf/pull/184) by [Clemens Brunner](https://github.com/cbrnr))
 
 ### Removed
