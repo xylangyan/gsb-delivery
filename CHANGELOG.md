@@ -1,5 +1,6 @@
 ## [UNRELEASED] - YYYY-MM-DD
 ### Added
+- Add `pyxdf.recovery` (`RecoveryJob`, `Replica`, `RecordingArchive`, `recover`) to resolve damaged or incomplete copies of a recording into one view that keeps original values, device times, and unified times apart, reports the volume and byte range behind every observation, distinguishes verified from unverified checks, and reports which conclusion layers a late replica or clock correction changed
 - Add support for Python 3.15 ([#184](https://github.com/xdf-modules/pyxdf/pull/184) by [Clemens Brunner](https://github.com/cbrnr))
 
 ### Removed

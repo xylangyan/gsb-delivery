@@ -38,6 +38,30 @@ plt.show()
 
 Note that you need to have `matplotlib` installed to run this example (which is not a dependency of PyXDF itself).
 
+## Recovering damaged recordings
+
+If a recording exists in several copies (for example two files written to different locations before a power loss) and some regions of a copy are unreadable, `pyxdf.recovery` resolves all copies into one view:
+
+```python
+from pyxdf import RecordingArchive, RecoveryJob, Replica, StreamSpec
+
+archive = RecordingArchive([StreamSpec("uid:eeg", tdiff=0.01, position_origin=0)])
+job = RecoveryJob(
+    [Replica.from_path("first-copy", "recording.xdf")],
+    archive,
+)
+view = job.resolve()
+
+for observation in view.stream("uid:eeg"):
+    print(observation.value, observation.device_time, observation.unified_time)
+
+# A second copy arrives later: the report says which layers changed.
+report = job.merge(Replica.from_path("second-copy", "recording-copy.xdf"))
+print(report.changed_layers(), report.resolved_gaps)
+```
+
+Every observation separates the original sample value, the device time, and the position on the synchronized timeline, and carries the volume identifier and byte range it came from. `view.checks` records which chunk boundaries, clock-offset measurements, and explicit time stamps were verified.
+
 ## Command line interface (CLI)
 
 PyXDF has a command line interface (CLI) with the following commands:
