@@ -385,5 +385,139 @@ RSpec.describe 'Concurrent' do
       expect(ch3.pop_op.value!).to eq 3
       expect(ch3.pop_op.value!).to eq 'ab'
     end
+
+    describe '#pop_pair' do
+      Slip = Struct.new(:batch, :round, :serial)
+
+      def slip(batch, round, serial)
+        Slip.new(batch, round, serial)
+      end
+
+      specify 'takes one matching message from each channel' do
+        originals = Concurrent::Promises::Channel.new 1
+        stamps    = Concurrent::Promises::Channel.new 1
+        original  = slip(:a, 1, 0)
+        stamp     = slip(:a, 1, 0)
+        originals.push original
+        stamps.push stamp
+
+        expect(originals.pop_pair(stamps, 0.5)).to eq [[originals, original], [stamps, stamp]]
+        expect(originals.size).to eq 0
+        expect(stamps.size).to eq 0
+      end
+
+      specify 'waits for the second message' do
+        originals = Concurrent::Promises::Channel.new 1
+        stamps    = Concurrent::Promises::Channel.new 1
+        original  = slip(:a, 1, 0)
+        stamp     = slip(:a, 1, 0)
+        originals.push original
+
+        thread = in_thread { originals.pop_pair stamps, 1 }
+        is_sleeping thread
+        expect(originals.size).to eq 1
+
+        stamps.push stamp
+        expect(thread.value).to eq [[originals, original], [stamps, stamp]]
+        expect(originals.size).to eq 0
+        expect(stamps.size).to eq 0
+      end
+
+      specify 'does not pair different batches or review rounds' do
+        originals = Concurrent::Promises::Channel.new 2
+        stamps    = Concurrent::Promises::Channel.new 2
+        originals.push slip(:a, 1, 0)
+        originals.push slip(:a, 2, 1)
+        stamps.push slip(:b, 1, 2)
+        stamps.push slip(:a, 2, 3)
+
+        expect(originals.pop_pair(stamps, 0.1)).to eq [[originals, slip(:a, 2, 1)], [stamps, slip(:a, 2, 3)]]
+        expect(originals.size).to eq 1
+        expect(stamps.size).to eq 1
+      end
+
+      specify 'accepts an explicit pairing key' do
+        originals = Concurrent::Promises::Channel.new 1
+        stamps    = Concurrent::Promises::Channel.new 1
+        originals.push slip(:a, 1, 0)
+        stamps.push slip(:a, 1, 1)
+
+        expect(originals.pop_pair(stamps, :batch, 0.5)).
+            to eq [[originals, slip(:a, 1, 0)], [stamps, slip(:a, 1, 1)]]
+      end
+
+      specify 'leaves pending pushes and buffered messages if no pair can be taken' do
+        originals = Concurrent::Promises::Channel.new 1
+        stamps    = Concurrent::Promises::Channel.new 1
+        original  = slip(:a, 1, 0)
+        originals.push original
+        pending = originals.push_op slip(:b, 1, 1)
+        expect(pending.pending?).to be_truthy
+
+        expect(originals.try_pop_pair(stamps, 0.1)).to be_nil
+        expect(pending.pending?).to be_truthy
+        expect(originals.size).to eq 1
+        expect(stamps.size).to eq 0
+
+        stamps.push slip(:b, 1, 2)
+        expect(originals.pop_pair(stamps, 0.5)).
+            to eq [[originals, slip(:b, 1, 1)], [stamps, slip(:b, 1, 2)]]
+        expect(pending).to be_fulfilled
+        expect(originals.size).to eq 1
+        expect(originals.pop).to eq original
+      end
+
+      specify 'a timed out claim does not take messages which arrive later' do
+        originals = Concurrent::Promises::Channel.new 1
+        stamps    = Concurrent::Promises::Channel.new 1
+        original  = slip(:a, 1, 0)
+        stamp     = slip(:a, 1, 0)
+        originals.push original
+
+        expect(originals.pop_pair(stamps, 0.01)).to be_nil
+        stamps.push stamp
+        sleep 0.02
+
+        expect(originals.size).to eq 1
+        expect(stamps.size).to eq 1
+        expect(originals.pop_pair(stamps, 0.5)).to eq [[originals, original], [stamps, stamp]]
+      end
+
+      specify 'one occurrence is claimed only once even with overlapping claims' do
+        original1 = Concurrent::Promises::Channel.new 1
+        original2 = Concurrent::Promises::Channel.new 1
+        stamps    = Concurrent::Promises::Channel.new 1
+        original1.push slip(:a, 1, 0)
+        original2.push slip(:a, 1, 0)
+
+        claim1 = original1.pop_pair_op stamps
+        claim2 = original2.pop_pair_op stamps
+        sleep 0.01
+        stamps.push slip(:a, 1, 0)
+        sleep 0.05
+
+        results = [claim1, claim2].map { |claim| claim.fulfilled? ? claim.value : nil }.compact
+        expect(results.size).to eq 1
+        expect(stamps.size).to eq 0
+
+        losing_channel = results.first[0][0].equal?(original1) ? original2 : original1
+        expect(losing_channel.size).to eq 1
+      end
+
+      specify 'keeps the order of ordinary pops and repeated content' do
+        originals = Concurrent::Promises::Channel.new 2
+        stamps    = Concurrent::Promises::Channel.new 2
+        first     = slip(:a, 1, 0)
+        second    = slip(:a, 1, 1)
+        originals.push first
+        originals.push second
+        stamps.push slip(:a, 1, 0)
+        stamps.push slip(:a, 1, 1)
+
+        expect(originals.pop).to eq first
+        expect(originals.pop_pair(stamps, 0.5)).
+            to eq [[originals, second], [stamps, slip(:a, 1, 0)]]
+      end
+    end
   end
 end
