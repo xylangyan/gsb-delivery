@@ -62,7 +62,8 @@ def _get_extended_version_info(version):
 extended_version_info = _get_extended_version_info(__version__)
 version_info = extended_version_info[:3]
 
-__all__ = ['legacy', 'control', 'core', 'backend', 'util', 'libloader']
+__all__ = ['legacy', 'control', 'core', 'backend', 'util', 'libloader',
+           'session']
 
 def _setup_log():
     from usb import _debug
