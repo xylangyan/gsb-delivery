@@ -33,6 +33,19 @@ from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 import pydicom.examples
 from pydicom.filereader import dcmread
 from pydicom.filewriter import dcmwrite
+from pydicom.nightshift.conversion_entry import (
+    convert_binary_seg_to_labelmap,
+    plan_labelmap_delivery,
+    seg_to_labelmap,
+)
+from pydicom.nightshift.delivery import (
+    deliver_plan,
+    preview_delivery,
+    read_delivery_index,
+    restore_check,
+)
+from pydicom.nightshift.dicom_io import read_binary_seg, read_labelmap, write_labelmap
+from pydicom.nightshift.planner import plan_batch, plan_delivery
 from pydicom.pixels.utils import pixel_array, iter_pixels
 from pydicom.sequence import Sequence
 
@@ -51,6 +64,18 @@ __all__ = [
     "Sequence",
     "dcmread",
     "dcmwrite",
+    "convert_binary_seg_to_labelmap",
+    "plan_labelmap_delivery",
+    "seg_to_labelmap",
+    "plan_batch",
+    "plan_delivery",
+    "preview_delivery",
+    "deliver_plan",
+    "read_binary_seg",
+    "read_labelmap",
+    "write_labelmap",
+    "read_delivery_index",
+    "restore_check",
     "pixel_array",
     "iter_pixels",
     "__version__",
