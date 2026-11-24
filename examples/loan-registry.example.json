@@ -1,0 +1,99 @@
+{
+  "window": {
+    "start": "1900-03-01",
+    "end": "1900-03-12"
+  },
+  "symbol_ranges": {
+    "?": {
+      "before": 1,
+      "after": 1
+    },
+    "~": {
+      "before": 2,
+      "after": 2
+    }
+  },
+  "date_domains": {
+    "march-discrete-days": {
+      "dates": ["1900-03-03", "1900-03-10"]
+    }
+  },
+  "loans": [
+    {
+      "id": "L-A",
+      "item": "A",
+      "order": 1
+    },
+    {
+      "id": "L-B",
+      "item": "B",
+      "order": 1
+    },
+    {
+      "id": "L-C",
+      "item": "C",
+      "order": 1
+    },
+    {
+      "id": "L-D",
+      "item": "D",
+      "order": 1
+    }
+  ],
+  "receipts": [
+    {
+      "id": "R-A",
+      "copies": [
+        {
+          "id": "early-copy",
+          "dates": {
+            "L-A:checkout": "1900-03-03",
+            "L-A:return": "1900-03-05"
+          }
+        },
+        {
+          "id": "late-copy",
+          "dates": {
+            "L-A:checkout": "1900-03-10",
+            "L-A:return": "1900-03-12"
+          }
+        }
+      ]
+    },
+    {
+      "id": "R-BC-joint",
+      "copies": [
+        {
+          "id": "b-copy",
+          "dates": {
+            "L-B:checkout": "1900-03-03",
+            "L-B:return": "1900-03-07",
+            "L-C:checkout": "1900-03-07",
+            "L-C:return": "1900-03-10"
+          }
+        },
+        {
+          "id": "c-copy",
+          "dates": {
+            "L-B:checkout": "1900-03-01",
+            "L-B:return": "1900-03-06",
+            "L-C:checkout": "1900-03-06",
+            "L-C:return": "1900-03-10"
+          }
+        }
+      ]
+    },
+    {
+      "id": "R-D",
+      "copies": [
+        {
+          "id": "only-copy",
+          "dates": {
+            "L-D:checkout": "1900-03-03?",
+            "L-D:return": "1900-03-08"
+          }
+        }
+      ]
+    }
+  ]
+}

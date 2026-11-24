@@ -1,0 +1,1597 @@
+{
+  "window": {
+    "start": "1900-03-01",
+    "end": "1900-03-12"
+  },
+  "calendar": "ISO/Gregorian via python-edtf boundary data",
+  "reported_original_ids": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "blocked_original_ids": [],
+  "daily_runs": [
+    {
+      "date_start": "1900-03-01",
+      "date_end": "1900-03-01",
+      "days": 1,
+      "min_out": 0,
+      "max_out": 1,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B2",
+          "min_out": 0,
+          "max_out": 1
+        },
+        {
+          "component_id": "B3",
+          "min_out": 0,
+          "max_out": 0
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-01",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-01",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "c-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-06",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-01",
+          "L-B:return": "1900-03-06",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-01",
+            "return": "1900-03-06",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-06",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-02",
+      "date_end": "1900-03-02",
+      "days": 1,
+      "min_out": 0,
+      "max_out": 2,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B2",
+          "min_out": 0,
+          "max_out": 1
+        },
+        {
+          "component_id": "B3",
+          "min_out": 0,
+          "max_out": 1
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-02",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-03",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-02",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "c-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-06",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-01",
+          "L-B:return": "1900-03-06",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-01",
+            "return": "1900-03-06",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-06",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": true
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-03",
+      "date_end": "1900-03-03",
+      "days": 1,
+      "min_out": 1,
+      "max_out": 3,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 1
+        },
+        {
+          "component_id": "B2",
+          "min_out": 1,
+          "max_out": 1
+        },
+        {
+          "component_id": "B3",
+          "min_out": 0,
+          "max_out": 1
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-03",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "late-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-10",
+          "L-A:return": "1900-03-12",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-04",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-10",
+            "return": "1900-03-12",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-04",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-03",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": true
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-04",
+      "date_end": "1900-03-04",
+      "days": 1,
+      "min_out": 2,
+      "max_out": 3,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 1
+        },
+        {
+          "component_id": "B2",
+          "min_out": 1,
+          "max_out": 1
+        },
+        {
+          "component_id": "B3",
+          "min_out": 1,
+          "max_out": 1
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-04",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "late-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-10",
+          "L-A:return": "1900-03-12",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-10",
+            "return": "1900-03-12",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": true
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-04",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": true
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-05",
+      "date_end": "1900-03-07",
+      "days": 3,
+      "min_out": 2,
+      "max_out": 2,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B2",
+          "min_out": 1,
+          "max_out": 1
+        },
+        {
+          "component_id": "B3",
+          "min_out": 1,
+          "max_out": 1
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-05",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": true
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-05",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": true
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-08",
+      "date_end": "1900-03-09",
+      "days": 2,
+      "min_out": 1,
+      "max_out": 1,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B2",
+          "min_out": 1,
+          "max_out": 1
+        },
+        {
+          "component_id": "B3",
+          "min_out": 0,
+          "max_out": 0
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-08",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-08",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-10",
+      "date_end": "1900-03-11",
+      "days": 2,
+      "min_out": 0,
+      "max_out": 1,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 1
+        },
+        {
+          "component_id": "B2",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B3",
+          "min_out": 0,
+          "max_out": 0
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-10",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-10",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "late-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-10",
+          "L-A:return": "1900-03-12",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-10",
+            "return": "1900-03-12",
+            "out_on_witness_day": true
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      }
+    },
+    {
+      "date_start": "1900-03-12",
+      "date_end": "1900-03-12",
+      "days": 1,
+      "min_out": 0,
+      "max_out": 0,
+      "batch_counts": [
+        {
+          "component_id": "B1",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B2",
+          "min_out": 0,
+          "max_out": 0
+        },
+        {
+          "component_id": "B3",
+          "min_out": 0,
+          "max_out": 0
+        }
+      ],
+      "min_witness": {
+        "witness_day": "1900-03-12",
+        "bound": "min",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      },
+      "max_witness": {
+        "witness_day": "1900-03-12",
+        "bound": "max",
+        "receipt_set": [
+          "R-A",
+          "R-BC-joint",
+          "R-D"
+        ],
+        "receipt_copies": {
+          "R-A": "early-copy",
+          "R-BC-joint": "b-copy",
+          "R-D": "only-copy"
+        },
+        "endpoints": {
+          "L-A:checkout": "1900-03-03",
+          "L-A:return": "1900-03-05",
+          "L-C:checkout": "1900-03-07",
+          "L-C:return": "1900-03-10",
+          "L-B:checkout": "1900-03-03",
+          "L-B:return": "1900-03-07",
+          "L-D:checkout": "1900-03-02",
+          "L-D:return": "1900-03-08"
+        },
+        "supporting_receipts": {
+          "L-A:checkout": [
+            "R-A"
+          ],
+          "L-A:return": [
+            "R-A"
+          ],
+          "L-B:checkout": [
+            "R-BC-joint"
+          ],
+          "L-B:return": [
+            "R-BC-joint"
+          ],
+          "L-C:checkout": [
+            "R-BC-joint"
+          ],
+          "L-C:return": [
+            "R-BC-joint"
+          ],
+          "L-D:checkout": [
+            "R-D"
+          ],
+          "L-D:return": [
+            "R-D"
+          ]
+        },
+        "loans": [
+          {
+            "loan_id": "L-A",
+            "item_id": "A",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-05",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-B",
+            "item_id": "B",
+            "order": 1,
+            "checkout": "1900-03-03",
+            "return": "1900-03-07",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-C",
+            "item_id": "C",
+            "order": 1,
+            "checkout": "1900-03-07",
+            "return": "1900-03-10",
+            "out_on_witness_day": false
+          },
+          {
+            "loan_id": "L-D",
+            "item_id": "D",
+            "order": 1,
+            "checkout": "1900-03-02",
+            "return": "1900-03-08",
+            "out_on_witness_day": false
+          }
+        ]
+      }
+    }
+  ],
+  "gaps": [],
+  "batches": [
+    {
+      "component_id": "B1",
+      "status": "ok",
+      "receipts": [
+        "R-A"
+      ],
+      "loans": [
+        "L-A"
+      ],
+      "original_ids": [
+        "A"
+      ]
+    },
+    {
+      "component_id": "B2",
+      "status": "ok",
+      "receipts": [
+        "R-BC-joint"
+      ],
+      "loans": [
+        "L-C",
+        "L-B"
+      ],
+      "original_ids": [
+        "B",
+        "C"
+      ]
+    },
+    {
+      "component_id": "B3",
+      "status": "ok",
+      "receipts": [
+        "R-D"
+      ],
+      "loans": [
+        "L-D"
+      ],
+      "original_ids": [
+        "D"
+      ]
+    }
+  ],
+  "segment_count_before_compression": 10
+}
