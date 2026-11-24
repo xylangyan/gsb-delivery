@@ -1,0 +1,68 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require_relative "../lib/pstore/streaming_extract"
+
+# Command line front end for PStoreExtract::StreamingExtract.
+#
+# Usage:
+#   pstore-extract SOURCE DEST --keys :audit,:submission
+#   pstore-extract SOURCE DEST --manifest keys.txt
+#
+# Manifest files contain one root key per line. A line beginning with ":" is
+# a Symbol key; any other non-empty line is a UTF-8 String key. Lines
+# starting with "#" and blank lines are ignored.
+module PStoreExtractCLI
+  module_function
+
+  def run(argv)
+    options = { keys: [] }
+    parser = build_parser(options)
+    paths = parser.parse(argv)
+    if paths.size != 2 || options[:keys].empty?
+      warn parser.to_s
+      return 2
+    end
+    source_path, dest_path = paths
+    result = PStoreExtract::StreamingExtract.extract(
+      source_path: source_path,
+      dest_path: dest_path,
+      keys: options[:keys],
+      report: $stdout
+    )
+    result.faults.any? { |fault| %i[broken_structure dangling_reference].include?(fault.type) } ? 1 : 0
+  rescue PStoreExtract::StreamingExtract::ParseError => error
+    warn "cannot parse source ledger: #{error.message}"
+    2
+  rescue ArgumentError => error
+    warn error.message
+    2
+  end
+
+  def build_parser(options)
+    OptionParser.new do |parser|
+      parser.banner = "usage: #{$PROGRAM_NAME} SOURCE DEST (--keys :a,:b | --manifest FILE)"
+      parser.on("--keys LIST", "comma separated root keys (:symbol or string)") do |list|
+        options[:keys].concat(list.split(",").map { |raw| parse_key(raw) })
+      end
+      parser.on("--manifest FILE", "file listing one root key per line") do |file|
+        File.foreach(file) do |line|
+          line = line.strip
+          next if line.empty? || line.start_with?("#")
+          options[:keys] << parse_key(line)
+        end
+      end
+    end
+  end
+
+  def parse_key(raw)
+    if raw.start_with?(":")
+      raw[1..].to_sym
+    else
+      raw.dup.force_encoding(Encoding::UTF_8)
+    end
+  end
+end
+
+exit(PStoreExtractCLI.run(ARGV))
