@@ -73,3 +73,42 @@ can use all the HyperLogLog functions in HyperLogLog++.
     hpp = HyperLogLogPlusPlus()
     # Everything else is the same as HyperLogLog
 
+.. _hyperloglog_archive:
+
+Recovering merged registers from archived summaries
+====================================================
+
+After a collector switch, shards (fixed sets of events) may be archived at
+different HyperLogLog precisions: some shards only have a p=4 register,
+others a p=5 register. An archived summary covers a known set of shards and
+was built with a known hash version; summaries can overlap, and the original
+events are gone.
+
+:func:`recover_merged_registers` merges the summaries for a requested set of
+shards and returns the highest-precision register the observations determine
+uniquely. Summaries built with different hash versions are never mixed.
+
+.. code:: python
+
+    from datasketch import ArchivedSummary, recover_merged_registers
+
+    # A p=4 summary of shard A and a p=5 summary of shard B.
+    summaries = [
+        ArchivedSummary("a4", shards=["A"], p=4, reg=reg_a4, hash_version="v1"),
+        ArchivedSummary("b5", shards=["B"], p=5, reg=reg_b5, hash_version="v1"),
+    ]
+    result = recover_merged_registers(summaries, shards=["A", "B"], precision=5)
+
+At p=5, ``result.fixed_mask`` marks the registers that every input consistent
+with the observations must share. Where it is ``False``, the register is
+ambiguous: :meth:`RecoveryResult.witnesses` gives two register vectors (and
+:meth:`RecoveryResult.witness_inputs` two concrete sets of hash values) that
+both satisfy every summary but differ at that register, while sharing the
+same p=4 register. ``result.determinable_precision`` reports the highest
+precision at which the whole register is fixed.
+
+Contradictory observations raise :class:`ArchiveConflictError`; use
+:func:`detect_conflicts` to inspect them per hash version, or pass
+``on_conflict="report"`` to keep the partially recoverable registers.
+
+
