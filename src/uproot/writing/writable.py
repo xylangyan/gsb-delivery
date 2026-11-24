@@ -1503,6 +1503,16 @@ class WritableDirectory(MutableMapping):
                         f"This RNTuple uses column encodings (e.g. split encoding) that uproot cannot write."
                     )
                     break
+        if _column_encoding_error is None:
+            # the schema is one uproot can write; line its physical column order
+            # up with the disk order so positional writes stay correct when a
+            # subfield was added to a nested record by an earlier extension
+            _column_encoding_error = _reorder_header_to_disk_order(
+                header,
+                existing_field_records,
+                existing._header.field_records,
+                existing.column_records,
+            )
 
         footer = cnt.NTuple_Footer(None, header._checksum)
 
@@ -1607,6 +1617,15 @@ class WritableDirectory(MutableMapping):
                     )
         if not column_counts:
             column_counts = [num_entries] * num_columns
+        # A deferred column stores values only from its first_element_index
+        # onward, so its own page counts cover only the stored elements. The
+        # absolute element offset at which the next page must start is therefore
+        # first_element_index plus everything already stored.
+        for col_idx, cr in enumerate(
+            list(existing._header.column_records)
+            + list(existing._footer.extension_links.column_records)
+        ):
+            column_counts[col_idx] += cr.first_element_index
         ntuple_cascading._column_counts = numpy.array(column_counts, dtype=int)
         ntuple_cascading._existing_footer = existing_footer
         ntuple_cascading._existing_page_list_envelopes = existing_page_list_envelopes
@@ -3526,10 +3545,22 @@ class WritableNTuple:
         Args:
             new_fields (dict of str -> numpy dtype): New field names and types.
                 Only scalar numeric types are accepted (e.g. ``np.int32``,
-                ``np.float64``). Variable-length or nested types are not supported.
+                ``np.float64``), optionally nullable (``"?float32"`` or
+                ``"option[float32]"``). Variable-length or nested types are not
+                supported.
 
-        Adds new fields to this RNTuple, back-filled with zeros for existing entries.
-        Only top-level fields or subfields of existing untyped record fields are supported.
+        Adds new fields to this RNTuple, back-filled with zeros (or missing, for
+        a nullable field) for existing entries. Only top-level fields or
+        subfields of existing untyped record fields are supported; a record
+        behind a collection (a list of records) counts as an untyped record, so
+        a subfield added to it applies to every element of the list.
+
+        Existing columns are not rewritten: a new column only stores values from
+        the first entry (or, inside a collection, the first element) that the
+        new field covers onward, and readers fill everything before that with
+        zeros or missing values. Adding a nullable field therefore never moves
+        or rewrites the column pages already on disk, and a written zero stays
+        distinguishable from a missing value.
 
         Note: when using ``accept_new_fields=True`` in :meth:`extend`, new fields
         must be flat (scalar) types. Jagged or nested new fields will fail the
@@ -3549,6 +3580,8 @@ class WritableNTuple:
 
             with uproot.update("file.root") as f:
                 f["mytuple"].add_fields({"z": np.int32, "w": np.float32})
+                # a nullable per-hit quality flag; old hits read back as None
+                f["mytuple"].add_fields({"hits.qc": "?float32"})
 
         .. note::
 
@@ -3583,6 +3616,11 @@ class WritableNTuple:
         existing_footer = self._cascading._existing_footer
         existing_page_list_envelopes = self._cascading._existing_page_list_envelopes
         existing_field_records = self._cascading._existing_field_records
+        # column i's owning field id, in on-disk order. The reconstructed header
+        # walks every field (including those from earlier schema extensions), so
+        # header._column_records is already the full physical column order, and
+        # it lines up with self._cascading._column_counts.
+        existing_column_field_ids = [cr.field_id for cr in header._column_records]
 
         next_field_id = len(existing_field_records)
 
@@ -3605,11 +3643,24 @@ class WritableNTuple:
 
         for field_name, field_dtype_raw in new_fields.items():
             ak_form = _type_specification_to_awkward_form(field_dtype_raw)
-            if not isinstance(ak_form, awkward.forms.NumpyForm):
+            is_optional = isinstance(ak_form, awkward.forms.IndexedOptionForm)
+            if is_optional:
+                # a nullable scalar is written as an option (index) field with
+                # one primitive content field, exactly like an option in any
+                # other RNTuple field
+                if not isinstance(ak_form.content, awkward.forms.NumpyForm):
+                    raise TypeError(
+                        f"add_fields only supports simple numeric types, got {field_dtype_raw!r}"
+                    )
+                ak_primitive = ak_form.content.primitive
+                index_primitive = ak_form.index
+            elif isinstance(ak_form, awkward.forms.NumpyForm):
+                ak_primitive = ak_form.primitive
+                index_primitive = None
+            else:
                 raise TypeError(
                     f"add_fields only supports simple numeric types, got {field_dtype_raw!r}"
                 )
-            ak_primitive = ak_form.primitive
             type_name = cnt._ak_primitive_to_typename_dict[ak_primitive]
             type_num = cnt._ak_primitive_to_num_dict[ak_primitive]
             type_size = uproot.const.rntuple_col_num_to_size_dict[type_num]
@@ -3617,71 +3668,13 @@ class WritableNTuple:
             if "." in field_name:
                 parts = field_name.split(".")
                 actual_field_name = parts[-1]
-                if len(parts) == 2:
-                    # single-level ("parent.field"): match the immediate parent
-                    # by bare name, at any nesting depth (backward compat) --
-                    # but only when that name is unambiguous. Matching the
-                    # first same-named field regardless of ambiguity used to
-                    # silently misattach a field whenever two records shared a
-                    # bare name at different nesting levels (e.g. a nested
-                    # "b.a" and an unrelated top-level "a"), with no error.
-                    matches = [
-                        (i, fr)
-                        for i, fr in enumerate(existing_field_records)
-                        if fr.field_name == parts[0]
-                    ]
-                    if len(matches) == 0:
-                        raise ValueError(
-                            f"Field {parts[0]!r} not found in this RNTuple"
-                        )
-                    if len(matches) > 1:
-                        raise ValueError(
-                            f"Field {parts[0]!r} is ambiguous: {len(matches)} fields "
-                            f"in this RNTuple have that name at different nesting "
-                            f"levels. Use a fully-qualified dotted path (e.g. "
-                            f"'grandparent.{parts[0]}.{parts[1]}') to disambiguate."
-                        )
-                    parent_field_id, fr = matches[0]
-                else:
-                    # multi-level: walk the full dotted path using the parent-id
-                    # chain, one segment at a time
-                    current_parent_id = None  # None means root
-                    for part_idx, part in enumerate(parts[:-1]):
-                        found = None
-                        for i, fr in enumerate(existing_field_records):
-                            # a field is top-level iff it's its own parent
-                            # (self-referential); "parent_field_id == 0" alone
-                            # is not a valid root signal -- it also matches any
-                            # non-root field whose real parent happens to be at
-                            # index 0, e.g. the second field of the first
-                            # top-level record
-                            is_root_field = fr.parent_field_id == i
-                            if fr.field_name == part:
-                                if current_parent_id is None and is_root_field:
-                                    found = (i, fr)
-                                    break
-                                elif (
-                                    current_parent_id is not None
-                                    and fr.parent_field_id == current_parent_id
-                                ):
-                                    found = (i, fr)
-                                    break
-                        if found is None:
-                            raise ValueError(
-                                f"Field {'.'.join(parts[: part_idx + 1])!r} not found in this RNTuple"
-                            )
-                        current_parent_id = found[0]
-                        parent_field_id = found[0]
-                        fr = found[1]
-                if fr.type_name != "":
-                    raise ValueError(
-                        f"Field {'.'.join(parts[:-1])!r} has type {fr.type_name!r} and cannot be extended. "
-                        f"Only untyped records (empty type_name) can have subfields added."
-                    )
-                if fr.struct_role != uproot.const.RNTupleFieldRole.RECORD:
-                    raise ValueError(
-                        f"Field {'.'.join(parts[:-1])!r} is not a record and cannot have subfields added."
-                    )
+                parent_field_id = _resolve_record_parent(existing_field_records, parts)
+                # A dotted path is relative to the top-level field named by
+                # its first segment. For a logical record inside a collection
+                # of records, that whole path starts at the *collection*, so
+                # the new leaf is only a sibling of the record's fields in the
+                # logical (Awkward) nesting; physically it hangs off the
+                # nested record.
                 # the top-level duplicate check above only looks at root fields
                 # and never matches a dotted key against a bare name, so a
                 # subfield with the same name as an existing sibling under the
@@ -3704,24 +3697,91 @@ class WritableNTuple:
                 actual_field_name = field_name
                 parent_field_id = next_field_id
 
-            new_field = cnt.NTuple_Field_Description(
-                parent_field_id,
-                uproot.const.RNTupleFieldRole.LEAF,
-                actual_field_name,
-                type_name,
-            )
-            footer.extension_field_record_frames.append(new_field)
-            # use deferred column — first_element_index marks where new data starts
-            new_col = cnt.NTuple_Column_Description(
-                type_num,
-                type_size,
-                next_field_id,
-                0,
-                0,
-                first_element_index=num_entries,
-            )
-            footer.extension_column_record_frames.append(new_col)
-            next_field_id += 1
+            # A field added under an existing record starts part-way through
+            # the *logical* entries of that record's branch: the number of
+            # elements the record already holds (which is not num_entries for
+            # a record nested inside a collection). The first_element_index of
+            # the new column must count in that same column's element space,
+            # or the padding the reader inserts would be sized for events
+            # rather than for the elements of the parent record.
+            if parent_field_id == next_field_id:
+                first_element_index = num_entries
+            else:
+                first_element_index = _field_element_count(
+                    existing_field_records,
+                    existing_column_field_ids,
+                    self._cascading._column_counts,
+                    parent_field_id,
+                )
+
+            if is_optional:
+                # option field, its index column, and a primitive content field
+                optional_name = cnt._cpp_typename(ak_form)
+                footer.extension_field_record_frames.append(
+                    cnt.NTuple_Field_Description(
+                        parent_field_id,
+                        uproot.const.RNTupleFieldRole.COLLECTION,
+                        actual_field_name,
+                        optional_name,
+                    )
+                )
+                index_type_num = cnt._ak_primitive_to_num_dict[index_primitive]
+                index_type_size = uproot.const.rntuple_col_num_to_size_dict[
+                    index_type_num
+                ]
+                # the index column spans the parent's elements: its deferred
+                # start is the number of parent elements already stored
+                footer.extension_column_record_frames.append(
+                    cnt.NTuple_Column_Description(
+                        index_type_num,
+                        index_type_size,
+                        next_field_id,
+                        0,
+                        0,
+                        first_element_index=first_element_index,
+                    )
+                )
+                content_field_id = next_field_id + 1
+                footer.extension_field_record_frames.append(
+                    cnt.NTuple_Field_Description(
+                        next_field_id,
+                        uproot.const.RNTupleFieldRole.LEAF,
+                        "_0",
+                        type_name,
+                    )
+                )
+                # the content column only stores present values, of which a
+                # brand-new field has none, so it is not deferred
+                footer.extension_column_record_frames.append(
+                    cnt.NTuple_Column_Description(
+                        type_num,
+                        type_size,
+                        content_field_id,
+                        0,
+                        0,
+                        first_element_index=0,
+                    )
+                )
+                next_field_id += 2
+            else:
+                new_field = cnt.NTuple_Field_Description(
+                    parent_field_id,
+                    uproot.const.RNTupleFieldRole.LEAF,
+                    actual_field_name,
+                    type_name,
+                )
+                footer.extension_field_record_frames.append(new_field)
+                # use deferred column — first_element_index marks where new data starts
+                new_col = cnt.NTuple_Column_Description(
+                    type_num,
+                    type_size,
+                    next_field_id,
+                    0,
+                    0,
+                    first_element_index=first_element_index,
+                )
+                footer.extension_column_record_frames.append(new_col)
+                next_field_id += 1
 
         footer.cluster_group_record_frames = []
         for cg_idx, cg in enumerate(existing_footer.cluster_group_records):
@@ -3807,8 +3867,23 @@ class WritableNTuple:
         self._cascading._existing_field_records = list(header._field_records) + list(
             footer.extension_field_record_frames
         )
+        # one new column for a scalar field, but two (index + content) for an
+        # option field; take the count from what was actually appended
+        new_column_count = len(footer.extension_column_record_frames) - len(
+            existing_footer.extension_links.column_records
+        )
+        new_columns = (
+            footer.extension_column_record_frames[-new_column_count:]
+            if new_column_count
+            else []
+        )
+        # A deferred column's own element space starts at first_element_index
+        # with no pages before it, so its running element count starts there
+        # (not at zero); otherwise the first page written to it would claim to
+        # start at element 0.
         self._cascading._column_counts = numpy.append(
-            self._cascading._column_counts, numpy.zeros(len(new_fields), dtype=int)
+            self._cascading._column_counts,
+            numpy.array([cr.first_element_index for cr in new_columns], dtype=int),
         )
         # _existing_footer, _existing_page_list_envelopes, and _header._akform,
         # by contrast, DO require a full read back from disk here: they need to
@@ -3827,6 +3902,277 @@ class WritableNTuple:
         )
         full_akform_reload, _ = existing_reload.to_akform()
         self._cascading._header._akform = full_akform_reload
+
+
+def _reorder_header_to_disk_order(
+    header, disk_field_records, disk_header_field_records, disk_column_records
+):
+    """
+    Rebuilds a writable header's field and column lists in the exact physical
+    order they occupy on disk.
+
+    A header reconstructed by walking the logical Awkward form lists fields
+    depth-first, interleaving a record's original subfields with subfields
+    added by earlier schema extensions. On disk, however, extension fields are
+    appended wherever their parent record already was, so a subfield added to a
+    nested record sits *after* every column that existed before it, not next to
+    its siblings. The writer addresses columns positionally, so the
+    reconstructed header has to follow the disk order; otherwise the first
+    extend() after reopening would write each column's bytes into the wrong
+    column and the column-encoding check would reject the file outright.
+
+    ``disk_field_records`` are the complete on-disk field list (header fields
+    followed by schema extensions); ``disk_header_field_records`` are only the
+    header's own fields, which is what the header envelope may contain. Field
+    IDs are their own indices, matching what the reader uses. Returns an error
+    message if a disk column cannot be matched to a column of the reconstructed
+    schema, or None.
+    """
+    import uproot.writing._cascadentuple as cnt
+
+    logical_fields = header._field_records
+    logical_column_records = header._column_records
+    logical_keys = header._column_keys
+
+    keys_by_path = {}
+    for cr, key in zip(logical_column_records, logical_keys, strict=True):
+        path = _physical_field_path(logical_fields, cr.field_id)
+        keys_by_path.setdefault(path, []).append(key)
+
+    new_keys = []
+    used = {}
+    for cr in disk_column_records:
+        path = _physical_field_path(disk_field_records, cr.field_id)
+        candidates = keys_by_path.get(path)
+        if candidates is None:
+            return (
+                f"cannot extend: on-disk column {cr.idx} belongs to field {path!r}, "
+                f"which is not part of the reconstructed schema"
+            )
+        offset = used.get(path, 0)
+        if offset >= len(candidates):
+            return (
+                f"cannot extend: on-disk column {cr.idx} has more representations "
+                f"for field {path!r} than uproot can write"
+            )
+        new_keys.append(candidates[offset])
+        used[path] = offset + 1
+
+    # header._field_records goes back to holding only the fields that the
+    # header envelope itself owns; fields added by earlier schema extensions
+    # live in the footer and are recombined with these by add_fields(). Keeping
+    # the logical walk's copy of the extension fields here as well would make
+    # that recombination count every extension field twice, shifting the field
+    # IDs of anything added later in the session.
+    header._field_records = [
+        cnt.NTuple_Field_Description(
+            record.parent_field_id,
+            record.struct_role,
+            record.field_name,
+            record.type_name,
+            field_version=record.field_version,
+            type_version=record.type_version,
+            flags=record.flags,
+            type_alias=record.type_alias,
+            field_description=record.field_desc,
+            repetition=record.repetition or None,
+        )
+        for record in disk_header_field_records
+    ]
+    # header._column_records stays complete: the writer addresses columns
+    # positionally and needs every column, extension columns included.
+    header._column_records = [
+        cnt.NTuple_Column_Description(
+            cr.type,
+            cr.nbits,
+            cr.field_id,
+            int(cr.flags),
+            cr.repr_idx,
+            first_element_index=cr.first_element_index,
+        )
+        for cr in disk_column_records
+    ]
+    header._column_keys = new_keys
+    return None
+
+
+def _field_children(field_records, field_id):
+    """
+    The field IDs directly under ``field_id``, in on-disk order. A field is
+    its own parent when it is top-level, so that case is excluded.
+    """
+    return [
+        i
+        for i, record in enumerate(field_records)
+        if record.parent_field_id == field_id and i != field_id
+    ]
+
+
+def _physical_field_path(field_records, field_id):
+    """
+    The tuple of field names from the top level down to ``field_id``, including
+    anonymous wrapper names (``"_0"``, etc.). This identifies a field
+    independently of where its record was appended in a schema extension.
+    """
+    parts = []
+    seen = set()
+    while True:
+        if field_id in seen:
+            raise ValueError("cycle in RNTuple field parent links")
+        seen.add(field_id)
+        record = field_records[field_id]
+        parts.append(record.field_name)
+        parent_id = record.parent_field_id
+        if parent_id == field_id:
+            break
+        field_id = parent_id
+    parts.reverse()
+    return tuple(parts)
+
+
+def _unwrap_record_field(field_records, field_id):
+    """
+    Follows anonymous wrappers (collections, options, variants, repetitive
+    leaves) down to the record that holds the logical subfields. Returns
+    ``None`` if the chain does not end in a record.
+    """
+    seen = set()
+    while field_id not in seen:
+        seen.add(field_id)
+        record = field_records[field_id]
+        if record.struct_role == uproot.const.RNTupleFieldRole.RECORD:
+            return field_id
+        children = _field_children(field_records, field_id)
+        if len(children) != 1:
+            return None
+        field_id = children[0]
+    return None
+
+
+def _resolve_record_parent(field_records, parts):
+    """
+    Resolves the dotted path ``parts[:-1]`` to the record field that should
+    own a new subfield named ``parts[-1]``.
+
+    Unlike a purely physical walk, this follows the logical hierarchy through
+    anonymous wrappers, so a record inside a collection of records (e.g. a
+    ``hits`` collection whose elements are records) can have subfields added.
+    Typed C++ records are rejected, as before.
+    """
+    container = None  # None means the top level
+    for part_idx, part in enumerate(parts[:-1]):
+        if container is None and len(parts) > 2:
+            # a multi-level path is anchored at a genuine top-level field
+            # (self-parented), so it cannot silently match a same-named nested
+            # record
+            candidates = [
+                i
+                for i, record in enumerate(field_records)
+                if record.parent_field_id == i and record.field_name == part
+            ]
+        elif container is None:
+            # a single-level "parent.field" path matches the immediate parent
+            # by bare name at any nesting depth (backward compat), but only
+            # when that name is unambiguous
+            candidates = [
+                i for i, record in enumerate(field_records) if record.field_name == part
+            ]
+        else:
+            candidates = [
+                i
+                for i in _field_children(field_records, container)
+                if field_records[i].field_name == part
+            ]
+        if len(candidates) == 0:
+            raise ValueError(
+                f"Field {'.'.join(parts[: part_idx + 1])!r} not found in this RNTuple"
+            )
+        if len(candidates) > 1:
+            raise ValueError(
+                f"Field {'.'.join(parts[: part_idx + 1])!r} is ambiguous: {len(candidates)} "
+                f"fields in this RNTuple have that name at different nesting levels"
+            )
+        candidate = candidates[0]
+        record_id = _unwrap_record_field(field_records, candidate)
+        if record_id is None:
+            raise ValueError(
+                f"Field {'.'.join(parts[: part_idx + 1])!r} has type "
+                f"{field_records[candidate].type_name!r} and cannot be extended. "
+                f"Only untyped records (empty type_name) can have subfields added."
+            )
+        record = field_records[record_id]
+        if record.type_name != "":
+            raise ValueError(
+                f"Field {'.'.join(parts[: part_idx + 1])!r} has type {record.type_name!r} "
+                f"and cannot be extended. Only untyped records (empty type_name) can "
+                f"have subfields added."
+            )
+        container = record_id
+    return container
+
+
+def _field_value_total(
+    field_records, column_field_ids, column_counts, field_id, seen=None
+):
+    """
+    The number of values a field holds across every cluster already on disk.
+
+    ``column_field_ids`` and ``column_counts`` are parallel lists (one entry per
+    physical column, in on-disk order) giving each column's owning field and the
+    number of elements stored in that column. Records have no column of their
+    own, so a record's value count is taken from one of its children (all of
+    its original children hold one value per record; a child added later may
+    hold fewer, so the maximum is used).
+    """
+    if seen is None:
+        seen = set()
+    if field_id in seen:
+        return 0
+    seen = seen | {field_id}
+
+    record = field_records[field_id]
+    if record.struct_role == uproot.const.RNTupleFieldRole.RECORD:
+        children = _field_children(field_records, field_id)
+        return max(
+            (
+                _field_value_total(
+                    field_records, column_field_ids, column_counts, child, seen
+                )
+                for child in children
+            ),
+            default=0,
+        )
+
+    if record.struct_role == uproot.const.RNTupleFieldRole.COLLECTION:
+        # the offsets/index column holds one element per collection value; a
+        # string field also has a character-data column, so take the smaller
+        own = [idx for idx, owner in enumerate(column_field_ids) if owner == field_id]
+        if not own:
+            return 0
+        return int(min(int(column_counts[idx]) for idx in own))
+
+    if record.struct_role == uproot.const.RNTupleFieldRole.VARIANT:
+        own = [idx for idx, owner in enumerate(column_field_ids) if owner == field_id]
+        return int(min(int(column_counts[idx]) for idx in own)) if own else 0
+
+    # LEAF
+    own = [idx for idx, owner in enumerate(column_field_ids) if owner == field_id]
+    if not own:
+        return 0
+    total = int(min(int(column_counts[idx]) for idx in own))
+    if record.repetition:
+        return total // record.repetition
+    return total
+
+
+def _field_element_count(field_records, column_field_ids, column_counts, field_id):
+    """
+    The number of values already stored for ``field_id``, in the element space
+    of that field. This is the offset a deferred column of a subfield added now
+    must start at; for a record nested in a collection it is the number of
+    record elements, not the number of top-level entries.
+    """
+    return _field_value_total(field_records, column_field_ids, column_counts, field_id)
 
 
 def _is_type_specification(obj):

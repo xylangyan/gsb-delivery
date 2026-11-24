@@ -1208,9 +1208,12 @@ in file {self.file.file_path}"""
         for key_nr in clusters_datas.columns:
             ncol = int(key_nr)
             field_metadata = self.get_field_metadata(ncol)
-            # Find how many elements should be padded at the beginning
-            n_padding = self.column_records[key_nr].first_element_index
-            n_padding = max(n_padding - cluster_offset, 0)
+            # Find how many elements should be padded at the beginning, in
+            # this column's own element space (a nested subfield counts its
+            # parent record's elements, not top-level entries)
+            n_padding = self.element_offset_for(
+                ncol, start_cluster_idx, stop_cluster_idx
+            )
             total_length, starts, _ = self._expected_array_length_starts_dtype(
                 ncol, start_cluster_idx, stop_cluster_idx, n_padding
             )
@@ -1463,6 +1466,112 @@ in file {self.file.file_path}"""
         )
         self._field_metadata_cache[ncol] = field_metadata
         return field_metadata
+
+    def _column_page_elements_before(self, col_idx, cluster_stop):
+        """
+        Number of elements stored in column ``col_idx`` in all clusters before
+        ``cluster_stop``.
+        """
+        total = 0
+        for cluster_idx in range(max(cluster_stop, 0)):
+            linklist = self._ntuple.page_link_list[cluster_idx]
+            if col_idx < len(linklist):
+                total += sum(desc.num_elements for desc in linklist[col_idx].pages)
+        return total
+
+    def _field_elements_before(self, field_id, cluster_stop):
+        """
+        The number of values ``field_id`` holds in all clusters before
+        ``cluster_stop``, in that field's own element space.
+
+        Records have no column of their own: every original child holds one
+        value per record, so the largest child count is the record count (a
+        child added later, and therefore deferred, contributes zero).
+        An option/collection's index column holds one element per value.
+        """
+        record = self.field_records[field_id]
+        if record.struct_role == uproot.const.RNTupleFieldRole.RECORD:
+            children = [
+                i
+                for i, child in enumerate(self.field_records)
+                if child.parent_field_id == field_id and i != field_id
+            ]
+            return max(
+                (self._field_elements_before(i, cluster_stop) for i in children),
+                default=0,
+            )
+
+        cols = self._column_records_dict.get(field_id)
+        if not cols:
+            return 0
+        total = self._column_page_elements_before(cols[0].idx, cluster_stop)
+        if (
+            record.struct_role == uproot.const.RNTupleFieldRole.LEAF
+            and record.repetition
+        ):
+            total //= record.repetition
+        return total
+
+    def element_offset_for(self, col_idx, cluster_start, cluster_stop):
+        """
+        Args:
+            col_idx (int): The column index.
+            cluster_start (int): The first cluster to include.
+            cluster_stop (int): The first cluster to exclude.
+
+        Returns how many values of this column's element space precede the
+        first cluster in the range.
+
+        ``first_element_index`` of a deferred column counts in the *column's*
+        element space. For a top-level scalar that is the number of entries;
+        for a subfield of a record nested inside a collection it is the number
+        of record elements. Padding a range that starts later than entry zero
+        therefore has to be computed from how many of the parent's elements
+        precede the first cluster in the range, not from the cluster
+        summaries' top-level entry counts.
+        """
+        first = self.column_records[col_idx].first_element_index
+        if first == 0:
+            return 0
+        owner = self.column_records[col_idx].field_id
+        # The deferred column stores one value per logical member of its owner
+        # field. For a top-level field that is one per entry; for a field
+        # inside a record it is one per element of the nearest enclosing
+        # record, which may be many per entry (a collection of records).
+        record_id = None
+        fid = owner
+        while True:
+            record = self.field_records[fid]
+            if record.parent_field_id == fid:
+                break
+            parent_id = record.parent_field_id
+            if (
+                self.field_records[parent_id].struct_role
+                == uproot.const.RNTupleFieldRole.RECORD
+            ):
+                record_id = parent_id
+                break
+            fid = parent_id
+        if record_id is None:
+            before = sum(
+                summary.num_entries
+                for summary in self.cluster_summaries[: max(cluster_start, 0)]
+            )
+            in_range = sum(
+                summary.num_entries
+                for summary in self.cluster_summaries[
+                    max(cluster_start, 0) : max(cluster_stop, 0)
+                ]
+            )
+        else:
+            before = self._field_elements_before(record_id, cluster_start)
+            in_range = self._field_elements_before(
+                record_id, cluster_stop
+            ) - self._field_elements_before(record_id, cluster_start)
+        # never pad beyond the number of values the range actually spans, or a
+        # range that starts after the deferred column's first element would get
+        # a buffer longer than its parent
+        return max(min(first - before, in_range), 0)
 
     def combine_cluster_arrays(self, array, starts, field_metadata):
         """

@@ -431,9 +431,12 @@ class HasFields(Mapping):
         for key in target_cols:
             if "column" in key:
                 key_nr = int(key.split("-")[1])
-                # Find how many elements should be padded at the beginning
-                n_padding = self.ntuple.column_records[key_nr].first_element_index
-                n_padding = max(n_padding - cluster_offset, 0)
+                # Find how many elements should be padded at the beginning;
+                # this is in the column's own element space, which differs
+                # from the entry space for a subfield of a nested record
+                n_padding = self.ntuple.element_offset_for(
+                    key_nr, start_cluster_idx, stop_cluster_idx
+                )
                 dtype = None
                 if interpreter == "cpu":
                     content_generator = partial(

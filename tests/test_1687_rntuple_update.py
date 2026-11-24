@@ -714,14 +714,22 @@ def test_ntuple_add_subfield_to_collection(tmp_path):
 
 
 def test_ntuple_add_subfield_to_collection_of_records(tmp_path):
+    # A collection of records is a record field behind an anonymous collection
+    # wrapper, so a subfield can be added to it; it applies to every element.
     with uproot.recreate(os.path.join(tmp_path, "test.root")) as f:
         f["mytuple"] = ak.Array(
             {"jets": [[{"pt": 1.0, "eta": 0.0}], [{"pt": 2.0, "eta": 3.0}]]}
         )
 
     with uproot.update(os.path.join(tmp_path, "test.root")) as f:
-        with pytest.raises(ValueError, match="'jets' is not a record"):
-            f["mytuple"].add_fields({"jets.phi": np.float32})
+        f["mytuple"].add_fields({"jets.phi": np.float32})
+
+    with uproot.open(os.path.join(tmp_path, "test.root")) as f:
+        assert f["mytuple"]["jets.phi"].array().to_list() == [[0.0], [0.0]]
+        assert f["mytuple"].arrays()["jets"].to_list() == [
+            [{"pt": 1.0, "eta": 0.0, "phi": 0.0}],
+            [{"pt": 2.0, "eta": 3.0, "phi": 0.0}],
+        ]
 
 
 def test_ntuple_add_subfield_to_variant(tmp_path):
