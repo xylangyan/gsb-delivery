@@ -1,9 +1,10 @@
 import dataclasses
 import inspect
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
+from .scheduling import collection_job_id, progress_key, trigger_identity
 from .typing import WEEKDAYS, OptionType, SecondsTimedelta, WeekdayOptionType, WorkerCoroutine
 from .utils import import_string, to_seconds
 
@@ -33,12 +34,17 @@ def next_cron(
     """
     Find the next datetime matching the given parameters.
     """
-    dt = previous_dt + timedelta(seconds=1)
     if isinstance(weekday, str):
         weekday = WEEKDAYS.index(weekday.lower())
     options = Options(
         month=month, day=day, weekday=weekday, hour=hour, minute=minute, second=second, microsecond=microsecond
     )
+
+    repeated_run = _repeated_fallback_run(previous_dt, options)
+    if repeated_run is not None:
+        return repeated_run
+
+    dt = previous_dt + timedelta(seconds=1)
 
     while True:
         next_dt = _get_next_dt(dt, options)
@@ -46,6 +52,57 @@ def next_cron(
         if next_dt is None:
             return dt
         dt = next_dt
+
+
+def _repeated_fallback_run(previous_dt: datetime, options: Options) -> Optional[datetime]:
+    if previous_dt.tzinfo is None or getattr(previous_dt, 'fold', 0) != 0:
+        return None
+    if _get_next_dt(previous_dt, options) is not None or not _is_ambiguous_local_time(previous_dt):
+        return None
+
+    tzinfo = previous_dt.tzinfo
+    candidate = previous_dt.replace(fold=1)
+    if candidate.utcoffset() != previous_dt.utcoffset():
+        return candidate
+
+    localize = getattr(tzinfo, 'localize', None)
+    if callable(localize):
+        naive = previous_dt.replace(tzinfo=None)
+        try:
+            localized = localize(naive, is_dst=False)
+        except (TypeError, ValueError):
+            return candidate
+        if isinstance(localized, datetime):
+            return localized
+    return candidate
+
+
+def _is_ambiguous_local_time(dt: datetime) -> bool:
+    tzinfo = dt.tzinfo
+    if tzinfo is None:
+        return False
+    naive = dt.replace(tzinfo=None)
+    first = dt.replace(fold=0)
+    second = dt.replace(fold=1)
+    if first.utcoffset() == second.utcoffset():
+        localize = getattr(tzinfo, 'localize', None)
+        if not callable(localize):
+            return False
+        try:
+            daylight = localize(naive, is_dst=True)
+            standard = localize(naive, is_dst=False)
+        except (TypeError, ValueError):
+            return False
+        if daylight.utcoffset() == standard.utcoffset():
+            return False
+        first = daylight
+        second = standard
+
+    def round_trips(candidate: datetime) -> bool:
+        round_tripped = candidate.astimezone(timezone.utc).astimezone(tzinfo)
+        return round_tripped.replace(tzinfo=None) == naive
+
+    return round_trips(first) and round_trips(second)
 
 
 def _get_next_dt(dt_: datetime, options: Options) -> Optional[datetime]:  # noqa: C901
