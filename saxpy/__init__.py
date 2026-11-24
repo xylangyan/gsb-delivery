@@ -12,6 +12,7 @@ __author__ = "Pavel Senin <seninp@gmail.com>"
 
 _EXPORTS = {
     "RRADiscord": ("saxpy.rra", "RRADiscord"),
+    "RepairGrammar": ("saxpy.repair_rle", "RepairGrammar"),
     "RepairRule": ("saxpy.repair", "RepairRule"),
     "bags_to_tfidf": ("saxpy.saxvsm", "bags_to_tfidf"),
     "classify_series": ("saxpy.saxvsm", "classify_series"),
@@ -28,12 +29,19 @@ _EXPORTS = {
     "manyseries_to_wordbag": ("saxpy.saxvsm", "manyseries_to_wordbag"),
     "optimize_parameters": ("saxpy.saxvsm_optimize", "optimize_parameters"),
     "paa": ("saxpy.paa", "paa"),
+    "repair_grammar_from_runs": ("saxpy.repair_rle", "repair_grammar_from_runs"),
+    "rle_to_repair_grammar": ("saxpy.repair_rle", "rle_to_repair_grammar"),
+    "rule_expansion_length": ("saxpy.repair_rle", "rule_expansion_length"),
+    "rule_intervals_in_window": ("saxpy.repair_rle", "rule_intervals_in_window"),
+    "rule_occurrences_in_window": ("saxpy.repair_rle", "rule_occurrences_in_window"),
     "sax_by_chunking": ("saxpy.sax", "sax_by_chunking"),
     "sax_via_window": ("saxpy.sax", "sax_via_window"),
     "series_to_wordbag": ("saxpy.saxvsm", "series_to_wordbag"),
     "str_to_repair_grammar": ("saxpy.repair", "str_to_repair_grammar"),
+    "str_to_repair_grammar_rle": ("saxpy.repair_rle", "str_to_repair_grammar_rle"),
     "train_tfidf": ("saxpy.saxvsm", "train_tfidf"),
     "ts_to_string": ("saxpy.sax", "ts_to_string"),
+    "words_in_window": ("saxpy.repair_rle", "words_in_window"),
     "znorm": ("saxpy.znorm", "znorm"),
 }
 

@@ -5,6 +5,17 @@ All notable changes to saxpy are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added
+- **Run-length RePair** (`saxpy.repair_rle.rle_to_repair_grammar`, also exported as
+  `str_to_repair_grammar_rle` / `encoded_str_to_repair_grammar`). Builds the exact
+  grammar `str_to_repair_grammar` builds from the expanded token string, from
+  `(word, count)` runs, without expanding them: same rule ids, same rule parts,
+  same substituted positions. Work strings are segment lists and occurrence
+  tables are arithmetic ranges, so million-fold runs cost a handful of records.
+- `RepairGrammar` query surface: `rule_length`, `rule_parts`, `rule_occurrences`,
+  `rule_intervals` (windowed) and `word_slice` / `word_at`, plus a
+  `materialize_limit` guard on the fully-expanding accessors.
+
 ### Changed
 - README **Getting started** — venv-first PyPI install (PEP 668), quick start with expected
   output, import cheat sheet (`znorm` / `paa` submodule note).

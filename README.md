@@ -102,6 +102,7 @@ modules instead:
 | Alphabet breakpoints | `from saxpy.alphabet import cuts_for_asize` |
 | HOT-SAX / brute-force discords | `from saxpy import find_discords_hotsax, find_discords_brute_force` |
 | RePair grammar | `from saxpy.repair import str_to_repair_grammar` |
+| RePair on run-length archives | `from saxpy.repair_rle import rle_to_repair_grammar` |
 | RRA discords | `from saxpy import find_discords_rra` |
 | SAX-VSM classify | `from saxpy.saxvsm import load_ucr_data, train_tfidf, classify_series, classification_accuracy` |
 | SAX-VSM bags / TF·IDF | `from saxpy.saxvsm import series_to_wordbag, manyseries_to_wordbag, bags_to_tfidf, cosine_similarity` |
@@ -289,6 +290,33 @@ Saxpy infers a RePair grammar from a space-delimited string of SAX words (or any
     g[4].expanded_rule_string  # 'abc abc cba cba bac'
 
 RePair is **lossless** and the grammar is structurally equivalent across the R, Python, and Java implementations: decompressing R0 always reproduces the input, and R0 ends up with no repeated digram. RePair works by repeatedly replacing the *most frequent* digram with a new rule; when several digrams share the maximal frequency, *which one is replaced first* is an implementation detail (priority-queue / hash-table iteration order). On tie-heavy inputs this can change **rule ids and rule count** between saxpy, R, and Java even when the SAX input string is identical -- so treat `rule_id` as implementation-local, not a cross-language identifier. saxpy's SAX layer matches R/Java; grammar trees may still diverge above that.
+
+#### 5.1 Run-length archives (long repeats without expansion)
+A production SAX string is often a run-length archive: the same word repeated for a long stretch, recorded once with its repeat count. `rle_to_repair_grammar` accepts `[(word, count), ...]` in original time order and builds **the same grammar** `str_to_repair_grammar` builds from the fully expanded string -- same selection order (highest frequency, LIFO within a band), same rule ids, same substituted positions. It never expands the archive: the work string is a short list of `symbol x count` segments and occurrence tables hold arithmetic ranges `(first, step, count)`, so a ten-million-token run costs a handful of segments, not ten million objects.
+
+    from saxpy.repair_rle import rle_to_repair_grammar
+
+    g = rle_to_repair_grammar([("x", 1), ("a", 1_000_000), ("y", 1)])
+
+    g.n                        # 1000002 original words
+    g.rule_length(1)           # 2   (R1 = "a a")
+    g.rule_parts(1)            # ('a', 'a')
+    g.rule_occurrences(2, 0, 8)   # positions of R2's occurrences inside [0, 8)
+    g.rule_intervals(2, 499_990, 500_010)  # (lo, hi) spans R2 covers there
+    g.word_slice(500_000, 500_003)         # ['a', 'a', 'a']
+    g.word_at(1_000_001)       # 'y'
+
+`rule_intervals` returns `(lo, hi)` pairs with `hi - lo == rule_length - 1` (the reference `RepairRule.intervals` convention: `lo` is the first covered word, `hi` the last) and only reports occurrences whose span intersects the requested window. `word_slice` expands only the requested window. `occurrences`, `intervals`, `expanded_rule_string` and R0 expansion still work for small archives but raise `ValueError` above `materialize_limit` (default 200,000) -- the windowed queries are the production path.
+
+For a short archive the two entry points are interchangeable, which is the check that keeps the fast path honest:
+
+    g = rle_to_repair_grammar([("a", 8)])
+    ref = str_to_repair_grammar("a a a a a a a a")
+    assert g[0].expanded_rule_string == ref[0].expanded_rule_string
+    assert [g[i].expanded_rule_string for i in list(g)[1:]] == [
+        ref[i].expanded_rule_string for i in list(ref)[1:]
+    ]
+    assert g[1].occurrences == ref[1].occurrences
 
 #### 6.0 Time series discord discovery with RRA
 The Rare Rule Anomaly (RRA) algorithm builds a RePair grammar over the SAX representation, derives variable-length subsequences from the grammar rules, and searches them rarest-first. It is exposed as `find_discords_rra`:
