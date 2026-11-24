@@ -91,3 +91,20 @@ HNSW
 .. autoclass:: datasketch.HNSW
     :members:
     :special-members:
+
+
+HNSW Merge Replay
+-----------------
+
+Two branch jobs can append to copies of the same base HNSW index while an
+:class:`~datasketch.hnsw_merge.OperationRecorder` captures the structural
+evidence each operation actually observed. At merge time
+:func:`~datasketch.hnsw_merge.replay_operation_log` reuses an operation's
+committed graph changes and random-state advancement without any distance
+evaluation while its evidence still holds, and otherwise re-executes it from
+the original entry point. :func:`~datasketch.hnsw_merge.full_replay` is the
+all-distance reference path whose result must match.
+
+.. automodule:: datasketch.hnsw_merge
+    :members:
+    :special-members:
