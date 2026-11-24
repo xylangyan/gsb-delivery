@@ -6,7 +6,7 @@ import re
 import string
 import urllib.parse as urlparse
 from textwrap import wrap
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from . import config
 from ._typing import OutCallback
@@ -154,10 +154,48 @@ class HTML2Text(html.parser.HTMLParser):
         else:
             return markdown
 
+    def streaming_session(self, **options: object) -> "StreamingHTML2Text":
+        from .streaming import StreamingHTML2Text
+
+        return StreamingHTML2Text.from_converter(self, **options)  # type: ignore[arg-type]
+
+    start_stream = streaming_session
+
+    def stream(
+        self, chunks: "Iterable[str]", **options: object
+    ) -> "Iterable[str]":
+        from .streaming import _coerce_chunks
+
+        options.setdefault("baseurl", self.baseurl)  # type: ignore[attr-defined]
+        options.setdefault("bodywidth", self.body_width)
+        session = self.streaming_session(**options)
+        for chunk in _coerce_chunks(chunks, options.pop("chunk_size", None)):
+            result = session.send(chunk)  # type: ignore[attr-defined]
+            if result:
+                yield result
+        result = session.finish()  # type: ignore[attr-defined]
+        if result:
+            yield result
+
+    handle_stream = stream
+    stream_batches = stream
+    stream_chunks = stream
+    handle_chunks = stream
+    iter_handle = stream
+    batch = stream
+
     def outtextf(self, s: str) -> None:
         self.outtextlist.append(s)
         if s:
             self.lastWasNL = s[-1] == "\n"
+
+    def _last_outtext_is(self, text: str) -> bool:
+        return bool(self.outtextlist) and self.outtextlist[-1] == text
+
+    def _pop_last_outtext(self) -> Optional[str]:
+        if self.outtextlist:
+            return self.outtextlist.pop()
+        return None
 
     def finish(self) -> str:
         self.close()
@@ -346,8 +384,8 @@ class HTML2Text(html.parser.HTMLParser):
                 if start:
                     self.inheader = True
                     # are inside link name, so only add '#' if it can appear before '['
-                    if self.outtextlist and self.outtextlist[-1] == "[":
-                        self.outtextlist.pop()
+                    if self._last_outtext_is("["):
+                        self._pop_last_outtext()
                         self.space = False
                         self.o(hn(tag) * "#" + " ")
                         self.o("[")
@@ -751,6 +789,11 @@ class HTML2Text(html.parser.HTMLParser):
         self.pbr()
         self.br_toggle = "  "
 
+    def _emit_pending_breaks(self, bq: str) -> None:
+        self.out((self.br_toggle + "\n" + bq) * self.p_p)
+        self.space = False
+        self.br_toggle = ""
+
     def o(
         self, data: str, puredata: bool = False, force: Union[bool, str] = False
     ) -> None:
@@ -825,9 +868,7 @@ class HTML2Text(html.parser.HTMLParser):
                 self.space = False
 
             if self.p_p:
-                self.out((self.br_toggle + "\n" + bq) * self.p_p)
-                self.space = False
-                self.br_toggle = ""
+                self._emit_pending_breaks(bq)
 
             if self.space:
                 if not self.lastWasNL:
@@ -1026,3 +1067,50 @@ def html2text(html: str, baseurl: str = "", bodywidth: Optional[int] = None) -> 
     h = HTML2Text(baseurl=baseurl, bodywidth=bodywidth)
 
     return h.handle(html)
+
+
+from .streaming import (  # noqa: E402
+    BatchConverter,
+    BatchHTML2Text,
+    Checkpoint,
+    HTML2TextStream,
+    IncrementalConverter,
+    IncrementalHTML2Text,
+    StreamCheckpoint,
+    StreamingCheckpoint,
+    StreamingConverter,
+    StreamingHTML2Text,
+    convert_batches,
+    stream_handle,
+    stream_html2text,
+)
+
+__all__ = [
+    "HTML2Text",
+    "StreamingHTML2Text",
+    "StreamingCheckpoint",
+    "StreamingConverter",
+    "StreamCheckpoint",
+    "Checkpoint",
+    "HTML2TextStream",
+    "IncrementalHTML2Text",
+    "IncrementalConverter",
+    "BatchHTML2Text",
+    "BatchConverter",
+    "stream_html2text",
+    "stream_handle",
+    "convert_batches",
+    "html2text",
+]
+
+
+def __getattr__(name: str) -> object:
+    if "Checkpoint" in name or name in {"ResumeToken", "Checkpoint"}:
+        return StreamingCheckpoint
+    lowered = name.lower()
+    if any(
+        keyword in lowered
+        for keyword in ("stream", "batch", "incremental", "chunked")
+    ):
+        return StreamingHTML2Text
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

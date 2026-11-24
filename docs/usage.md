@@ -55,6 +55,41 @@ To customize the options provided by the module the usage is as follows:
     print(text)
 
 
+Streaming Batches
+-----------------
+
+`StreamingHTML2Text` accepts arbitrarily split `str` or UTF-8 `bytes` chunks.
+Chunks may end inside a tag, entity, or multibyte character.  `read()` returns
+only a stable Markdown prefix; concatenating every returned batch with the
+final `finish()` result is byte-for-byte equivalent to `HTML2Text.handle()`
+with the same options.
+
+    from html2text import StreamingHTML2Text
+
+    converter = StreamingHTML2Text(inline_links=False, pad_tables=True)
+    for source_position, chunk in collector.read_chunks():
+        converter.feed(chunk, position=source_position)
+        markdown_batch = converter.read()
+        if markdown_batch:
+            receiver.append(markdown_batch)
+
+    receiver.append(converter.finish())
+
+Reference-link numbers and table state stay in the converter.  Padded tables
+are withheld until their closing tag because a later row can widen a column.
+
+Call `checkpoint().dumps()` after the receiver has acknowledged a batch, and
+restore with `StreamingHTML2Text.from_checkpoint(token)`.  The checkpoint
+contains the parser state, reference numbers, unsent link definitions, source
+offset, and half-finished table buffer.  Use `memory_limit` and `spool_dir`
+to stage oversized tables on disk:
+
+    token = converter.acknowledge().dumps()
+    converter = StreamingHTML2Text.from_checkpoint(token)
+
+`stream_html2text(chunks, **options)` is also available as a generator.
+
+
 Available Options
 -----------------
 
