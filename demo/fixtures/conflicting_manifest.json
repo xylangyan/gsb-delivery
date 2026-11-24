@@ -1,0 +1,70 @@
+{
+  "series": {
+    "start": 1008,
+    "seconds": 96,
+    "range": [
+      0,
+      12
+    ]
+  },
+  "publications": [
+    "p1",
+    "p2"
+  ],
+  "target": {
+    "archives": [
+      [
+        4,
+        24
+      ],
+      [
+        12,
+        12
+      ],
+      [
+        24,
+        8
+      ]
+    ],
+    "xFilesFactor": 0.5
+  },
+  "legacy": [
+    {
+      "id": "A",
+      "archives": [
+        [
+          4,
+          24
+        ],
+        [
+          12,
+          12
+        ],
+        [
+          24,
+          8
+        ]
+      ],
+      "xFilesFactor": 0.5,
+      "aggregationMethod": "average",
+      "cells": [
+        {
+          "level": 4,
+          "start": 1008,
+          "state": "value",
+          "value": 10.0,
+          "origin": "aggregate",
+          "publication": "p1"
+        },
+        {
+          "level": 12,
+          "start": 1008,
+          "state": "value",
+          "value": 0.0,
+          "origin": "aggregate",
+          "publication": "p2"
+        }
+      ]
+    }
+  ]
+}

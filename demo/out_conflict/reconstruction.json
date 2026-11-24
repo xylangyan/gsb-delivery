@@ -1,0 +1,28 @@
+{
+  "status": "conflict",
+  "window": {
+    "start": 1008,
+    "end": 1104
+  },
+  "conflict": {
+    "kind": "minimal-core",
+    "cells": [
+      {
+        "legacy": "A",
+        "level": 4,
+        "start": 1008,
+        "value": 10.0,
+        "publication": "p1"
+      },
+      {
+        "legacy": "A",
+        "level": 12,
+        "start": 1008,
+        "value": 0.0,
+        "publication": "p2"
+      }
+    ],
+    "message": "no single surviving aggregate cell is contradictory alone"
+  },
+  "message": "the surviving legacy evidence is jointly infeasible: The problem is infeasible. (HiGHS Status 8: model_status is Infeasible; primal_status is None)"
+}

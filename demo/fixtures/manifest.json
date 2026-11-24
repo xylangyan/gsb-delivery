@@ -1,0 +1,430 @@
+{
+  "series": {
+    "start": 1008,
+    "seconds": 96,
+    "range": [
+      0,
+      12
+    ],
+    "known": [
+      {
+        "second": 1088,
+        "value": 0.0
+      },
+      {
+        "second": 1089,
+        "value": 0.0
+      },
+      {
+        "second": 1090,
+        "value": 0.0
+      },
+      {
+        "second": 1091,
+        "value": 0.0
+      },
+      {
+        "second": 1092,
+        "value": 0.0
+      },
+      {
+        "second": 1093,
+        "value": 0.0
+      },
+      {
+        "second": 1094,
+        "value": 0.0
+      },
+      {
+        "second": 1095,
+        "value": 0.0
+      }
+    ]
+  },
+  "publications": [
+    "A-2026-01-05",
+    "B-2026-01-06",
+    "A-2026-03-01",
+    "B-2026-03-02",
+    "A-2026-04-09"
+  ],
+  "target": {
+    "archives": [
+      [
+        4,
+        24
+      ],
+      [
+        12,
+        12
+      ],
+      [
+        24,
+        8
+      ]
+    ],
+    "xFilesFactor": 0.5,
+    "aggregationMethod": "average",
+    "path": "handover.wsp"
+  },
+  "legacy": [
+    {
+      "id": "A",
+      "file": "demo/fixtures/machine_a.wsp",
+      "archives": [
+        [
+          4,
+          24
+        ],
+        [
+          24,
+          8
+        ]
+      ],
+      "xFilesFactor": 0.25,
+      "aggregationMethod": "average",
+      "cells": [
+        {
+          "level": 4,
+          "start": 1008,
+          "state": "value",
+          "value": 4.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1012,
+          "state": "value",
+          "value": 6.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1016,
+          "state": "value",
+          "value": 8.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1020,
+          "state": "value",
+          "value": 3.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1024,
+          "state": "value",
+          "value": 5.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1028,
+          "state": "value",
+          "value": 7.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1032,
+          "state": "value",
+          "value": 6.25,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1036,
+          "state": "value",
+          "value": 5.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1040,
+          "state": "value",
+          "value": 7.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1044,
+          "state": "value",
+          "value": 5.75,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1048,
+          "state": "value",
+          "value": 4.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1052,
+          "state": "value",
+          "value": 6.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1068,
+          "state": "value",
+          "value": 8.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1072,
+          "state": "value",
+          "value": 3.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1076,
+          "state": "value",
+          "value": 5.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1080,
+          "state": "value",
+          "value": 7.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1084,
+          "state": "value",
+          "value": 6.25,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1088,
+          "state": "value",
+          "value": 0.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1092,
+          "state": "value",
+          "value": 0.0,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1096,
+          "state": "value",
+          "value": 5.75,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1100,
+          "state": "value",
+          "value": 4.5,
+          "origin": "aggregate",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1056,
+          "state": "empty",
+          "reason": "threshold",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1060,
+          "state": "empty",
+          "reason": "threshold",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 4,
+          "start": 1064,
+          "state": "empty",
+          "reason": "threshold",
+          "publication": "A-2026-03-01"
+        },
+        {
+          "level": 24,
+          "start": 1032,
+          "state": "value",
+          "value": 6.0,
+          "origin": "direct",
+          "publication": "A-2026-04-09"
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "file": "demo/fixtures/machine_b.wsp",
+      "archives": [
+        [
+          6,
+          16
+        ],
+        [
+          24,
+          8
+        ]
+      ],
+      "xFilesFactor": 0.75,
+      "aggregationMethod": "average",
+      "cells": [
+        {
+          "level": 6,
+          "start": 1008,
+          "state": "value",
+          "value": 4.5,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1014,
+          "state": "value",
+          "value": 7.5,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1020,
+          "state": "lost",
+          "reason": "rollover",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1026,
+          "state": "value",
+          "value": 7.0,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1032,
+          "state": "value",
+          "value": 5.666666666666667,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1038,
+          "state": "value",
+          "value": 6.5,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1044,
+          "state": "value",
+          "value": 5.166666666666667,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1050,
+          "state": "value",
+          "value": 6.0,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1056,
+          "state": "empty",
+          "reason": "threshold",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1062,
+          "state": "empty",
+          "reason": "threshold",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1068,
+          "state": "value",
+          "value": 6.333333333333333,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1074,
+          "state": "value",
+          "value": 5.0,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1080,
+          "state": "value",
+          "value": 8.0,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1086,
+          "state": "value",
+          "value": 1.1666666666666667,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1092,
+          "state": "value",
+          "value": 2.8333333333333335,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        },
+        {
+          "level": 6,
+          "start": 1098,
+          "state": "value",
+          "value": 4.0,
+          "origin": "aggregate",
+          "publication": "B-2026-03-02"
+        }
+      ]
+    }
+  ]
+}

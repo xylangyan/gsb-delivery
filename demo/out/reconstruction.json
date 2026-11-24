@@ -1,0 +1,3231 @@
+{
+  "window": {
+    "start": 1008,
+    "end": 1104
+  },
+  "target_archives": [
+    {
+      "step": 4,
+      "points": 24
+    },
+    {
+      "step": 12,
+      "points": 12
+    },
+    {
+      "step": 24,
+      "points": 8
+    }
+  ],
+  "seconds": {
+    "value": 8,
+    "bounded": 76,
+    "missing": 12
+  },
+  "seconds_detail": [
+    {
+      "second": 1008,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1009,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1010,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1011,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1012,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1013,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1014,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1015,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1016,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1017,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1018,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1019,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1020,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1021,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1022,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1023,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1024,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1025,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1026,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1027,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1028,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1029,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1030,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1031,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1032,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1033,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1034,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1035,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1036,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        9.0
+      ]
+    },
+    {
+      "second": 1037,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        9.0
+      ]
+    },
+    {
+      "second": 1038,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        11.0
+      ]
+    },
+    {
+      "second": 1039,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        10.999999999999996
+      ]
+    },
+    {
+      "second": 1040,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1041,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1042,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1043,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1044,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1045,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1046,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1047,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1048,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        7.99999999999995
+      ]
+    },
+    {
+      "second": 1049,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        7.999999999999959
+      ]
+    },
+    {
+      "second": 1050,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        10.0
+      ]
+    },
+    {
+      "second": 1051,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        9.999999999999996
+      ]
+    },
+    {
+      "second": 1052,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1053,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1054,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1055,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1056,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1057,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1058,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1059,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1060,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1061,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1062,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1063,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1064,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1065,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1066,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1067,
+      "state": "missing",
+      "value": null,
+      "range": null
+    },
+    {
+      "second": 1068,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1069,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1070,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1071,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1072,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        6.0
+      ]
+    },
+    {
+      "second": 1073,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        6.000000000000002
+      ]
+    },
+    {
+      "second": 1074,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        8.000000000000004
+      ]
+    },
+    {
+      "second": 1075,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        8.000000000000007
+      ]
+    },
+    {
+      "second": 1076,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1077,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1078,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        -0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1079,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1080,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1081,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1082,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1083,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1084,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        6.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1085,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        5.999999999999991,
+        12.0
+      ]
+    },
+    {
+      "second": 1086,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        7.000000000000001
+      ]
+    },
+    {
+      "second": 1087,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        7.000000000000001
+      ]
+    },
+    {
+      "second": 1088,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1089,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1090,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1091,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1092,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1093,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1094,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1095,
+      "state": "value",
+      "value": 0.0,
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "second": 1096,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        5.000000000000002,
+        12.0
+      ]
+    },
+    {
+      "second": 1097,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        5.000000000000002,
+        12.0
+      ]
+    },
+    {
+      "second": 1098,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        5.999999999999998
+      ]
+    },
+    {
+      "second": 1099,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        5.999999999999998
+      ]
+    },
+    {
+      "second": 1100,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1101,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1102,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    },
+    {
+      "second": 1103,
+      "state": "bounded",
+      "value": null,
+      "range": [
+        0.0,
+        12.0
+      ]
+    }
+  ],
+  "levels": [
+    {
+      "level": 4,
+      "value": 20,
+      "pending": 1,
+      "missing": 3,
+      "pending_presence": 1,
+      "pending_value": 0,
+      "cells": [
+        {
+          "level": 4,
+          "start": 1008,
+          "end": 1012,
+          "state": "value",
+          "value": 4.0,
+          "range": [
+            4.0,
+            4.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1008,
+              "value": 4.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1008,
+              "value": 4.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1008,
+              "value": 4.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1008,
+              "value": 4.5,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1012,
+          "end": 1016,
+          "state": "value",
+          "value": 6.0000000000000036,
+          "range": [
+            6.0,
+            6.000000000000007
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1012,
+              "value": 6.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1014,
+              "value": 7.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1012,
+              "value": 6.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1014,
+              "value": 7.5,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1016,
+          "end": 1020,
+          "state": "value",
+          "value": 7.999999999999996,
+          "range": [
+            7.999999999999991,
+            8.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1016,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1016,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1020,
+          "end": 1024,
+          "state": "pending",
+          "value": null,
+          "range": [
+            3.5,
+            3.5
+          ],
+          "pending_reason": "presence",
+          "presence": [
+            0.0,
+            1.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1020,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1020,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            }
+          ],
+          "to_change": {
+            "cell_range": [
+              3.5,
+              3.5
+            ],
+            "width": 0.0,
+            "widest_second": {
+              "second": 1020,
+              "range": [
+                0.0,
+                12.0
+              ],
+              "span": 12.0
+            },
+            "unresolved_seconds": [
+              {
+                "second": 1020,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1021,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1022,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1023,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              }
+            ]
+          }
+        },
+        {
+          "level": 4,
+          "start": 1024,
+          "end": 1028,
+          "state": "value",
+          "value": 5.5,
+          "range": [
+            5.499999999999999,
+            5.5
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1024,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1026,
+              "value": 7.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1024,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1026,
+              "value": 7.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1028,
+          "end": 1032,
+          "state": "value",
+          "value": 7.4999999999999964,
+          "range": [
+            7.499999999999992,
+            7.5
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1028,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1028,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1032,
+          "end": 1036,
+          "state": "value",
+          "value": 6.25,
+          "range": [
+            6.25,
+            6.25
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1032,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1032,
+              "value": 5.666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1032,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1032,
+              "value": 5.666666666666667,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1036,
+          "end": 1040,
+          "state": "value",
+          "value": 5.0,
+          "range": [
+            5.0,
+            5.000000000000001
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1036,
+              "value": 5.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1038,
+              "value": 6.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1036,
+              "value": 5.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1038,
+              "value": 6.5,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1040,
+          "end": 1044,
+          "state": "value",
+          "value": 7.0,
+          "range": [
+            7.0,
+            7.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1040,
+              "value": 7.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1040,
+              "value": 7.0,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1044,
+          "end": 1048,
+          "state": "value",
+          "value": 5.75,
+          "range": [
+            5.75,
+            5.75
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1044,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1044,
+              "value": 5.166666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1044,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1044,
+              "value": 5.166666666666667,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1048,
+          "end": 1052,
+          "state": "value",
+          "value": 4.500000000000009,
+          "range": [
+            4.499999999999998,
+            4.50000000000002
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1048,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1050,
+              "value": 6.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1048,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1050,
+              "value": 6.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1052,
+          "end": 1056,
+          "state": "value",
+          "value": 6.500000000000009,
+          "range": [
+            6.5,
+            6.500000000000017
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1052,
+              "value": 6.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1052,
+              "value": 6.5,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1056,
+          "end": 1060,
+          "state": "missing",
+          "value": null,
+          "range": null,
+          "evidence": []
+        },
+        {
+          "level": 4,
+          "start": 1060,
+          "end": 1064,
+          "state": "missing",
+          "value": null,
+          "range": null,
+          "evidence": []
+        },
+        {
+          "level": 4,
+          "start": 1064,
+          "end": 1068,
+          "state": "missing",
+          "value": null,
+          "range": null,
+          "evidence": []
+        },
+        {
+          "level": 4,
+          "start": 1068,
+          "end": 1072,
+          "state": "value",
+          "value": 7.999999999999993,
+          "range": [
+            7.999999999999987,
+            8.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1068,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1068,
+              "value": 6.333333333333333,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1068,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1068,
+              "value": 6.333333333333333,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1072,
+          "end": 1076,
+          "state": "value",
+          "value": 3.5000000000000004,
+          "range": [
+            3.5,
+            3.500000000000001
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1072,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1074,
+              "value": 5.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1072,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1074,
+              "value": 5.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1076,
+          "end": 1080,
+          "state": "value",
+          "value": 5.5,
+          "range": [
+            5.5,
+            5.5
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1076,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1076,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1080,
+          "end": 1084,
+          "state": "value",
+          "value": 7.5,
+          "range": [
+            7.5,
+            7.5
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1080,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1080,
+              "value": 8.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1080,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1080,
+              "value": 8.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1084,
+          "end": 1088,
+          "state": "value",
+          "value": 6.25,
+          "range": [
+            6.25,
+            6.25
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1084,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1086,
+              "value": 1.1666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1084,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1086,
+              "value": 1.1666666666666667,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1088,
+          "end": 1092,
+          "state": "value",
+          "value": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1088,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1088,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1092,
+          "end": 1096,
+          "state": "value",
+          "value": 0.0,
+          "range": [
+            0.0,
+            0.0
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1092,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1092,
+              "value": 2.8333333333333335,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1092,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1092,
+              "value": 2.8333333333333335,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1096,
+          "end": 1100,
+          "state": "value",
+          "value": 5.75,
+          "range": [
+            5.75,
+            5.75
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1096,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1098,
+              "value": 4.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1096,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1098,
+              "value": 4.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 4,
+          "start": 1100,
+          "end": 1104,
+          "state": "value",
+          "value": 4.5,
+          "range": [
+            4.5,
+            4.5
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1100,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1100,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "level": 12,
+      "value": 6,
+      "pending": 1,
+      "missing": 1,
+      "pending_presence": 0,
+      "pending_value": 1,
+      "cells": [
+        {
+          "level": 12,
+          "start": 1008,
+          "end": 1020,
+          "state": "value",
+          "value": 6.0000000000000036,
+          "range": [
+            5.999999999999989,
+            6.000000000000019
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1008,
+              "value": 4.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1012,
+              "value": 6.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1016,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1008,
+              "value": 4.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1014,
+              "value": 7.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1008,
+              "value": 4.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1012,
+              "value": 6.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1016,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1008,
+              "value": 4.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1014,
+              "value": 7.5,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 12,
+          "start": 1020,
+          "end": 1032,
+          "state": "pending",
+          "value": null,
+          "range": [
+            5.49999999999995,
+            6.500000000000043
+          ],
+          "pending_reason": "value-range",
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1020,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1024,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1028,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1026,
+              "value": 7.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1020,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1024,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1028,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1026,
+              "value": 7.0,
+              "publication": "B-2026-03-02"
+            }
+          ],
+          "to_change": {
+            "cell_range": [
+              5.49999999999995,
+              6.500000000000043
+            ],
+            "width": 1.0000000000000924,
+            "widest_second": {
+              "second": 1020,
+              "range": [
+                0.0,
+                12.0
+              ],
+              "span": 12.0
+            },
+            "unresolved_seconds": [
+              {
+                "second": 1020,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1021,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1022,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1023,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1024,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1025,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1026,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1027,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1028,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1029,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1030,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1031,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              }
+            ]
+          }
+        },
+        {
+          "level": 12,
+          "start": 1032,
+          "end": 1044,
+          "state": "value",
+          "value": 6.083333333333337,
+          "range": [
+            6.083333333333332,
+            6.083333333333341
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1032,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1036,
+              "value": 5.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1040,
+              "value": 7.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1032,
+              "value": 5.666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1038,
+              "value": 6.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1032,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1036,
+              "value": 5.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1040,
+              "value": 7.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1032,
+              "value": 5.666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1038,
+              "value": 6.5,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 12,
+          "start": 1044,
+          "end": 1056,
+          "state": "value",
+          "value": 5.58333333333333,
+          "range": [
+            5.583333333333329,
+            5.583333333333333
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1044,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1048,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1052,
+              "value": 6.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1044,
+              "value": 5.166666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1050,
+              "value": 6.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1044,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1048,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1052,
+              "value": 6.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1044,
+              "value": 5.166666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1050,
+              "value": 6.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 12,
+          "start": 1056,
+          "end": 1068,
+          "state": "missing",
+          "value": null,
+          "range": null,
+          "evidence": []
+        },
+        {
+          "level": 12,
+          "start": 1068,
+          "end": 1080,
+          "state": "value",
+          "value": 5.666666666666667,
+          "range": [
+            5.666666666666667,
+            5.666666666666667
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1068,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1072,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1076,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1068,
+              "value": 6.333333333333333,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1074,
+              "value": 5.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1068,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1072,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1076,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1068,
+              "value": 6.333333333333333,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1074,
+              "value": 5.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 12,
+          "start": 1080,
+          "end": 1092,
+          "state": "value",
+          "value": 4.58333333333334,
+          "range": [
+            4.583333333333334,
+            4.583333333333346
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1080,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1084,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1088,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1080,
+              "value": 8.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1086,
+              "value": 1.1666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1080,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1084,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1088,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1080,
+              "value": 8.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1086,
+              "value": 1.1666666666666667,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 12,
+          "start": 1092,
+          "end": 1104,
+          "state": "value",
+          "value": 3.4166666666666665,
+          "range": [
+            3.4166666666666665,
+            3.4166666666666665
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1092,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1096,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1100,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1092,
+              "value": 2.8333333333333335,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1098,
+              "value": 4.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1092,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1096,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1100,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1092,
+              "value": 2.8333333333333335,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1098,
+              "value": 4.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "level": 24,
+      "value": 3,
+      "pending": 1,
+      "missing": 0,
+      "pending_presence": 0,
+      "pending_value": 1,
+      "cells": [
+        {
+          "level": 24,
+          "start": 1008,
+          "end": 1032,
+          "state": "pending",
+          "value": null,
+          "range": [
+            5.749999999999965,
+            6.249999999999998
+          ],
+          "pending_reason": "value-range",
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1008,
+              "value": 4.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1012,
+              "value": 6.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1016,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1020,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1024,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1028,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1008,
+              "value": 4.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1014,
+              "value": 7.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1026,
+              "value": 7.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1008,
+              "value": 4.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1012,
+              "value": 6.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1016,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1020,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1024,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1028,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1008,
+              "value": 4.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1014,
+              "value": 7.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1026,
+              "value": 7.0,
+              "publication": "B-2026-03-02"
+            }
+          ],
+          "to_change": {
+            "cell_range": [
+              5.749999999999965,
+              6.249999999999998
+            ],
+            "width": 0.5000000000000329,
+            "widest_second": {
+              "second": 1008,
+              "range": [
+                0.0,
+                12.0
+              ],
+              "span": 12.0
+            },
+            "unresolved_seconds": [
+              {
+                "second": 1008,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1009,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1010,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1011,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1012,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1013,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1014,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1015,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1016,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1017,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1018,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1019,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1020,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1021,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1022,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1023,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1024,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1025,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1026,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1027,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1028,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1029,
+                "range": [
+                  0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1030,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              },
+              {
+                "second": 1031,
+                "range": [
+                  -0.0,
+                  12.0
+                ],
+                "span": 12.0
+              }
+            ]
+          }
+        },
+        {
+          "level": 24,
+          "start": 1032,
+          "end": 1056,
+          "state": "value",
+          "value": 5.833333333333334,
+          "range": [
+            5.833333333333333,
+            5.833333333333336
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1032,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1036,
+              "value": 5.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1040,
+              "value": 7.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1044,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1048,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1052,
+              "value": 6.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1032,
+              "value": 5.666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1038,
+              "value": 6.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1044,
+              "value": 5.166666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1050,
+              "value": 6.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1032,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1036,
+              "value": 5.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1040,
+              "value": 7.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1044,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1048,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1052,
+              "value": 6.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1032,
+              "value": 5.666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1038,
+              "value": 6.5,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1044,
+              "value": 5.166666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1050,
+              "value": 6.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 24,
+          "start": 1056,
+          "end": 1080,
+          "state": "value",
+          "value": 5.666666666666667,
+          "range": [
+            5.666666666666667,
+            5.666666666666667
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1068,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1072,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1076,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1068,
+              "value": 6.333333333333333,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1074,
+              "value": 5.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1068,
+              "value": 8.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1072,
+              "value": 3.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1076,
+              "value": 5.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1068,
+              "value": 6.333333333333333,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1074,
+              "value": 5.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        },
+        {
+          "level": 24,
+          "start": 1080,
+          "end": 1104,
+          "state": "value",
+          "value": 4.000000000000002,
+          "range": [
+            4.0,
+            4.000000000000004
+          ],
+          "evidence": [
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1080,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1084,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1088,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1092,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1096,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 4,
+              "start": 1100,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1080,
+              "value": 8.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1086,
+              "value": 1.1666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1092,
+              "value": 2.8333333333333335,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "A",
+              "level": 6,
+              "start": 1098,
+              "value": 4.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1080,
+              "value": 7.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1084,
+              "value": 6.25,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1088,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1092,
+              "value": 0.0,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1096,
+              "value": 5.75,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 4,
+              "start": 1100,
+              "value": 4.5,
+              "publication": "A-2026-03-01"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1080,
+              "value": 8.0,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1086,
+              "value": 1.1666666666666667,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1092,
+              "value": 2.8333333333333335,
+              "publication": "B-2026-03-02"
+            },
+            {
+              "legacy": "B",
+              "level": 6,
+              "start": 1098,
+              "value": 4.0,
+              "publication": "B-2026-03-02"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "provenance": [
+    {
+      "legacy": "A",
+      "level": 24,
+      "start": 1032,
+      "value": 6.0,
+      "publication": "A-2026-04-09",
+      "note": "direct write; excluded from reconstruction evidence"
+    }
+  ],
+  "ignored_cells": [
+    {
+      "legacy": "B",
+      "level": 6,
+      "start": 1020,
+      "reason": "rollover hole; slot not used"
+    }
+  ],
+  "conflicts": [],
+  "timing": {
+    "solve_seconds": 0.04469776153564453
+  },
+  "target_file": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261125/control/questions/GSB1109-20261122-BAO-WHISPER-ARCHIVE-01/workspace/demo/out/handover.wsp",
+  "readback": [
+    {
+      "level": 4,
+      "from": 1008,
+      "until": 1104,
+      "step": 4,
+      "values": [
+        4.0,
+        6.0000000000000036,
+        7.999999999999996,
+        null,
+        5.5,
+        7.4999999999999964,
+        6.25,
+        5.0,
+        7.0,
+        5.75,
+        4.500000000000009,
+        6.500000000000009,
+        null,
+        null,
+        null,
+        7.999999999999993,
+        3.5000000000000004,
+        5.5,
+        7.5,
+        6.25,
+        0.0,
+        0.0,
+        5.75,
+        4.5
+      ]
+    },
+    {
+      "level": 12,
+      "from": 1008,
+      "until": 1104,
+      "step": 12,
+      "values": [
+        6.0000000000000036,
+        null,
+        6.083333333333337,
+        5.58333333333333,
+        null,
+        5.666666666666667,
+        4.58333333333334,
+        3.4166666666666665
+      ]
+    },
+    {
+      "level": 24,
+      "from": 1008,
+      "until": 1104,
+      "step": 24,
+      "values": [
+        null,
+        5.833333333333334,
+        5.666666666666667,
+        4.000000000000002
+      ]
+    }
+  ],
+  "status": "ok"
+}
