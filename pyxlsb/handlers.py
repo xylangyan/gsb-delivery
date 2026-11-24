@@ -125,7 +125,67 @@ class CellHandler(Handler):
       val = reader.read_byte() != 0
     elif recid == biff12.FORMULA_BOOLERR:
       val = hex(reader.read_byte())
-    return self.cls._make([col, val, None, style])
+    formula = None
+    if biff12.FORMULA_STRING <= recid <= biff12.FORMULA_BOOLERR:
+      formula = self._read_parsed_formula(reader)
+    return self.cls._make([col, val, formula, style])
+
+  def _read_parsed_formula(self, reader):
+    cb = reader.read_int()
+    if cb is None:
+      return RawFormula(b'', b'')
+    rgce = reader.read(cb)
+    cb_extra = reader.read_int()
+    extra = reader.read(cb_extra) if cb_extra else b''
+    return RawFormula(rgce, extra or b'')
+
+
+class RawFormula(object):
+  """Raw CellParsedFormula payload (Rgce plus optional RgceExtra)."""
+  __slots__ = ('rgce', 'extra')
+
+  def __init__(self, rgce, extra=b''):
+    self.rgce = rgce
+    self.extra = extra
+
+  def __repr__(self):
+    return 'RawFormula({} bytes rgce, {} bytes extra)'.format(
+      len(self.rgce), len(self.extra))
+
+
+class GroupFormulaHandler(Handler):
+  """BrtShrFmla (0x0041): rfx followed directly by CellParsedFormula."""
+  cls = namedtuple('groupfmla', ['r', 'c', 'h', 'w', 'rgce', 'extra'])
+
+  def read(self, reader, recid, reclen):
+    r1 = reader.read_int()
+    r2 = reader.read_int()
+    c1 = reader.read_int()
+    c2 = reader.read_int()
+    cb = reader.read_int()
+    rgce = reader.read(cb) if cb else b''
+    cb_extra = reader.read_int()
+    extra = reader.read(cb_extra) if cb_extra else b''
+    return self.cls._make([r1, c1, r2 - r1 + 1, c2 - c1 + 1, rgce, extra or b''])
+
+
+class ArrayFormulaHandler(Handler):
+  """BrtArrFmla (0x0040): rfx, fAlwaysCalc byte, then CellParsedFormula."""
+  cls = namedtuple('arrayfmla', ['r', 'c', 'h', 'w', 'always_calc',
+                                 'rgce', 'extra'])
+
+  def read(self, reader, recid, reclen):
+    r1 = reader.read_int()
+    r2 = reader.read_int()
+    c1 = reader.read_int()
+    c2 = reader.read_int()
+    always_calc = reader.read_byte()
+    cb = reader.read_int()
+    rgce = reader.read(cb) if cb else b''
+    cb_extra = reader.read_int()
+    extra = reader.read(cb_extra) if cb_extra else b''
+    return self.cls._make([r1, c1, r2 - r1 + 1, c2 - c1 + 1,
+                           bool(always_calc), rgce, extra or b''])
 
 
 class HyperlinkHandler(Handler):

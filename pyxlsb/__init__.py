@@ -2,6 +2,8 @@ from .handlers import Handler
 from .reader import BIFF12Reader
 from .workbook import Workbook
 from .worksheet import Worksheet
+from .reconcile import (EQUIVALENT, DIFFERENT, PENDING, Reconciler, Report,
+                        make_spec, reconcile)
 
 __version__ = '1.0.11'
 

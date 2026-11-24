@@ -114,6 +114,8 @@ class BIFF12Reader(object):
     biff12.FORMULA_FLOAT:   CellHandler(),
     biff12.FORMULA_BOOL:    CellHandler(),
     biff12.FORMULA_BOOLERR: CellHandler(),
+    biff12.ARRFMLA:         ArrayFormulaHandler(),
+    biff12.SHRFMLA:         GroupFormulaHandler(),
     biff12.HYPERLINK:       HyperlinkHandler()
   }
 
