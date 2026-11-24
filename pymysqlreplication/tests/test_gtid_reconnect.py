@@ -169,5 +169,123 @@ class GtidReconnectTest(unittest.TestCase):
             self.assertIn(cls, in_packet)
 
 
+class DeliveryCheckpointIntegrationTest(unittest.TestCase):
+    def build_reader(self, wrappers, checkpoint, source="A", only_events=None):
+        reader = BinLogStreamReader(
+            connection_settings={},
+            server_id=100,
+            auto_position=f"{SID_TEXT}:1-5",
+            only_events=only_events if only_events is not None else [WriteRowsEvent],
+            delivery_checkpoint=checkpoint,
+            delivery_source=source,
+        )
+        reader._BinLogStreamReader__connected_stream = True
+        reader._BinLogStreamReader__connected_ctl = True
+        reader._ctl_connection = mock.Mock()
+        packet = mock.Mock()
+        packet.is_eof_packet.return_value = False
+        packet.is_ok_packet.return_value = True
+        reader._stream_connection = mock.Mock()
+        reader._stream_connection._read_packet.return_value = packet
+        reader._stream_connection.read_packet.return_value = packet
+        return reader
+
+    def drain(self, reader, wrappers):
+        """Return the events visible to the caller while feeding all wrappers.
+
+        Once the synthetic wrappers are exhausted the connection reports EOF,
+        which lets the reader stop instead of trying to reconnect for real.
+        """
+
+        packets = iter(wrappers)
+        eof = mock.Mock()
+        eof.is_eof_packet.return_value = True
+        eof.is_ok_packet.return_value = False
+        exhausted = {"value": False}
+
+        def read_packet():
+            return (
+                eof
+                if exhausted["value"]
+                else reader._stream_connection._read_packet.return_value
+            )
+
+        def make_wrapper(*args, **kwargs):
+            try:
+                return next(packets)
+            except StopIteration:
+                exhausted["value"] = True
+                return mock.Mock(event=None, event_type=9999, timestamp=0, log_pos=0)
+
+        reader._stream_connection._read_packet.side_effect = read_packet
+        reader._stream_connection.read_packet.side_effect = read_packet
+        visible = []
+        with mock.patch.object(
+            binlogstream, "BinLogPacketWrapper", side_effect=make_wrapper
+        ):
+            while True:
+                event = reader.fetchone()
+                if event is None:
+                    break
+                visible.append(event)
+        return visible
+
+    def row_event(self, key=1):
+        event = WriteRowsEvent.__new__(WriteRowsEvent)
+        event.schema = "warehouse"
+        event.table = "orders"
+        event.primary_key = "id"
+        event.event_type = WRITE_ROWS_EVENT_V2
+        event._RowsEvent__rows = [
+            {
+                "values": {"id": key, "amount": 5},
+                "none_sources": {},
+            }
+        ]
+        return event
+
+    def xa_prepare_event(self, gtrid="order-1"):
+        event = XAPrepareEvent.__new__(XAPrepareEvent)
+        event.one_phase = False
+        event.xid_format_id = 1
+        event.xid_gtrid = gtrid.encode()
+        event.xid_bqual = b""
+        return event
+
+    def test_reader_feeds_checkpoint_without_changing_returned_events(self):
+        from pymysqlreplication.delivery import DeliveryCheckpoint
+
+        checkpoint = DeliveryCheckpoint(default_source="A")
+        row = self.row_event()
+        wrappers = [
+            wrapper(gtid_event(6), GTID_LOG_EVENT),
+            wrapper(begin_event(), 2),
+            wrapper(row, WRITE_ROWS_EVENT_V2),
+            wrapper(self.xa_prepare_event(), 0x26),
+            wrapper(XidEvent.__new__(XidEvent), XID_EVENT),
+        ]
+        reader = self.build_reader(wrappers, checkpoint)
+        visible = self.drain(reader, wrappers)
+        # The caller only asked for row events; only the one row event was
+        # returned, while the GTID/BEGIN/XA boundaries were recorded.
+        self.assertEqual(visible, [row])
+        self.assertEqual(len(checkpoint.prepared_only()), 1)
+        self.assertEqual(len(checkpoint.prepared_only()[0].rows), 1)
+        # Reading a group's prepare GTID is a stream cursor, not a target
+        # confirmation.
+        self.assertEqual(checkpoint.stream_read_gtids("A"), {f"{SID_TEXT}:6"})
+        self.assertEqual(checkpoint.target_confirmed_gtids(), set())
+
+    def test_old_reader_without_checkpoint_is_unchanged(self):
+        reader = BinLogStreamReader(
+            connection_settings={},
+            server_id=100,
+            only_events=[WriteRowsEvent],
+        )
+        self.assertIsNone(reader.delivery_checkpoint)
+        in_packet = reader._BinLogStreamReader__allowed_events_in_packet
+        self.assertNotIn(GtidEvent, in_packet)
+
+
 if __name__ == "__main__":
     unittest.main()

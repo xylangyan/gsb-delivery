@@ -1,3 +1,10 @@
+1.0.17 24/11/2026
+
+* Add ``DeliveryCheckpoint``: a resumable, JSON-serialisable delivery record for XA transactions read from two overlapping sources.
+* Record XA ``PREPARE`` rows locally and join a later ``XA COMMIT``/``XA ROLLBACK`` from another source by XA identity and GTID-group evidence.
+* Separate stream-read evidence from target-warehouse receipts; bind each receipt to one transaction attempt and reject reuse across a reused XA name.
+* Support complete and tail-only mirror manifests, publish every final transaction at most once, and retain blocked groups and missing ranges.
+
 1.0.16 12/07/2026
 
 * Parse FormatDescriptionEvent post-header lengths and use them to align event payloads.

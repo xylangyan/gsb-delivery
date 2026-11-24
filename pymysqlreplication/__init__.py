@@ -21,3 +21,4 @@ limitations under the License.
 """
 
 from .binlogstream import BinLogStreamReader
+from .delivery import DeliveryCheckpoint, MirrorManifest, XAIdentity

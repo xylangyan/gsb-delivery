@@ -192,6 +192,8 @@ class BinLogStreamReader(object):
         verify_checksum=False,
         enable_logging=True,
         use_column_name_cache=False,
+        delivery_checkpoint=None,
+        delivery_source=None,
     ):
         """
         Attributes:
@@ -236,6 +238,13 @@ class BinLogStreamReader(object):
                             When set to False, logging is disabled to enhance performance.
             use_column_name_cache: If true, enables caching of column names from INFORMATION_SCHEMA
                             for MySQL 5.7 compatibility when binlog metadata is missing. Default is False.
+            delivery_checkpoint: Optional :class:`~pymysqlreplication.delivery.DeliveryCheckpoint`
+                            or path to one. When given, every decoded event is also recorded
+                            in the checkpoint so XA prepared rows, final results and the
+                            resume position survive a source switch and a reopen. The
+                            normal event stream returned to the caller is unchanged.
+            delivery_source: Name of the source feeding this reader (for example
+                            ``"A"`` or ``"B"``). Used only with ``delivery_checkpoint``.
         """
 
         self.__connection_settings = connection_settings
@@ -263,6 +272,18 @@ class BinLogStreamReader(object):
         self.__enable_logging = enable_logging
         self.__use_column_name_cache = use_column_name_cache
 
+        self.delivery_checkpoint = None
+        self.delivery_source = delivery_source
+        if delivery_checkpoint is not None:
+            from .delivery import DeliveryCheckpoint
+
+            if isinstance(delivery_checkpoint, DeliveryCheckpoint):
+                self.delivery_checkpoint = delivery_checkpoint
+            else:
+                self.delivery_checkpoint = DeliveryCheckpoint.load(delivery_checkpoint)
+            if delivery_source:
+                self.delivery_checkpoint.set_source(delivery_source)
+
         # We can't filter on packet level TABLE_MAP and rotate event because
         # we need them for handling other operations
         self.__allowed_events_in_packet = frozenset(
@@ -273,6 +294,23 @@ class BinLogStreamReader(object):
             # even when the caller filtered them out.
             self.__allowed_events_in_packet = self.__allowed_events_in_packet.union(
                 [GtidEvent, XidEvent, QueryEvent, XAPrepareEvent]
+            )
+        if self.delivery_checkpoint is not None:
+            # Delivery needs the transaction boundaries, XA events and row
+            # events even when the caller only filtered for its own subset.
+            # The final `__allowed_events` check in fetchone still decides
+            # what the caller sees, so the old stream contract is unchanged.
+            self.__allowed_events_in_packet = self.__allowed_events_in_packet.union(
+                [
+                    GtidEvent,
+                    XidEvent,
+                    QueryEvent,
+                    XAPrepareEvent,
+                    WriteRowsEvent,
+                    UpdateRowsEvent,
+                    DeleteRowsEvent,
+                    PartialUpdateRowsEvent,
+                ]
             )
 
         self.__server_id = server_id
@@ -725,6 +763,15 @@ class BinLogStreamReader(object):
             )
 
             self._track_executed_gtid(binlog_event.event)
+
+            if self.delivery_checkpoint is not None:
+                self.delivery_checkpoint.observe_event(
+                    binlog_event.event,
+                    source=self.delivery_source,
+                    event_type=binlog_event.event_type,
+                    log_file=self.log_file,
+                    log_pos=binlog_event.log_pos,
+                )
 
             if binlog_event.event_type == ROTATE_EVENT:
                 # Table IDs may be reused after a server restart, which also

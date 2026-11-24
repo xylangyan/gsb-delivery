@@ -28,6 +28,7 @@ Contents
     limitations
     mysql57_support
     binlogstream
+    delivery_checkpoint
     events
     examples
     support

@@ -124,6 +124,33 @@ reference: https://dev.mysql.com/doc/refman/8.0/en/replication-options-binary-lo
 
 All examples are available in the [examples directory](https://github.com/noplay/python-mysql-replication/tree/main/examples)
 
+For a warehouse delivery that must survive a source switch and an XA
+transaction split across two sources, pass a `DeliveryCheckpoint`. It records
+prepared rows, final results, target receipts, missing ranges and per-source
+resume positions without changing the events returned to the caller:
+
+```python
+from pymysqlreplication import BinLogStreamReader, DeliveryCheckpoint
+
+checkpoint = DeliveryCheckpoint(path="delivery.json", default_source="A")
+stream = BinLogStreamReader(
+    connection_settings=mysql_settings,
+    server_id=100,
+    auto_position="3E11FA47-71CA-11E1-9E33-C80AA9429562:1-100",
+    delivery_checkpoint=checkpoint,
+    delivery_source="A",
+)
+
+for binlogevent in stream:
+    process(binlogevent)
+
+checkpoint.publish()   # each complete final transaction once
+checkpoint.verify()    # duplicate/incomplete publications, blocked groups
+```
+
+See [docs/delivery_checkpoint.rst](docs/delivery_checkpoint.rst) for XA
+prepare/commit semantics, mirror manifests and target confirmations.
+
 This example will dump all replication events to the console:
 
 ```python
