@@ -1,0 +1,60 @@
+Pre-checking ambiguous readings
+===============================
+
+.. module:: formencode.precheck
+
+When a form is filled in from an uncertain source -- for example a
+scanner that offers two or three possible *readings* for some
+fragments of a page -- it is useful to know, before submitting
+anything, how many distinct complete forms could pass validation.
+
+:func:`precheck` answers exactly that, locally.  Each fragment is a
+sequence of alternative readings; a reading is a mapping (or an
+iterable of pairs) of control names to values.  Every fragment
+contributes exactly one of its readings; when several chosen readings
+name the same control, every value is kept in fragment order, just
+like a repeated query-string variable.  The combinations are decoded
+with :func:`formencode.variabledecode.variable_decode` and validated
+with the schema, and the *distinct* successful results are counted --
+two readings that decode and convert to the same form (say ``'3'``
+and ``'03'`` for an ``Int``) count only once.
+
+::
+
+    >>> from formencode import Schema, validators, precheck
+    >>> class MySchema(Schema):
+    ...     qty = validators.Int(if_empty=0, if_missing=0)
+    >>> result = precheck(MySchema(), [[{'qty': ''}, {}]])
+    >>> result.count
+    1
+    >>> result.form
+    {'qty': 0}
+
+When exactly one distinct form validates, ``result.form`` holds it,
+re-read with the normal decode and Schema validation.  When several
+validate, ``result.count`` is the exact number, ``result.field``
+names a top-level field that genuinely differs, and
+``result.choices`` gives two complete selections of readings (one
+reading index per fragment) whose whole forms both validate and
+differ in that field::
+
+    >>> class Pair(Schema):
+    ...     a = validators.Int()
+    ...     b = validators.Int()
+    ...     chained_validators = [validators.FieldsMatch('a', 'b')]
+    >>> result = precheck(Pair(), [[{'a': '1'}, {'a': '2'}],
+    ...                            [{'b': '1'}, {'b': '2'}]])
+    >>> result.count
+    2
+    >>> result.field
+    'a'
+
+The count is found by decomposition, not by enumerating every
+combination of readings: fragments touching disjoint sets of fields
+are independent, and inside a repeated block (``ForEach`` over the
+sparse numbered rows produced by ``variable_decode``) the distinct
+decoded lists are counted with a small automaton.  Hundreds of
+ambiguous fragments -- including missing row numbers that shift later
+rows forward, trailing empty rows padded by ``--repetitions``, and
+readings that collapse into the same final form -- are handled
+without listing the exponentially many combinations.

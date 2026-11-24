@@ -35,6 +35,7 @@ Documentation
 
    Validator
    htmlfill
+   precheck
    ToDo
    Design
    history

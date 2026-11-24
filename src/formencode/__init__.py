@@ -18,12 +18,14 @@ from formencode.foreach import ForEach
 from formencode import validators
 from formencode import national
 from formencode.variabledecode import NestedVariables
+from formencode.precheck import precheck, PreCheckResult
 
 __all__ = [
     'NoDefault', 'Invalid', 'Validator', 'Identity', 'FancyValidator',
     'is_empty', 'is_validator',
     'Schema', 'CompoundValidator', 'Any', 'All', 'Pipe',
     'ForEach', 'validators', 'national', 'NestedVariables',
+    'precheck', 'PreCheckResult',
     '__version__']
 
 try:
