@@ -1,0 +1,22 @@
+{
+  "manuals": {
+    "M1": {"path": "manuals/shared.md"},
+    "M2": {"path": "manuals/jia-extra.md"},
+    "M3": {"path": "manuals/yi-extra.md"}
+  },
+  "segments": {
+    "S0": {"manual": "M1", "start_line": 1, "end_line": 1},
+    "S2": {"manual": "M2", "start_line": 1, "end_line": 1},
+    "S3": {"manual": "M3", "start_line": 1, "end_line": 1}
+  },
+  "releases": {
+    "甲": ["S0", "S2"],
+    "乙": ["S0", "S3"]
+  },
+  "marks": [
+    {"manual": "M1", "line": 1, "col": 2, "candidates": ["a", "b"]},
+    {"manual": "M1", "line": 3, "col": 9, "candidates": ["a", "b"]},
+    {"manual": "M1", "line": 5, "col": 1, "candidates": ["a", "b"]}
+  ],
+  "time_budget_seconds": 10
+}
