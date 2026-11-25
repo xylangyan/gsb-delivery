@@ -117,6 +117,7 @@ Contents
    mdf3reader/index
    mdfinfo3/index
    channel/index
+   revision/index
 
 Indices and tables
 ------------------
