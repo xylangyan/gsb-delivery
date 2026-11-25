@@ -221,6 +221,34 @@ Parse XML input into a Python dictionary.
 - `item_callback=lambda *args: True`: Function called on items at `item_depth`.
 - `comment_key='#comment'`: Key used for XML comments when `process_comments=True`. Only used when `process_comments=True`. Comments can be preserved but multiple top-level comments may not retain order.
 
+### Source references and corrections
+
+Pass `source_refs=True` (or call `parse_with_provenance`) to retain byte-accurate source references in addition to the normal dictionary:
+
+```python
+doc, source_map = xmltodict.parse_with_provenance(xml, **parse_options)
+price_ref = source_map.resolve_field(path=['prices', 'price', 0, '#text'])
+```
+
+`CorrectionBook` keeps the current UTF-8 byte source, all revisions, and accepted corrections. Correction notes may use `base_revision`, `field_ref`, `segment`, `start`/`end`, `old_text`, and `new_text`:
+
+```python
+book = xmltodict.CorrectionBook(xml, **parse_options)
+receipt = book.accept({
+    'id': 'C1',
+    'base_revision': 'original',
+    'field_ref': price_ref,
+    'start': 0,
+    'end': 1,
+    'old_text': '1',
+    'new_text': '10',
+})
+receipt.byte_start, receipt.byte_end, receipt.old_bytes, receipt.new_bytes
+book.revoke('C1')
+```
+
+Late notes based on an older revision are mapped through non-overlapping byte edits. A note that selects text already replaced raises `StaleTargetConflict`; a patch that would make the configured parser move a field or list item raises `ReclassificationConflict`; revoking a correction whose inserted text is still targeted by another active note raises `DependencyConflict`. Input may be an iterable of arbitrary byte chunks; chunks are joined before source mapping so character and entity boundaries do not affect byte offsets. Ordinary `parse(xml)` calls remain unchanged.
+
 ### xmltodict.unparse()
 
 Convert a Python dictionary back into XML.
