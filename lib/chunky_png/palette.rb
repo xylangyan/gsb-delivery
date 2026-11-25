@@ -149,6 +149,17 @@ module ChunkyPNG
       @decoding_map[index]
     end
 
+    # Returns the number of entries in the original palette chunk.
+    #
+    # Unlike {#size}, which counts unique colors, duplicate RGBA values still
+    # occupy separate palette entries, so this is the value that bounds legal
+    # palette indices in an encoded pixel stream.
+    #
+    # @return [Integer] The number of decoding-map entries.
+    def decoding_map_length
+      @decoding_map ? @decoding_map.length : 0
+    end
+
     # Returns the position of a color in the palette
     # @param color [ChunkyPNG::Color] The color for which to look up the index.
     # @return [Integer] The 0-based position of the color in the palette.

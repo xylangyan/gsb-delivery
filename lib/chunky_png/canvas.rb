@@ -2,6 +2,7 @@
 
 require "chunky_png/canvas/png_encoding"
 require "chunky_png/canvas/png_decoding"
+require "chunky_png/canvas/partial_png_decoding"
 require "chunky_png/canvas/adam7_interlacing"
 require "chunky_png/canvas/stream_exporting"
 require "chunky_png/canvas/stream_importing"
@@ -35,6 +36,7 @@ module ChunkyPNG
   class Canvas
     include PNGEncoding
     extend  PNGDecoding
+    extend  PartialPNGDecoding
     extend  Adam7Interlacing
 
     include StreamExporting
