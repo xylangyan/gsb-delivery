@@ -1,3 +1,20 @@
 a port of the serialize and unserialize functions of php to python. This module
-implements the python serialization interface (eg: provides dumps, loads and
+implements the python serialization interface (eg: provides `dumps`, `loads` and
 similar functions).
+
+Reference-aware archive ordering
+================================
+
+`reorder_archive(data, new_order, allowed_objects=None)` reads a PHP archive
+without loading classes, reorders/prunes its top-level list, and rewrites
+`R:` variable aliases and `r:` object handles with valid new indices.
+
+    output, reference_report = reorder_archive(
+        data, ['C', 'B', 'D'], allowed_objects=allowed_positions)
+    restored = loads(output, decode_strings=True)
+
+`output` is bytes and also exposes `reference_sources`, `reference_map`, and
+`missing_permissions`. Each report record contains the output reference id,
+source byte offset, source path, and target position. `loads` automatically
+uses live alias/object-sharing containers when `R:` or `r:` is present;
+ordinary arrays continue through the original loader.
