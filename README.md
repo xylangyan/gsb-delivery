@@ -145,3 +145,146 @@ with open('my_gcode.gcode', 'r') as f:
     lines = list(parse_gcode_lines(f))
 df = pd.DataFrame(lines)
 ```
+
+## Material reconciliation
+
+`gcodeparser.reconcile` accounts for material in a print stream that is stored
+as snippets plus repeat counts, where snippets may invoke smaller snippets.  It
+does not flatten the stream: commands are expanded lazily and addressed by their
+position (*ordinal*) in the executed stream, and long runs of identical repeats
+are handled arithmetically.
+
+### Model
+
+- Each tool keeps its own extruder coordinate. `T` changes the active tool but
+  leaves every coordinate untouched.
+- `M82` / `M83` select, from that command onwards, whether an `E` word is an
+  absolute coordinate or an increment. The mode is modal and global.
+- `G92 E` resets the coordinate of the active tool only.
+- Negative displacement opens a retraction debt on the spool currently attached
+  to the active tool. Positive displacement first repays that spool's open
+  retractions in first-opened-first-repaid order; the remainder is new material.
+- Debt belongs to the spool, not the tool. A handover may connect a tool to a
+  different spool between operations; debt on the old spool remains there while
+  the tool's own coordinate continues unchanged.
+- A single command can both finish an older retraction and start new material.
+  It is split at that boundary, and both parts carry the same credential.
+- Quantities are `Decimal`s converted from the exact text in the source command,
+  so `E0.050` keeps three decimal places in reports.
+
+### Basic usage
+
+```python
+from gcodeparser.reconcile import Handover, MaterialLedger, PrintProgram, Repeat, Snippet
+
+snippets = {
+    "bead": Snippet(["M83", "G1 E0.250", "G1 E-0.100"], name="bead"),
+    "pass": Snippet([Repeat("bead", 4), "G1 E0.400"], name="pass"),
+}
+program = PrintProgram(Repeat("pass", 1000), snippets=snippets)
+ledger = MaterialLedger(program, initial_spools={0: "A"}, mode="relative")
+
+ledger.usage()                  # {'A': Decimal('...')}
+ledger.usage(40, 120)           # per-spool new material in that window
+ledger.first_new_usage(40, 120) # credential of the first new-material command
+ledger.window(40, 120).to_dict()
+```
+
+A credential (`CommandId`) contains:
+
+- `ordinal`: position in the expanded stream, which distinguishes repeated
+  executions of the same source line;
+- `source`: original snippet, source line and command index (two commands on one
+  physical line share a line index but have different command indices);
+- `iteration`: the repeat indices leading to this execution;
+- `text`: the command text.
+
+### Handovers
+
+```python
+body = [
+    "M83\nG1 E-4.0\nG92 E0\nT1\nG1 E3.0\nT0",
+    Handover(0, "B"),
+    "G1 E2.0",
+    Handover(0, "A"),
+    "G1 E2.0",
+]
+ledger = MaterialLedger(
+    Snippet(body, name="root"),
+    initial_spools={0: "A", 1: "A"},
+    mode="relative",
+)
+ledger.usage()               # {'A': Decimal('1.0'), 'B': Decimal('2.0')}
+ledger.repayment("A:0")      # (Decimal('4.0'), credential at T1's G1 E3.0)
+```
+
+`timed_handovers` is available when the hand-over order is recorded separately
+from the G-code, keyed by the ordinal of the command it precedes.
+
+### Retraction queries
+
+```python
+ledger.retractions("A")      # all retractions opened on spool A
+ledger.outstanding("A")      # unrepaid debt at the end of the stream
+ledger.pending("A")          # open retractions in repayment order
+ledger.repaid("A:0", 100, 200)
+ledger.first_repayment("A:0", 100, 200)
+ledger.retraction_report("A:0", 100, 200)
+```
+
+A window includes both endpoints by default; pass `inclusive_end=False` to make
+the end exclusive. Debt opened before the window is still accounted for, so a
+window that starts mid-debt attributes only the repayments that happen inside it.
+
+### JSON program specification
+
+`python -m gcodeparser.reconcile program.json --queries queries.json` accepts:
+
+```json
+{
+  "initial": {
+    "tool": 0,
+    "mode": "relative",
+    "spools": {"0": "A", "1": "A"},
+    "e": {"0": "0"},
+    "timed_handovers": {}
+  },
+  "snippets": {
+    "bead": ["M83", "G1 E0.250"],
+    "pass": [
+      {"repeat": {"snippet": "bead", "count": 4}},
+      {"handover": {"tool": 0, "spool": "B"}},
+      "G1 E0.400"
+    ]
+  },
+  "root": {"snippet": "pass", "count": 1000}
+}
+```
+
+Queries are a list of objects:
+
+```json
+[
+  {"type": "usage", "start": 0, "end": 1000},
+  {"type": "first_new", "start": 0, "end": 1000},
+  {"type": "retraction", "retraction": "A:0", "start": 0, "end": 1000},
+  {"type": "credential", "start": 42}
+]
+```
+
+The command prints a JSON list with one result per query.
+
+### Long repeat streams
+
+The stream is expanded lazily and addressed by ordinal; nothing is flattened up
+front.  In addition, a fast path recognises runs of repeat iterations that repeat
+the same material release pattern with exactly the same mode, tool coordinates,
+spool connections and retraction debt at both ends.  Those runs are evaluated
+arithmetically, so a repeat count in the billions does not require visiting every
+command (deeply nested neutral repeats are included).
+
+Blocks where each iteration opens and fully repays its own retraction are also
+compressed, with retraction identities reconstructed lazily per cycle.  Blocks
+that carry open retraction debt across iterations fall back to the exact command
+walk.  That walk is still lazy and window-bounded, but its cost is proportional
+to the commands inside the requested window rather than to the whole stream.

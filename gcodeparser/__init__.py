@@ -1,5 +1,59 @@
 __version__ = "0.3.0"
-__all__ = ["parse_gcode_lines", "GcodeParser", "GcodeLine", "Commands", "infer_element_type", "parse_parameters"]
+__all__ = [
+    "parse_gcode_lines",
+    "GcodeParser",
+    "GcodeLine",
+    "Commands",
+    "infer_element_type",
+    "parse_parameters",
+    "parse_parameter_tokens",
+    "PrintProgram",
+    "Snippet",
+    "Repeat",
+    "Handover",
+    "MaterialLedger",
+    "CommandId",
+    "SourceRef",
+    "Retraction",
+    "RetractionId",
+    "NewUsage",
+    "Payment",
+    "WindowReport",
+]
+
+
+def __getattr__(name: str):
+    """Expose the reconciliation API without importing it for basic parsing."""
+
+    if name in {
+        "PrintProgram",
+        "Program",
+        "Snippet",
+        "Repeat",
+        "Handover",
+        "MaterialLedger",
+        "Ledger",
+        "CommandId",
+        "CommandCredential",
+        "CommandPosition",
+        "SourceRef",
+        "Retraction",
+        "RetractionId",
+        "NewUsage",
+        "Payment",
+        "Repayment",
+        "WindowReport",
+        "ExecutedCommand",
+        "analyze",
+        "as_decimal",
+        "decimal_text",
+        "ABSOLUTE",
+        "RELATIVE",
+    }:
+        from . import reconcile
+
+        return getattr(reconcile, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 import io
 import re
@@ -51,6 +105,8 @@ class GcodeLine:
     comment: str
     line_index: int
     type: Commands = field(init=False)
+    param_text: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
+    command_index: int = field(default=0, compare=False, repr=False)
 
     def __post_init__(self):
         if self.command[0] == "G" and self.command[1] in (0, 1, 2, 3):
@@ -169,6 +225,7 @@ def parse_gcode_lines(gcode: io.TextIOBase | io.StringIO | str, include_comments
         for i, match in enumerate(command_matches):
             groups = match.groups()
             command: tuple[str, int] | tuple[str, None] = (groups[0].upper(), int(groups[1]))
+            param_text = parse_parameter_tokens(groups[2] or "")
             params = parse_parameters(groups[2] or "")
 
             # Comments are attached to the last command on the line
@@ -187,6 +244,8 @@ def parse_gcode_lines(gcode: io.TextIOBase | io.StringIO | str, include_comments
                 params=params,
                 comment=comment,
                 line_index=line_index,
+                param_text=param_text,
+                command_index=i,
             )
 
 
@@ -225,5 +284,29 @@ def parse_parameters(line: str) -> dict[str, float | str | bool]:
             continue
         element_type = infer_element_type(element[1])
         params[element[0].upper()] = element_type(element[1])
+
+    return params
+
+
+def parse_parameter_tokens(line: str) -> dict[str, str]:
+    """
+    Parse parameter string from a gcode line, preserving each value's source text.
+
+    Unlike :func:`parse_parameters` this keeps the exact decimal spelling used in the
+    original command so downstream consumers can report values at their written
+    precision (for example ``E1.230`` stays distinguishable from ``E1.23``).
+
+    Flag parameters (those written without a value) are mapped to an empty string.
+
+    Args:
+        line: The parameter portion of a gcode line
+
+    Returns:
+        Dictionary mapping parameter names to their raw value text
+    """
+    elements = PARAMS_PATTERN.findall(line)
+    params: dict[str, str] = {}
+    for element in elements:
+        params[element[0].upper()] = element[1]
 
     return params
