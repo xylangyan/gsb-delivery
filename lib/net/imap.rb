@@ -4229,6 +4229,7 @@ require_relative "imap/flags"
 require_relative "imap/response_data"
 require_relative "imap/response_parser"
 require_relative "imap/authenticators"
+require_relative "imap/archive_provenance"
 
 require_relative "imap/deprecated_client_options"
 Net::IMAP.prepend Net::IMAP::DeprecatedClientOptions
