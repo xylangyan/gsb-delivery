@@ -1,0 +1,26 @@
+{
+  "old_rows": [
+    {"id": "old-1", "text": "待领", "allowed_tags": ["批号B1"]},
+    {"id": "old-2", "text": "锚点X", "allowed_tags": []},
+    {"id": "old-3", "text": "待领", "allowed_tags": ["批号B2"]}
+  ],
+  "new_rows": [
+    {"id": "new-1", "text": "待领", "allowed_tags": ["批号B2"]},
+    {"id": "new-2", "text": "锚点X", "allowed_tags": []},
+    {"id": "new-3", "text": "待领", "allowed_tags": ["批号B1"]}
+  ],
+  "views": [
+    {
+      "name": "全账",
+      "old": ["old-1", "old-2", "old-3"],
+      "new": ["new-1", "new-2", "new-3"]
+    },
+    {
+      "name": "工段甲",
+      "old": ["old-1", "old-2"],
+      "new": ["new-2", "new-3"]
+    }
+  ],
+  "confirmed": [["old-1", "new-3"]],
+  "forbidden": [["old-1", "new-1"], ["old-3", "new-3"]]
+}

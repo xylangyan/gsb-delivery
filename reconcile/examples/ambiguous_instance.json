@@ -1,0 +1,19 @@
+{
+  "old_rows": [
+    {"id": "o0", "text": "D", "allowed_tags": ["u"]},
+    {"id": "o1", "text": "E", "allowed_tags": ["u"]},
+    {"id": "o2", "text": "E", "allowed_tags": []},
+    {"id": "o3", "text": "D", "allowed_tags": ["t", "u"]}
+  ],
+  "new_rows": [
+    {"id": "n0", "text": "E", "allowed_tags": ["t", "u"]},
+    {"id": "n1", "text": "E", "allowed_tags": ["u"]},
+    {"id": "n2", "text": "D", "allowed_tags": ["t"]}
+  ],
+  "views": [
+    {"name": "full", "old": ["o0", "o1", "o2", "o3"], "new": ["n0", "n1", "n2"]},
+    {"name": "sec", "old": ["o2", "o3"], "new": ["n1", "n0"]}
+  ],
+  "confirmed": [],
+  "forbidden": [["o3", "n2"], ["o2", "n0"]]
+}

@@ -1,0 +1,79 @@
+{
+  "status": "ambiguous",
+  "minimum_tagged_rows": 1,
+  "tags_by_original_row": [
+    {
+      "row": "o3",
+      "tag": "t"
+    }
+  ],
+  "views": [
+    {
+      "name": "full",
+      "matching_pairs": [
+        [
+          "o0",
+          "n2"
+        ]
+      ],
+      "confirmed_pairs_inside": [],
+      "forbidden_pairs_outside": [
+        [
+          "o2",
+          "n0"
+        ],
+        [
+          "o3",
+          "n2"
+        ]
+      ]
+    },
+    {
+      "name": "sec",
+      "matching_pairs": [
+        [
+          "o2",
+          "n1"
+        ]
+      ],
+      "confirmed_pairs_inside": [],
+      "forbidden_pairs_outside": [
+        [
+          "o2",
+          "n0"
+        ]
+      ]
+    }
+  ],
+  "blockers": [],
+  "ambiguous_views": [
+    {
+      "name": "full",
+      "distinct_native_results": [
+        {
+          "matching_pairs": [
+            [
+              "o0",
+              "n2"
+            ]
+          ],
+          "example_tagging": [
+            {
+              "row": "o3",
+              "tag": "t"
+            }
+          ]
+        },
+        {
+          "matching_pairs": [],
+          "example_tagging": [
+            {
+              "row": "n2",
+              "tag": "t"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

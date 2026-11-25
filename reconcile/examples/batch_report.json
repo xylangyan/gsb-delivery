@@ -1,0 +1,58 @@
+{
+  "status": "optimal",
+  "minimum_tagged_rows": 2,
+  "tags_by_original_row": [
+    {
+      "row": "new-3",
+      "tag": "批号B1"
+    },
+    {
+      "row": "old-1",
+      "tag": "批号B1"
+    }
+  ],
+  "views": [
+    {
+      "name": "全账",
+      "matching_pairs": [
+        [
+          "old-1",
+          "new-3"
+        ]
+      ],
+      "confirmed_pairs_inside": [
+        [
+          "old-1",
+          "new-3"
+        ]
+      ],
+      "forbidden_pairs_outside": [
+        [
+          "old-1",
+          "new-1"
+        ],
+        [
+          "old-3",
+          "new-3"
+        ]
+      ]
+    },
+    {
+      "name": "工段甲",
+      "matching_pairs": [
+        [
+          "old-1",
+          "new-3"
+        ]
+      ],
+      "confirmed_pairs_inside": [
+        [
+          "old-1",
+          "new-3"
+        ]
+      ],
+      "forbidden_pairs_outside": []
+    }
+  ],
+  "blockers": []
+}
