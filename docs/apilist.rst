@@ -77,3 +77,24 @@ therein can be retrieved.
    rdata.conversion.SrcFile
    rdata.conversion.SrcFileCopy
    rdata.conversion.SrcRef
+
+Reconciliation of R tables
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+Functions and structures for reconciling two exports of the same measurement table
+(for example, with swapped dimensions), comparing the values of a window of cells
+without fully expanding compact (ALTREP) vectors.
+
+.. autosummary::
+   :toctree: modules
+
+   rdata.reconcile.reconcile
+   rdata.reconcile.vector_view
+   rdata.reconcile.column_major_strides
+   rdata.reconcile.VectorView
+   rdata.reconcile.ArrayVectorView
+   rdata.reconcile.CompactIntSeqView
+   rdata.reconcile.CompactRealSeqView
+   rdata.reconcile.DimensionWindow
+   rdata.reconcile.SideLayout
+   rdata.reconcile.Difference
+   rdata.reconcile.ReconcileReport

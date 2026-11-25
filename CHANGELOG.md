@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+### Added
+
+- ![R parsing] Add `rdata.reconcile` module for reconciling two exports of
+  the same measurement table (e.g. with swapped dimensions). It counts the
+  differing cells of a window and reports the first difference in the
+  handover sheet's dimension order, with the original positions and values
+  of both sides. Compact (`compact_intseq`/`compact_realseq`) vectors are
+  evaluated lazily at the window positions only, so segments with hundreds
+  of millions of points are never fully expanded.
+
 
 ## [1.1.0] - 2026-06-11
 
