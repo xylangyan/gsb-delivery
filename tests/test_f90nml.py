@@ -1978,6 +1978,74 @@ class Test(unittest.TestCase):
         # valid stride
         self.assertEqual(_get_array_stride([0, 2, 4]), 2)
 
+    def test_findex_strided_axes(self):
+        # Strided axes must wrap onto the next dimension rather than spill
+        # past the axis end into nonexistent indices.
+        self.assertEqual(
+            list(FIndex([(1, 4, 2)])),
+            [[1], [3]]
+        )
+        self.assertEqual(
+            list(FIndex([(1, 5, 2), (1, 3, 1)])),
+            [[1, 1], [3, 1], [1, 2], [3, 2]]
+        )
+        self.assertEqual(
+            list(FIndex([(0, 4, 2), (0, 4, 2)])),
+            [[0, 0], [2, 0], [0, 2], [2, 2]]
+        )
+        # Empty ranges yield no indices
+        self.assertEqual(list(FIndex([(1, 1, 1)])), [])
+        self.assertEqual(list(FIndex([(1, 2, 1), (3, 3, 1)])), [])
+
+    def test_strided_assignment_physical_indices(self):
+        # a(1:4:2,1:2) assigns to columns (1,1) and (3,1), then (1,2), (3,2).
+        nml = f90nml.reads('&g a(1:4:2,1:2) = 1,2,3,4 /')
+        g = nml['g']
+        self.assertEqual(g['a'], [[1, None, 2], [3, None, 4]])
+        self.assertEqual(g.start_index['a'], [1, 1])
+        # Values must not spill past the axis end into the nonexistent
+        # row index 5.
+        self.assertEqual(len(g['a'][0]), 3)
+
+    def test_unindexed_then_lower_explicit_index(self):
+        # An unindexed vector follows the default start index; a later
+        # explicit lower index must prepend rather than shift the values.
+        for start, lower in ((0, -1), (1, 0)):
+            parser = f90nml.Parser()
+            parser.default_start_index = start
+            nml = parser.reads('&g v = 10,11\n v(%d) = 9 /' % (lower,))
+            g = nml['g']
+            self.assertEqual(g['v'], [9, 10, 11])
+            self.assertEqual(g.start_index['v'], [lower])
+
+    def test_unindexed_vector_append_preserves_cells(self):
+        # Appending an explicit higher index must leave the existing cells
+        # and their physical coordinates untouched on both readers.
+        base = {'0': {0: 10, 1: 11}, '1': {1: 10, 2: 11}}
+        for start, cells in base.items():
+            parser = f90nml.Parser()
+            parser.default_start_index = int(start)
+            nml = parser.reads('&g v = 10,11\n v(3) = 12 /')
+            g = nml['g']
+            lo = int(start)
+            self.assertEqual(g['v'][3 - lo], 12)
+            for coord, val in cells.items():
+                self.assertEqual(g['v'][coord - lo], val)
+            self.assertEqual(g.start_index['v'], [lo])
+
+    def test_trailing_repeat_null_before_next_assignment(self):
+        # A trailing `N*` broadcast is a run of null slots, even when the
+        # next statement re-indexes the same variable.
+        nml = f90nml.reads('&g a(1:3) = 1, 2*\n a(2) = 9 /')
+        g = nml['g']
+        self.assertEqual(g['a'], [1, 9, None])
+        self.assertEqual(g.start_index['a'], [1])
+
+        nml = f90nml.reads('&g a(1:3) = 1, 2*\n b = 9 /')
+        g = nml['g']
+        self.assertEqual(g['a'], [1, None, None])
+        self.assertEqual(g['b'], 9)
+
 
 if __name__ == '__main__':
     if os.path.isfile('tmp.nml'):

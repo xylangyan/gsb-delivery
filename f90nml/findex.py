@@ -16,6 +16,10 @@ class FIndex(object):
         self.step = [1 if b[2] is None else b[2] for b in bounds]
 
         self.current = self.start[:]
+        self.done = any(
+            e is not None and e <= s
+            for s, e in zip(self.start, self.end)
+        )
 
         # Default global starting index
         if first is not None:
@@ -43,17 +47,28 @@ class FIndex(object):
 
     def __next__(self):
         """Iterate to next contiguous index tuple."""
-        if self.end[-1] and self.current[-1] >= self.end[-1]:
+        if self.done:
             raise StopIteration
 
         state = self.current[:]
-        # Allow the final index to exceed self.end[-1] as a finalisation check
-        for rank, idx in enumerate(self.current):
-            if ((self.end[rank] is None or idx < (self.end[rank] - 1)) or
-                    rank == (len(self.current) - 1)):
-                self.current[rank] = idx + self.step[rank]
-                break
+
+        # Advance the fastest-varying index first (Fortran column-major
+        # order), respecting each dimension's stride.  A dimension with an
+        # explicit end is exhausted once its next index would reach or pass
+        # that end, at which point we carry into the next dimension.
+        for rank in range(len(self.current)):
+            if self.end[rank] is None:
+                nxt = state[rank] + self.step[rank]
             else:
-                self.current[rank] = self.start[rank]
+                nxt = state[rank] + self.step[rank]
+                if nxt >= self.end[rank]:
+                    self.current[rank] = self.start[rank]
+                    continue
+
+            self.current[rank] = nxt
+            break
+        else:
+            # Every dimension was exhausted; this was the final element.
+            self.done = True
 
         return state

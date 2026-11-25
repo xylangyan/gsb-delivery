@@ -656,7 +656,13 @@ class Parser(object):
                     if self.token not in ('/', '&', '$'):
                         self._update_tokens()
 
-                    if (self.prior_token == ',' or self.token == '='
+                    # A following `=`, `(` or `%` marks the start of the next
+                    # assignment rather than a repeated value (e.g. `2*`
+                    # followed by `a(2) = 9`).  Treat the repeat as nulls and
+                    # stop collecting values for this variable.
+                    new_assign = self.token in ('=', '(', '%')
+
+                    if (self.prior_token == ',' or new_assign
                             or (self.token in ('/', '&', '$')
                                 and self.prior_token == '*')):
                         next_value = None
@@ -669,6 +675,9 @@ class Parser(object):
                         next_value = self._parse_value()
 
                     self._append_value(v_values, next_value, v_idx, n_vals)
+
+                    if new_assign:
+                        break
 
                 else:
                     next_value = self._parse_value()
@@ -805,11 +814,26 @@ class Parser(object):
             parent[v_name] = prepad_array(parent[v_name], p_idx,
                                           v_idx.first)
         elif v_name in parent:
-            # If variable already existed without an index, then assume a
-            # 1-based index
-            # FIXME: Need to respect undefined `None` starting indexes?
-            # ^^ carried forward fixme from Parser._parse_variable
-            v_idx.first = [self.default_start_index for _ in v_idx.first]
+            # Variable already existed without an explicit index, so its
+            # values are assumed to begin at the parser's default start index.
+            # Merge that implicit start with this assignment's explicit
+            # index, padding the existing values only if the new index begins
+            # below the assumed start.
+            p_idx = [self.default_start_index for _ in v_idx.first]
+
+            for idx, pv in enumerate(zip(p_idx, v_idx.first)):
+                if all(i is None for i in pv):
+                    i_first = None
+                else:
+                    i_first = min(i for i in pv if i is not None)
+
+                v_idx.first[idx] = i_first
+
+            parent[v_name] = prepad_array(
+                parent[v_name] if isinstance(parent[v_name], list)
+                else [parent[v_name]],
+                p_idx, v_idx.first
+            )
 
         parent.start_index[v_name.lower()] = v_idx.first
         return v_idx
