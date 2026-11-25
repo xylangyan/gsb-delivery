@@ -1,0 +1,58 @@
+{
+  "horizon": {
+    "start": "2026-12-01T00:00:00Z",
+    "end": "2026-12-02T23:59:59Z"
+  },
+  "schedules": [
+    {
+      "id": "AMPM",
+      "start": "2026-12-01T09:00:00Z",
+      "extra_times": [
+        "2026-12-01T14:00:00Z"
+      ],
+      "exception_times": []
+    },
+    {
+      "id": "RUN",
+      "hash": {
+        "start_time": "2026-12-02T00:00:00Z",
+        "rrules": [
+          {
+            "rule_type": "IceCube::MinutelyRule",
+            "interval": 10,
+            "count": 12
+          }
+        ]
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "id": "R-BOTH",
+      "at": "2026-12-01T09:05:00Z",
+      "schedule": "AMPM",
+      "early": 21600,
+      "late": 21600
+    },
+    {
+      "id": "R-AM-ONLY",
+      "at": "2026-12-01T09:07:00Z",
+      "schedule": "AMPM",
+      "early": 600,
+      "late": 600
+    },
+    {
+      "key": "RUN-SEGMENT",
+      "id_prefix": "R-RUN-",
+      "digits": 3,
+      "start": "2026-12-02T00:00:00Z",
+      "step": 600,
+      "count": 12,
+      "gaps": [4, 9],
+      "schedule": "RUN",
+      "early": 30,
+      "late": 30
+    }
+  ],
+  "hard_matches": []
+}

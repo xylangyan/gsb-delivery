@@ -1,0 +1,135 @@
+#!/usr/bin/env ruby
+
+ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../.gsb/Gemfile", __dir__)
+require "bundler/setup" if File.exist?(ENV["BUNDLE_GEMFILE"])
+
+require_relative "../reconcile/shift_reconciliation"
+require_relative "../reconcile/small_log"
+
+def usage
+  warn <<~USAGE
+    Usage:
+      bin/reconcile check ARCHIVE.json [--json]
+      bin/reconcile window ARCHIVE.json START_UTC END_UTC [--json] [--verify]
+      bin/reconcile query ARCHIVE.json < windows.jsonl
+      bin/reconcile demo [--json]
+
+    Times accept ISO8601 UTC, for example 2026-12-01T00:00:00Z.
+  USAGE
+end
+
+def json_output(value)
+  puts JSON.pretty_generate(value)
+end
+
+command = ARGV.shift
+
+case command
+when "check"
+  path = ARGV.first
+  archive = ShiftReconciliation::Archive.load(path)
+  engine = archive.prepare
+  full = engine.full_report
+  errors = engine.verify_pairs(full[:fewest_missing_pairs])
+  result = ShiftReconciliation::Report.window_hash(engine, full).merge(
+    duplicate_receipts_merged: engine.duplicate_receipt_count,
+    verification_errors: errors
+  )
+
+  if ARGV.include?("--json")
+    json_output(result)
+  else
+    puts "schedules=#{archive.schedule_inputs.size} shifts=#{engine.shifts.size} receipts=#{engine.receipts.size}"
+    puts "duplicate_receipts_merged=#{engine.duplicate_receipt_count} hard_pairs=#{engine.hard_pairs.size}"
+    puts ShiftReconciliation::Report.text(engine, full)
+    puts errors.empty? ? "verification=ok" : "verification=FAIL #{errors.join("; ")}"
+  end
+  exit(errors.empty? ? 0 : 2)
+
+when "window"
+  path, start_time, end_time = ARGV.reject { |argument| argument.start_with?("--") }
+  if path.nil? || start_time.nil? || end_time.nil?
+    usage
+    exit 64
+  end
+
+  engine = ShiftReconciliation::Archive.load(path).prepare
+  report = engine.window_report(start_time, end_time)
+
+  if ARGV.include?("--verify")
+    errors = engine.verify_pairs(report[:fewest_missing_pairs]) +
+             engine.verify_pairs(report[:most_missing_pairs])
+    unless errors.empty?
+      warn errors.join("\n")
+      exit 2
+    end
+  end
+
+  if ARGV.include?("--json")
+    json_output(
+      ShiftReconciliation::Report.window_hash(
+        engine,
+        report,
+        include_pairs: ARGV.include?("--pairs")
+      )
+    )
+  else
+    puts ShiftReconciliation::Report.text(engine, report)
+    puts "verification=ok" if ARGV.include?("--verify")
+  end
+
+when "query"
+  path = ARGV.first
+  if path.nil?
+    usage
+    exit 64
+  end
+
+  engine = ShiftReconciliation::Archive.load(path).prepare
+  $stdin.each_line do |line|
+    next if line.strip.empty?
+
+    query = JSON.parse(line)
+    report = engine.window_report(query["start"] || query["window_start"], query["end"] || query["window_end"])
+    puts JSON.generate(ShiftReconciliation::Report.window_hash(engine, report))
+  end
+
+when "demo"
+  engine = ShiftReconciliation::SmallLog.build.prepare
+  full = engine.full_report
+  am_window = engine.window_report("2026-11-18T08:55:00Z", "2026-11-18T09:05:00Z")
+  swap_window = engine.window_report("2026-11-18T17:55:00Z", "2026-11-18T18:05:00Z")
+  errors = engine.verify_pairs(full[:fewest_missing_pairs]) +
+           engine.verify_pairs(am_window[:fewest_missing_pairs]) +
+           engine.verify_pairs(am_window[:most_missing_pairs]) +
+           engine.verify_pairs(swap_window[:fewest_missing_pairs]) +
+           engine.verify_pairs(swap_window[:most_missing_pairs])
+
+  if ARGV.include?("--json")
+    json_output(
+      full: ShiftReconciliation::Report.window_hash(engine, full),
+      am_window: ShiftReconciliation::Report.window_hash(engine, am_window),
+      swap_first_shift_window: ShiftReconciliation::Report.window_hash(engine, swap_window),
+      verification_errors: errors
+    )
+  else
+    puts "IceCube small-log shifts:"
+    engine.shifts.group_by(&:schedule_id).each do |schedule_id, shifts|
+      times = shifts.map { |shift| ShiftReconciliation::TimeIO.format(shift.time) }
+      puts "  #{schedule_id}: #{shifts.size} #{times.join(", ")}"
+    end
+    puts
+    puts ShiftReconciliation::Report.text(engine, full)
+    puts
+    puts ShiftReconciliation::Report.text(engine, am_window)
+    puts
+    puts ShiftReconciliation::Report.text(engine, swap_window)
+    puts
+    puts errors.empty? ? "verification=ok" : "verification=FAIL\n#{errors.join("\n")}"
+  end
+  exit(errors.empty? ? 0 : 2)
+
+else
+  usage
+  exit(command.nil? ? 0 : 64)
+end
