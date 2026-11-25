@@ -92,6 +92,7 @@ from awkward.operations.ak_sumofsquares import *
 from awkward.operations.ak_to_arrow import *
 from awkward.operations.ak_to_arrow_table import *
 from awkward.operations.ak_to_backend import *
+from awkward.operations.ak_to_buffer_views import *
 from awkward.operations.ak_to_buffers import *
 from awkward.operations.ak_to_cudf import *
 from awkward.operations.ak_to_cupy import *
