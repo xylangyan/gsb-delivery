@@ -1,0 +1,35 @@
+{
+  "description": "Two different raw bodies produce the same coordinates at the same candidate index. The downstream coordinate alone cannot say which body supplied it; only the cache trace can.",
+  "bodies": {
+    "old-two": {
+      "code": 200,
+      "body": "[{\"place_id\":\"1\",\"lat\":\"10.000000\",\"lon\":\"20.000000\",\"display_name\":\"Version A\"},{\"place_id\":\"2\",\"lat\":\"11.000000\",\"lon\":\"21.000000\",\"display_name\":\"A again\"}]"
+    },
+    "same-coords": {
+      "code": 200,
+      "body": "[{\"place_id\":\"9\",\"lat\":\"10.000000\",\"lon\":\"20.000000\",\"display_name\":\"Version B\"},{\"place_id\":\"8\",\"lat\":\"11.000000\",\"lon\":\"21.000000\",\"display_name\":\"B again\"}]"
+    }
+  },
+  "processes": [
+    {
+      "id": "p1",
+      "prefix": "geocoder:",
+      "config": { "host": "nominatim.local", "use_https": false, "language": "en" },
+      "initial_cache": {
+        "https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street": "old-two"
+      }
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "process": "p1",
+      "operations": [
+        { "op": "search", "query": "Main Street" },
+        { "op": "result", "candidate": 0, "body": "old-two", "coordinates": [10.0, 20.0] }
+      ]
+    }
+  ],
+  "focus": { "slot": "s1", "candidate": 0 },
+  "order": ["s1:1", "s1:2"]
+}

@@ -14,7 +14,7 @@ Gem::Specification.new do |s|
   s.date        = Date.today.to_s
   s.summary     = "Complete geocoding solution for Ruby."
   s.description = "Object geocoding (by street or IP address), reverse geocoding (coordinates to street address), distance queries for ActiveRecord and Mongoid, result caching, and more. Designed for Rails but works with Sinatra and other Rack frameworks too."
-  s.files       = Dir['CHANGELOG.md', 'LICENSE', 'README.md', 'examples/**/*', 'lib/**/*', 'bin/*']
+  s.files       = Dir['CHANGELOG.md', 'LICENSE', 'README.md', 'README_REPLAY.md', 'examples/**/*', 'lib/**/*', 'bin/*']
   s.require_paths = ["lib"]
   s.executables = ["geocode"]
   s.license     = 'MIT'

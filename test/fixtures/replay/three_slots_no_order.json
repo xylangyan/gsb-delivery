@@ -1,0 +1,103 @@
+{
+  "description": "A three-slot interleaving. Slot 1 reads an old two-candidate body from cache. While slot 1 wraps candidate 0, slot 2 delivers a new HTTP-200 response whose body cannot be parsed, then slot 2 misses and consumes it. That moves the shared @cache_hit marker to false. Slot 1's candidate 1 still comes from the old body and keeps its coordinates, but it now carries cache_hit=false. Slot 3 later revisits the key slot 2 queried: it gets a cache hit on the unparseable body and still produces no addresses. The example separates the body that produced coordinates from the fetch that set each marker. No global order is declared; the tool must synthesize one from the per-slot logs.",
+  "bodies": {
+    "old-two": {
+      "code": 200,
+      "body": "[{\"place_id\":\"1\",\"lat\":\"10.000000\",\"lon\":\"20.000000\",\"display_name\":\"Old A\",\"address\":{\"city\":\"Old City A\"}},{\"place_id\":\"2\",\"lat\":\"11.000000\",\"lon\":\"21.000000\",\"display_name\":\"Old B\",\"address\":{\"city\":\"Old City B\"}}]"
+    },
+    "unparseable": {
+      "code": 200,
+      "body": "<html>upstream returned a success status with a non-JSON body</html>"
+    }
+  },
+  "processes": [
+    {
+      "id": "p1",
+      "label": "worker-1",
+      "prefix": "geocoder:",
+      "config": {
+        "host": "nominatim.local",
+        "use_https": false,
+        "language": "en"
+      },
+      "initial_cache": {
+        "https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street": "old-two"
+      }
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "process": "p1",
+      "description": "Cache hit on the old two-candidate body; candidates are wrapped one at a time.",
+      "operations": [
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": true
+        },
+        {
+          "op": "result",
+          "candidate": 0,
+          "body": "old-two",
+          "coordinates": [
+            10.0,
+            20.0
+          ],
+          "cache_hit": true
+        },
+        {
+          "op": "result",
+          "candidate": 1,
+          "body": "old-two",
+          "coordinates": [
+            11.0,
+            21.0
+          ],
+          "cache_hit": false
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "process": "p1",
+      "description": "Deletes the original cache entry, receives a success response with an unparseable body, and consumes it after slot 1's first wrap.",
+      "operations": [
+        {
+          "op": "cache_delete",
+          "key": "geocoder:https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street"
+        },
+        {
+          "op": "respond",
+          "query": "Main Street",
+          "body": "unparseable"
+        },
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": false
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "process": "p1",
+      "description": "Later touches the key slot 2 queried; the body came from cache, yet there are no addresses.",
+      "operations": [
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": true
+        },
+        {
+          "op": "note",
+          "message": "downstream empty; cache was modified by slot 2"
+        }
+      ]
+    }
+  ],
+  "focus": {
+    "slot": "s1",
+    "candidate": 1
+  }
+}

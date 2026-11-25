@@ -1,0 +1,168 @@
+{
+  "description": "Two batches with separate caches. Batch A is a three-slot interleaving that replays: the first wrapper keeps cache_hit=true, the later wrapper inherits cache_hit=false from slot 2. Batch B has its own cache and a report that cannot be replayed: its cached body is present at startup, but the log calls the search a miss. The tool solves the two batches separately and localizes the failure to batch B.",
+  "bodies": {
+    "old-two": {
+      "code": 200,
+      "body": "[{\"place_id\":\"1\",\"lat\":\"10.000000\",\"lon\":\"20.000000\",\"display_name\":\"Old A\",\"address\":{\"city\":\"Old City A\"}},{\"place_id\":\"2\",\"lat\":\"11.000000\",\"lon\":\"21.000000\",\"display_name\":\"Old B\",\"address\":{\"city\":\"Old City B\"}}]"
+    },
+    "unparseable": {
+      "code": 200,
+      "body": "<html>upstream returned a success status with a non-JSON body</html>"
+    },
+    "b-empty": {
+      "code": 200,
+      "body": "[{\"place_id\":\"7\",\"lat\":\"70.0\",\"lon\":\"80.0\",\"display_name\":\"Far Away\"}]"
+    }
+  },
+  "processes": [
+    {
+      "id": "p1",
+      "label": "worker-1",
+      "prefix": "geocoder:",
+      "config": {
+        "host": "nominatim.local",
+        "use_https": false,
+        "language": "en"
+      },
+      "initial_cache": {
+        "https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street": "old-two"
+      }
+    },
+    {
+      "id": "p2",
+      "label": "worker-2",
+      "prefix": "geocoder:",
+      "config": {
+        "host": "nominatim.local",
+        "use_https": false,
+        "language": "en"
+      },
+      "initial_cache": {
+        "https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Second+Street": "b-empty"
+      }
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "process": "p1",
+      "description": "Cache hit on the old two-candidate body; candidates are wrapped one at a time.",
+      "operations": [
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": true
+        },
+        {
+          "op": "result",
+          "candidate": 0,
+          "body": "old-two",
+          "coordinates": [
+            10.0,
+            20.0
+          ],
+          "cache_hit": true
+        },
+        {
+          "op": "result",
+          "candidate": 1,
+          "body": "old-two",
+          "coordinates": [
+            11.0,
+            21.0
+          ],
+          "cache_hit": false
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "process": "p1",
+      "description": "Deletes the original cache entry, receives a success response with an unparseable body, and consumes it after slot 1's first wrap.",
+      "operations": [
+        {
+          "op": "cache_delete",
+          "key": "geocoder:https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street"
+        },
+        {
+          "op": "respond",
+          "query": "Main Street",
+          "body": "unparseable"
+        },
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": false
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "process": "p1",
+      "description": "Later touches the key slot 2 queried; the body came from cache, yet there are no addresses.",
+      "operations": [
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": true
+        },
+        {
+          "op": "note",
+          "message": "downstream empty; cache was modified by slot 2"
+        }
+      ]
+    },
+    {
+      "id": "t1",
+      "process": "p2",
+      "description": "Batch B slot: cached body exists but the log says miss.",
+      "operations": [
+        {
+          "op": "search",
+          "query": "Second Street",
+          "cache_hit": false
+        },
+        {
+          "op": "result",
+          "candidate": 0,
+          "body": "b-empty",
+          "cache_hit": false,
+          "coordinates": [
+            70.0,
+            80.0
+          ]
+        }
+      ]
+    }
+  ],
+  "focus": {
+    "slot": "s1",
+    "candidate": 1
+  },
+  "order": [
+    "s1:1",
+    "s1:2",
+    "s2:1",
+    "s2:2",
+    "s2:3",
+    "s1:3",
+    "s3:1",
+    "s3:2",
+    "t1:1",
+    "t1:2"
+  ],
+  "groups": [
+    {
+      "id": "batch-a",
+      "processes": [
+        "p1"
+      ]
+    },
+    {
+      "id": "batch-b",
+      "processes": [
+        "p2"
+      ]
+    }
+  ]
+}

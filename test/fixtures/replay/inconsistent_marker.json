@@ -1,0 +1,80 @@
+{
+  "description": "The report insists the first search missed, but the old body is present in the process cache at startup and nothing can delete it before the first operation of its own slot. No interleaving can make that search a miss.",
+  "bodies": {
+    "old-two": {
+      "code": 200,
+      "body": "[{\"place_id\":\"1\",\"lat\":\"10.000000\",\"lon\":\"20.000000\",\"display_name\":\"Old A\"},{\"place_id\":\"2\",\"lat\":\"11.000000\",\"lon\":\"21.000000\",\"display_name\":\"Old B\"}]"
+    },
+    "unparseable": {
+      "code": 200,
+      "body": "not json at all"
+    }
+  },
+  "processes": [
+    {
+      "id": "p1",
+      "prefix": "geocoder:",
+      "config": {
+        "host": "nominatim.local",
+        "use_https": false,
+        "language": "en"
+      },
+      "initial_cache": {
+        "https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street": "old-two"
+      }
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "process": "p1",
+      "operations": [
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": false
+        },
+        {
+          "op": "result",
+          "candidate": 0,
+          "body": "old-two",
+          "cache_hit": true
+        },
+        {
+          "op": "result",
+          "candidate": 1,
+          "body": "old-two",
+          "cache_hit": true
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "process": "p1",
+      "operations": [
+        {
+          "op": "cache_delete",
+          "key": "geocoder:https://nominatim.local/search?accept-language=en&addressdetails=1&format=json&q=Main+Street"
+        },
+        {
+          "op": "respond",
+          "query": "Main Street",
+          "body": "unparseable"
+        },
+        {
+          "op": "search",
+          "query": "Main Street",
+          "cache_hit": false
+        }
+      ]
+    }
+  ],
+  "order": [
+    "s1:1",
+    "s1:2",
+    "s2:1",
+    "s2:2",
+    "s2:3",
+    "s1:3"
+  ]
+}
