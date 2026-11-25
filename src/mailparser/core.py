@@ -36,6 +36,7 @@ from mailparser.const import (
 )
 from mailparser.dates import date_diagnostics, parse_mail_date
 from mailparser.exceptions import MailParserRecursionError
+from mailparser.preview import build_preview
 from mailparser.received import helo_argument_spans
 from mailparser.serialization import (
     SerializationBudget,
@@ -1110,6 +1111,34 @@ class MailParser:
             base_path {str} -- Base path where write the attachments
         """
         write_attachments(attachments=self.attachments, base_path=base_path)
+
+    def report_preview(self, allowed_image_types):
+        """Select a fully renderable vendor report body and its images.
+
+        Picks one body from the report's ``multipart/related`` tree and the
+        original in-tree images its img ``cid:`` references need.  Only
+        media types in ``allowed_image_types`` are accepted; parts outside
+        the related tree, including forwarded copies and ordinary
+        attachments, never fill a missing reference.  The existing
+        ``body`` and ``attachments`` views are unchanged.
+
+        Args:
+            allowed_image_types (iterable[str]): permitted image media
+                types, e.g. ``("image/png", "image/svg+xml")``.
+
+        Returns:
+            dict: selection result from
+            :func:`mailparser.preview.build_preview`.  ``available`` marks
+            whether a body was selected; ``body`` records its media type,
+            Content-ID and original MIME position; ``images`` lists each
+            referenced cid with its MIME position and transfer-decoded
+            bytes in first-reference order.  ``unavailable`` carries
+            missing or conflicting cid diagnostics with section indices.
+
+        Raises:
+            TypeError: if ``allowed_image_types`` is a single string.
+        """
+        return build_preview(self.message, allowed_image_types)
 
     def __getattr__(self, name):
         """

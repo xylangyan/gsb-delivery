@@ -445,6 +445,54 @@ literal spans intact and removes only ASCII folding whitespace between
 adjacent encoded-words. The optional RFC 2231 language suffix, such as
 `UTF-8*en`, is separated from the charset before strict decoding.
 
+### Vendor report preview
+
+`mail.report_preview(allowed_image_types)` (or the module function
+`build_preview(message, allowed_image_types)`) selects one body that can be
+displayed completely together with the original inline images it uses. The
+caller passes the image media types it accepts, for example
+`("image/png", "image/svg+xml")`. A single string is rejected with
+`TypeError`; pass a tuple or other collection instead.
+
+The report must be an outermost `multipart/related` part, or the unique
+non-attachment direct `multipart/related` child of an outer
+`multipart/mixed`. The related root is the direct child named by the
+`start` parameter, or the first child when `start` is absent; it may be an
+HTML part or a `multipart/alternative` containing HTML and plain text.
+Only `img` `cid:` references are considered. Percent-escaped octets in the
+`cid:` URL are unescaped before comparison with normalized `Content-ID`
+values. Images may sit directly in the related part, or inside per-section
+direct `multipart/mixed` containers whose `multipart/alternative`
+alternatives each offer either one image or one pack of images that must be
+used together.
+
+Selection rules follow the vendor layout exactly:
+
+- HTML candidates are tried from the last to the first, and the first one
+  whose every referenced CID resolves to exactly one allowed image wins.
+- Each resource alternative contributes one branch. Earlier alternatives in
+  wire order dominate, and within one alternative the later wire branch is
+  preferred.
+- A CID referenced more than once still maps to one image; unreferenced
+  images are never returned. Images outside the related tree, including
+  forwarded copies and ordinary attachments, can never fill a reference.
+- When no HTML body can be completed, the last plain-text alternative is
+  returned and the HTML failures are kept in `unavailable`.
+
+A successful result reports `available: true`, a `body` with its
+`media_type`, `content_id` and original `part_path`, and an `images` list in
+first-reference order. Each image entry carries its `cid`, original
+`part_path`, `media_type` and the transfer-decoded `payload` bytes. On
+failure `available` is false, `body` is `null`, and `unavailable` lists
+`missing-image`, `media-type-not-allowed` or `unsatisfiable-cids` reasons
+with the involved CIDs and zero-based section indices. The existing `body`,
+`text_html`, `text_plain` and `attachments` views are unchanged.
+
+The selection search is linear in the MIME structure: suffix coverage
+pruning bounds the work for long monthly reports, so a 120-section report
+that can or cannot be completed is selected within the local single-process
+time budget without exponential backtracking.
+
 ### Resource limits for container representations
 
 Attached multipart containers and forwarded messages can repeat the same

@@ -24,6 +24,7 @@ from mailparser.core import (
     parse_from_file_obj,
     parse_from_string,
 )
+from mailparser.preview import build_preview
 from mailparser.utils import get_header
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "parse_from_file_msg",
     "parse_from_file_obj",
     "parse_from_string",
+    "build_preview",
     "get_header",
 ]
