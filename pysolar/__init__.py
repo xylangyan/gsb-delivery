@@ -5,7 +5,8 @@ from . import \
     util, \
     solar, \
     numeric, \
-    vectorised
+    vectorised, \
+    backfill
 
 def use_numpy():
     numeric.use_numpy()
