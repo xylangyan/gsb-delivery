@@ -1420,3 +1420,5 @@ if RUBY_ENGINE == 'jruby'
     require 'open3/jruby'
   end
 end
+
+require_relative 'archive_handoff'

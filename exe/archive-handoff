@@ -1,0 +1,53 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require "json"
+require_relative "../lib/archive_handoff"
+
+options = { state: ENV.fetch("ARCHIVE_HANDOFF_STATE", ".archive-handoff") }
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: archive-handoff [resume|status|stderr] --occurrence ID [options]"
+  opts.on("--state DIR", "Persistent state directory") { |value| options[:state] = value }
+  opts.on("--occurrence ID", "Occurrence number") { |value| options[:occurrence] = value }
+  opts.on("--command NAME", "Command name for stderr lookup") { |value| options[:command] = value }
+  opts.on("--config PATH", "Ruby file returning a warehouse/commands hash") { |value| options[:config] = value }
+end
+
+command = if ARGV.first && !ARGV.first.start_with?("-")
+            ARGV.shift
+          else
+            "resume"
+          end
+parser.parse!(ARGV)
+
+config = {}
+if options[:config]
+  config = eval(File.read(options[:config]), TOPLEVEL_BINDING.dup, options[:config])
+  config = config.transform_keys(&:to_sym) if config.respond_to?(:transform_keys)
+end
+
+runner = ArchiveHandoff::Runner.new(
+  options[:state],
+  warehouse: config[:warehouse],
+  gateway: config[:gateway],
+  commands: config[:commands] || {}
+)
+
+case command
+when "run", "start"
+  runner.run(options.fetch(:occurrence))
+  puts JSON.pretty_generate(runner.snapshot(options.fetch(:occurrence)))
+when "resume"
+  runner.resume(options.fetch(:occurrence))
+  puts JSON.pretty_generate(runner.snapshot(options.fetch(:occurrence)))
+when "status", "snapshot"
+  puts JSON.pretty_generate(runner.snapshot(options.fetch(:occurrence)))
+when "inspect"
+  puts JSON.pretty_generate(runner.inspect(options.fetch(:occurrence)))
+when "stderr"
+  print runner.stderr_text(options[:command])
+else
+  warn "unknown command: #{command}"
+  exit 2
+end
