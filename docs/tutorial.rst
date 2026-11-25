@@ -55,3 +55,40 @@ that:
 
 And that's it for Hello World! Head over to the `examples
 <https://github.com/selectel/pyte/tree/master/examples>`_ for  more.
+
+Capture archives
+----------------
+
+A capture archive stores a terminal byte stream, optionally run-length
+encoded: consecutive identical byte blocks are stored once as a template and
+referenced by a repeat count.  :class:`~pyte.archive.Archive` parses such a
+file without expanding the repeats, and :class:`~pyte.ledger.Ledger` replays
+it through a :class:`~pyte.screens.HistoryScreen` to extract records.
+
+A record is the line at the top of the current scrolling region at the
+moment a forward scroll (``linefeed``, ``index`` or auto-wrap) pushes it out.
+Paging through history, reverse scrolls and ``CSI 3 J`` do not create
+records, and records already taken are unaffected by a later clear.  Each
+cell carries the archive segment, occurrence and byte range that wrote it:
+
+    >>> import io, pyte
+    >>> from pyte import archive
+    >>> writer = archive.ArchiveWriter(columns=10, lines=3)
+    >>> _ = writer.literal(b"one\r\ntwo\r\nthree\r\nfour\r\n")
+    >>> capture = pyte.Ledger(io.BytesIO(writer.to_bytes()))
+    >>> len(capture)
+    2
+    >>> capture.record(1).text
+    'one       '
+    >>> capture.record(1).stripped
+    'one'
+    >>> cell = capture.record(1).cells[0]
+    >>> (cell.data, cell.start, cell.end)
+    ('o', 0, 1)
+
+Long runs of the same template are summarized: the ledger detects the
+periodic screen transition and stores one cycle plus the repeat count, so
+``len(capture)`` and ``capture.tail(n)`` stay cheap even for hundreds of
+millions of repeats.  A file which does not start with the archive magic is
+treated as one literal segment, so plain captures work unchanged.
+

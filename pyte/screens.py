@@ -90,6 +90,13 @@ class Char(NamedTuple):
                          during rendering. Defaults to ``False``.
     :param bool blink: flag for rendering the character blinked. Defaults to
                        ``False``.
+    :param int source: index of the archive segment which supplied the
+                       character, if any.
+    :param int occurrence: 1-based occurrence of that segment in the archive.
+    :param int start: first byte of the character in the reconstructed stream.
+    :param int end: one past the last byte in the reconstructed stream.
+    :param int stored_start: first stored byte in the archive file.
+    :param int stored_end: one past the last stored byte in the archive file.
     """
     data: str
     fg: str = "default"
@@ -100,6 +107,27 @@ class Char(NamedTuple):
     strikethrough: bool = False
     reverse: bool = False
     blink: bool = False
+    source: int | None = None
+    occurrence: int | None = None
+    start: int | None = None
+    end: int | None = None
+    stored_start: int | None = None
+    stored_end: int | None = None
+
+    @property
+    def byte_range(self) -> tuple[int | None, int | None]:
+        """Archive byte range which produced this character."""
+        return self.start, self.end
+
+    @property
+    def template_index(self) -> int | None:
+        """Alias for :attr:`source`."""
+        return self.source
+
+    @property
+    def repeat(self) -> int | None:
+        """Alias for :attr:`occurrence`."""
+        return self.occurrence
 
 
 class Cursor:

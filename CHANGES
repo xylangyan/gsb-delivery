@@ -10,6 +10,11 @@ Unreleased
 
 - The minimum Python version supported by pyte is now 3.10.
 - Fixed rendering of multi code-point emoji sequences.
+- Added ``pyte.archive`` for run-length encoded terminal capture archives,
+  and ``pyte.ledger`` for extracting scrolled-out records with per-cell byte
+  provenance.  Huge template runs are summarized instead of expanded.
+- Added optional source/occurrence/byte-range fields to
+  ``pyte.screens.Char``.
 
 
 Version 0.8.2

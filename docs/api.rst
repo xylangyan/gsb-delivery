@@ -16,6 +16,41 @@ API reference
 
    .. autoclass:: pyte.ByteStream
 
+.. automodule:: pyte.archive
+
+   pyte.archive.Archive
+   ^^^^^^^^^^^^^^^^^^^^
+
+   .. autoclass:: pyte.archive.Archive
+      :members:
+
+   .. autoclass:: pyte.archive.ArchiveWriter
+      :members:
+
+   .. autoclass:: pyte.archive.Segment
+      :members:
+
+   .. autoclass:: pyte.archive.Occurrence
+      :members:
+
+.. automodule:: pyte.ledger
+
+   pyte.ledger.Ledger
+   ^^^^^^^^^^^^^^^^^^
+
+   .. autoclass:: pyte.ledger.Ledger
+      :members:
+
+   .. autoclass:: pyte.ledger.Record
+      :members:
+
+   .. autoclass:: pyte.ledger.CellRecord
+      :members:
+
+   .. autofunction:: pyte.ledger.read_capture
+
+   .. autofunction:: pyte.ledger.count_records
+
 .. automodule:: pyte.screens
 
    pyte.screens.Screen
