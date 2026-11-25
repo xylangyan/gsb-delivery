@@ -21,8 +21,38 @@ madler@alumni.caltech.edu
 """
 
 from .unlzw import unlzw
+from .comparison import (
+    ByteAnchor,
+    CodeAnchor,
+    ComparisonResult,
+    CompressedIndex,
+    InvalidArchive,
+    RangeSpec,
+    build_index,
+    compare,
+    compare_archives,
+    load_index,
+    make_selection,
+    parse_range,
+    save_index,
+)
 
 
-__all__ = ["unlzw"]
+__all__ = [
+    "unlzw",
+    "ByteAnchor",
+    "CodeAnchor",
+    "ComparisonResult",
+    "CompressedIndex",
+    "InvalidArchive",
+    "RangeSpec",
+    "build_index",
+    "compare",
+    "compare_archives",
+    "load_index",
+    "make_selection",
+    "parse_range",
+    "save_index",
+]
 
 __version__ = "0.2.3"
