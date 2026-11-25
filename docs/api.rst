@@ -86,3 +86,26 @@ Warnings
     :members:
     :undoc-members:
     :show-inheritance:
+
+
+Sealed Archive Review
+---------------------
+
+The :mod:`pystac_client.audit` module provides an offline, read-only review of
+two-area imagery handoffs against sealed search archives. It replays the
+original STAC Link chains, verifies Items against each delivery rectangle and
+fully-swept receipt intervals, and selects the exact minimum-fee set of
+volumes. The normal online search and paging workflow is unaffected.
+
+.. automodule:: pystac_client.audit
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. autoclass:: pystac_client.audit.planner.AuditPlanner
+   :members:
+   :undoc-members:
+
+.. autoclass:: pystac_client.audit.vault.Archive
+   :members:
+   :undoc-members:

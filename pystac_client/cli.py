@@ -138,6 +138,24 @@ def collections(
     return 0
 
 
+def audit_command(
+    archive: str, manifest: str, save: str | None = None
+) -> int:
+    """Review a two-area handoff against a read-only sealed archive."""
+    from .audit import audit_handoff
+
+    with open(manifest) as handle:
+        manifest_data = json.load(handle)
+    result = audit_handoff(archive, manifest_data)
+    text = json.dumps(result.to_dict(), indent=2)
+    if save:
+        with open(save, "w") as handle:
+            handle.write(text)
+    else:
+        print(text)
+    return 0 if result.feasible else 2
+
+
 def add_warnings_behavior(parser: argparse.ArgumentParser) -> None:
     warnings_group = parser.add_argument_group("warnings behavior")
     warnings_group.add_argument(
@@ -355,6 +373,22 @@ def parse_args(args: list[str]) -> dict[str, Any]:
         "--save", help="Filename to save Item collection to", default=None
     )
 
+    # audit command (offline sealed-archive review; no live catalog URL)
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Review a two-area handoff against a sealed archive replica",
+        formatter_class=dhf,
+    )
+    audit_parser.add_argument(
+        "archive", help="Path to the sealed archive JSON document"
+    )
+    audit_parser.add_argument(
+        "manifest", help="Path to the two-area delivery manifest JSON document"
+    )
+    audit_parser.add_argument(
+        "--save", help="Filename to save the audit report to", default=None
+    )
+
     parsed_args = {
         k: v for k, v in vars(parser0.parse_args(args)).items() if v is not None
     }
@@ -402,15 +436,21 @@ def cli() -> int:
     if not args:
         return 1
 
-    loglevel = args.pop("logging")
-    if args.get("save", False) or args.get("matched", False):
-        logging.basicConfig(level=loglevel)
-        # quiet loggers
-        logging.getLogger("urllib3").propagate = False
-
     cmd = args.pop("command")
 
     try:
+        if cmd == "audit":
+            archive = args.pop("archive")
+            manifest = args.pop("manifest")
+            save = args.pop("save", None)
+            return audit_command(archive, manifest, save=save)
+
+        loglevel = args.pop("logging")
+        if args.get("save", False) or args.get("matched", False):
+            logging.basicConfig(level=loglevel)
+            # quiet loggers
+            logging.getLogger("urllib3").propagate = False
+
         url = args.pop("url")
         headers = args.pop("headers", {})
 
@@ -431,7 +471,7 @@ def cli() -> int:
         else:
             logger.error(
                 f"Command '{cmd}' is not a valid command. "
-                "must be 'search' or 'collections'",
+                "must be 'search', 'collections', or 'audit'",
             )
             return 1
     except Exception as e:

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- Offline sealed-archive review for two-area imagery handoffs in
+  `pystac_client.audit`, including STAC Link chain replay, geometry-based
+  area filtering, fully-swept receipt verification, exact minimum-fee volume
+  selection, and an `audit` CLI subcommand.
+
 ### Changed
 
 - Update minimum Python to 3.12 and depend on only pystac-core ([#952](https://github.com/stac-utils/pystac-client/pull/952/))

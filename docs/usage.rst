@@ -659,3 +659,46 @@ The result will be a list containing the most recent item from each collection:
 
     >>> items
     [<Item id=NASADEM_HGT_s56w072>, <Item id=ESA_WorldCover_10m_2021_v200_S60W030>, <Item id=90W_80Nv1_3_2020>]
+
+Sealed archive review (offline)
+-------------------------------
+
+In addition to live search, ``pystac_client`` can review a two-area imagery
+handoff against a read-only sealed archive without making any network calls.
+The archive groups sealed search pages into *volumes*; each volume has one
+access fee and every page may carry a *receipt* describing the fully swept
+sort-key interval (UTC time, then collection and id) of the request that
+produced it.
+
+A delivery manifest names the two lon/lat rectangles, the imagery categories,
+and the number ``k`` of newest records required per area. The review:
+
+* builds one authorized search request per area and replays each volume's
+  paging chain using the original STAC Link semantics (POST ``merge`` links
+  keep the prior query; replacement links change the body);
+* keeps an Item only when its actual geometry intersects the rectangle
+  (boundary contact counts, antimeridian rectangles supported);
+* dedupes by ``(collection, id)`` and orders by UTC time (newest first),
+  collection, then id;
+* accepts a receipt only when it is reachable from the authorized request and
+  still carries the same area/time/filter semantics;
+* selects the exact minimum-fee volumes, charging each volume once even when
+  it serves both areas;
+* reports any unprovable key range with its area, category, record positions,
+  and the interval where older imagery could still be hidden.
+
+.. code-block:: python
+
+    from pystac_client.audit import audit_handoff
+
+    result = audit_handoff("archive.json", manifest)
+    print(result.feasible, result.total_cost, result.selected_volumes)
+    for requirement in result.requirements:
+        print(requirement.requirement.id, requirement.covered, requirement.gaps)
+
+The same review is available from the command line; a feasible handoff exits
+``0`` and an unprovable one exits ``2`` with the gap report on stdout:
+
+.. code-block:: console
+
+    $ stac-client audit archive.json manifest.json
