@@ -1,0 +1,85 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: false
+#
+# Replays a recorded Rinda hand-off ledger and reports, per disputed receipt,
+# which original writes could have supplied it.
+#
+#   ruby bin/rinda-reconcile LEDGER.json
+#   ruby bin/rinda-reconcile --summary LEDGER.json
+#
+require 'json'
+require 'optparse'
+require_relative '../lib/rinda/reconcile'
+
+options = { summary: false }
+OptionParser.new do |opts|
+  opts.banner = 'Usage: rinda-reconcile [--summary] LEDGER.json'
+  opts.on('--summary', 'Apply the summary observations line by line') { options[:summary] = true }
+  opts.on('-h', '--help') { puts opts; exit }
+end.parse!
+
+path = ARGV.shift or abort('rinda-reconcile: ledger JSON required (try --help)')
+ledger = Rinda::Reconcile::Ledger.load(path)
+
+def describe(attribution)
+  ids = attribution.ids
+  if ids.empty?
+    'no possible source write'
+  elsif ids.size == 1
+    ids.first
+  else
+    "{#{ids.join(' | ')}}"
+  end
+end
+
+def print_result(result)
+  puts "order: #{result.order.linearize.join(' -> ')}" if result.order
+  result.reads.each do |read|
+    markers = []
+    markers << 'expired-only (ghost)' if read.expired_only?
+    puts "read #{read.id}: saw #{read.value.inspect} " \
+         "from #{read.sources.map(&:id).join('/')} #{markers.join(' ')}".rstrip
+  end
+
+  result.attributions.each do |attribution|
+    receipt = attribution.receipt
+    puts "receipt #{receipt.id} [#{receipt.label}] value=#{receipt.value.inspect} " \
+         "sources=#{describe(attribution)}"
+  end
+
+  result.groups.each do |label, decision|
+    puts "verdict #{label}: #{decision[:verdict]}"
+  end
+end
+
+if options[:summary]
+  summary = Rinda::Reconcile::Engine.new(ledger).replay_summary
+  summary.steps.each do |step|
+    result = step[:result]
+    status = result.replayable? ? 'ok' : 'CONFLICT'
+    puts "line #{step[:line]}: #{step[:observation].inspect} => #{status}"
+    next if result.replayable?
+    puts "  first unreplayable line: #{step[:line]}"
+    puts "  conflict: #{result.conflict.message}"
+    result.conflict.evidence.each { |e| puts "    #{JSON.generate(e)}" }
+  end
+  exit(summary.ok? ? 0 : 2)
+end
+
+result = Rinda::Reconcile::Engine.new(ledger).replay
+if result.replayable?
+  print_result(result)
+  if result.scenarios.any?
+    puts
+    puts 'ambiguous: two complete event orders'
+    result.scenarios.each do |scenario|
+      puts "  scenario #{scenario['scenario']}: #{scenario['description']}"
+      puts "    assignments: #{scenario['assignments'].inspect}"
+      puts "    order: #{scenario['order'].join(' -> ')}"
+    end
+  end
+else
+  puts "CONFLICT: #{result.conflict.message}"
+  result.conflict.evidence.each { |e| puts "  #{JSON.generate(e)}" }
+end
+exit(result.replayable? ? 0 : 2)

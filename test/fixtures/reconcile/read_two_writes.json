@@ -1,0 +1,17 @@
+{
+  "clock": "log-monotonic",
+  "endpoints": ["src", "dst"],
+  "calls": [
+    {"id": "rd1", "endpoint": "dst", "method": "read", "template": ["job", null],
+     "recv": "READ-1", "start": 10, "offset": 9, "value": ["job", "B"],
+     "acquired": 18},
+    {"id": "wA", "endpoint": "src", "method": "write", "tuple": ["job", "A"],
+     "lease": 600, "start": 12, "offset": 1, "recv": "SRC-A"},
+    {"id": "wB", "endpoint": "src", "method": "write", "tuple": ["job", "B"],
+     "lease": 600, "start": 14, "offset": 1, "recv": "SRC-B"}
+  ],
+  "windows": [{"events": ["wA", "wB"]}],
+  "read_sources": {"rd1": "wB"},
+  "summary": ["READ-1"],
+  "observed": []
+}

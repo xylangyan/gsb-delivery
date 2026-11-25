@@ -1,0 +1,15 @@
+{
+  "clock": "log-monotonic",
+  "endpoints": ["src", "dst"],
+  "calls": [
+    {"id": "wdead", "endpoint": "src", "method": "write", "tuple": ["job", "Jdead"],
+     "lease": 0, "start": 10, "offset": 0, "recv": "SRC-DEAD"},
+    {"id": "rd1", "endpoint": "dst", "method": "read", "template": ["job", "Jdead"],
+     "recv": "READ-1", "start": 9, "offset": 5, "value": ["job", "Jdead"]},
+    {"id": "t1", "endpoint": "dst", "method": "take", "template": ["job", "Jdead"],
+     "recv": "TAKE-1", "recv_value": ["job", "Jdead"], "start": 20, "offset": 1,
+     "error": "RequestExpiredError"}
+  ],
+  "summary": ["READ-1", "TAKE-1"],
+  "observed": []
+}

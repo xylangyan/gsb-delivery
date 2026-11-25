@@ -1,0 +1,26 @@
+{
+  "clock": "log-monotonic",
+  "endpoints": ["src", "dst"],
+  "calls": [
+    {"id": "g1w", "endpoint": "src", "method": "write", "tuple": ["job", "J1"],
+     "lease": 600, "start": 10, "offset": 1, "recv": "S-G1"},
+    {"id": "g1m", "endpoint": "dst", "method": "move", "template": ["job", "J1"],
+     "port": "P-G1", "recv": "G1", "recv_value": ["job", "J1"],
+     "start": 20, "offset": 2, "error": "reply lost after push"},
+    {"id": "g1t", "endpoint": "dst", "method": "take", "template": ["job", "J1"],
+     "recv": "G1", "recv_value": ["job", "J1"], "start": 30, "offset": 1},
+
+    {"id": "g2a", "endpoint": "src", "method": "write", "tuple": ["job", "J2"],
+     "lease": 600, "start": 40, "offset": 1, "recv": "S-G2a"},
+    {"id": "g2b", "endpoint": "src", "method": "write", "tuple": ["job", "J2"],
+     "lease": 600, "start": 42, "offset": 1, "recv": "S-G2b"},
+    {"id": "g2c", "endpoint": "dst", "method": "take", "template": ["job", "J2"],
+     "recv": "G2", "recv_value": ["job", "J2"], "source": "g2a",
+     "start": 50, "offset": 1},
+    {"id": "g2d", "endpoint": "dst", "method": "take", "template": ["job", "J2"],
+     "recv": "G2", "recv_value": ["job", "J2"], "source": "g2b",
+     "start": 60, "offset": 1}
+  ],
+  "summary": ["G1", "G2"],
+  "observed": []
+}

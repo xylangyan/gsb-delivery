@@ -1,0 +1,20 @@
+{
+  "clock": "log-monotonic",
+  "endpoints": ["src", "dst"],
+  "calls": [
+    {"id": "w1", "endpoint": "src", "method": "write", "tuple": ["job", "J"],
+     "lease": 600, "start": 10, "offset": 1, "recv": "SRC-1"},
+    {"id": "w2", "endpoint": "src", "method": "write", "tuple": ["job", "J"],
+     "lease": 600, "start": 12, "offset": 1, "recv": "SRC-2"},
+    {"id": "t1", "endpoint": "dst", "method": "take", "template": ["job", "J"],
+     "recv": "R1", "recv_value": ["job", "J"], "start": 20, "offset": 1},
+    {"id": "t2", "endpoint": "dst", "method": "take", "template": ["job", "J"],
+     "recv": "R2", "recv_value": ["job", "J"], "start": 30, "offset": 1}
+  ],
+  "summary": [
+    {"receipt": "t1", "source": "w1"},
+    {"receipt": "t2", "source": "w1"},
+    {"receipt": "t2", "source": "w2"}
+  ],
+  "observed": []
+}

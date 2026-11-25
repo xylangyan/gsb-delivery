@@ -1,0 +1,14 @@
+{
+  "clock": "log-monotonic",
+  "endpoints": ["a", "b"],
+  "calls": [
+    {"id": "w1", "endpoint": "a", "method": "write", "tuple": ["job", "J"],
+     "lease": 600, "start": 10, "offset": 1, "recv": "SRC-1"},
+    {"id": "t1", "endpoint": "a", "method": "take", "template": ["job", "J"],
+     "recv": "R1", "recv_value": ["job", "J"], "start": 20, "offset": 1},
+    {"id": "t2", "endpoint": "b", "method": "take", "template": ["job", "J"],
+     "recv": "R2", "recv_value": ["job", "J"], "start": 30, "offset": 1}
+  ],
+  "summary": ["R1", "R2"],
+  "observed": []
+}

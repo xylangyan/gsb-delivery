@@ -1,0 +1,17 @@
+{
+  "clock": "log-monotonic",
+  "endpoints": ["src", "relay", "dst"],
+  "calls": [
+    {"id": "w1", "endpoint": "src", "method": "write", "tuple": ["job", "J1"],
+     "lease": 600, "start": 10, "offset": 1, "recv": "SRC-1"},
+    {"id": "m1", "endpoint": "relay", "method": "move", "template": ["job", "J1"],
+     "port": "PORT-1", "recv": "REG-1", "recv_value": ["job", "J1"],
+     "start": 12, "offset": 2, "error": "port push succeeded, response lost"},
+    {"id": "t1", "endpoint": "relay", "method": "take", "template": ["job", "J1"],
+     "recv": "REG-2", "recv_value": ["job", "J1"], "start": 20, "offset": 1},
+    {"id": "d1", "endpoint": "dst", "method": "write", "tuple": ["job", "J1"],
+     "lease": 600, "start": 21, "offset": 1, "recv": "DST-1"}
+  ],
+  "summary": ["REG-1", "REG-2"],
+  "observed": []
+}
