@@ -97,6 +97,36 @@ A number of options are foreseen to tune how the cost is computed:
    psi-relaxation (for cyclical sequences) [2].
 
 
+DTW and Run-Length Encoded Series
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When a series contains long constant regions, the same value repeated
+millions of times can be stored as a ``(value, count)`` run instead of
+as individual samples.  The :mod:`dtaidistance.dtw_rle` module computes
+the same squared-difference DTW score as :func:`dtaidistance.dtw.distance`
+directly on those runs:
+
+::
+
+    from dtaidistance import dtw_rle
+    runs1 = [(0, 1000000), (3, 1000000)]
+    runs2 = [(0, 2000000), (3, 1000000)]
+    distance, path = dtw_rle.distance_and_path(runs1, runs2,
+                                               window=10000000, penalty=1)
+
+The window, penalty, and end-point conventions are the same as for
+:func:`dtaidistance.dtw.distance`.  The returned path is compact: it is a
+list of vertices on the original sample indices, and each consecutive
+pair is connected by a horizontal, vertical, or diagonal run.  This keeps
+paths through constant regions small without losing the actual
+coordinates where a path leaves a run.  ``warping_path_full`` expands a
+compact path into every visited cell (use it only for short series).
+
+If the window contains no complete path, the distance is infinity and
+the path is ``None``.  Run-length input also works through
+``dtw.distance_rle`` and ``dtw.warping_path_rle``.
+
+
 DTW and keep all warping paths
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

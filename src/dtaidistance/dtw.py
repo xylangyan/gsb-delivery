@@ -1314,3 +1314,29 @@ def warping_path_args_to_c(s1, s2, **kwargs):
                        ['window', 'max_dist', 'max_step', 'max_length_diff', 'penalty', 'psi']}
     return s1, s2, settings_kwargs
 
+
+def distance_rle(s1, s2, **kwargs):
+    """DTW distance for run-length encoded series.
+
+    See :func:`dtaidistance.dtw_rle.distance`.
+    """
+    from . import dtw_rle
+    return dtw_rle.distance(s1, s2, **kwargs)
+
+
+def warping_path_rle(s1, s2, **kwargs):
+    """Optimal warping path for run-length encoded series.
+
+    See :func:`dtaidistance.dtw_rle.warping_path`.
+    """
+    from . import dtw_rle
+    return dtw_rle.warping_path(s1, s2, **kwargs)
+
+
+def distance_and_path_rle(s1, s2, **kwargs):
+    """Distance and compact optimal path for run-length encoded series.
+
+    See :func:`dtaidistance.dtw_rle.distance_and_path`.
+    """
+    from . import dtw_rle
+    return dtw_rle.distance_and_path(s1, s2, **kwargs)

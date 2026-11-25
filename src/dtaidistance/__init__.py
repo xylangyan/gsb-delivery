@@ -17,6 +17,8 @@ logger = logging.getLogger("be.kuleuven.dtai.distance")
 
 
 from . import dtw
+from . import dtw_rle
+from . import rle
 try:
     from . import dtw_cc
 except ImportError:

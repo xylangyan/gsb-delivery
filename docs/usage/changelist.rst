@@ -1,6 +1,11 @@
 Changelist
 ----------
 
+Version 2.6
+~~~~~~~~~~~
+
+- Run-length encoded DTW (``dtaidistance.dtw_rle``) with compact warping paths
+
 Version 2.3
 ~~~~~~~~~~~
 
