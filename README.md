@@ -73,6 +73,35 @@ All value below the min bound will be included in the first group and all value 
 [array([], dtype=float64), array([2.5, 3.5]), array([6.5]), array([], dtype=float64)]
 ```
 
+## Segment archives
+
+`query_archive` queries sorted readings stored as run segments
+`(value, first_ordinal, count)` without expanding long runs:
+
+```python
+from jenkspy import query_archive
+
+segments = [
+    (0, 1, 524304),
+    (1, 524305, 524288),
+    (2, 1048593, 524288),
+    (3, 1572881, 524288),
+    (4, 2097169, 524320),
+]
+
+result = query_archive(segments, 17, 2621456, 3)
+result["breaks"]     # [0, 0, 2, 4]
+result["endpoints"]  # [524304, 1572880, 2621456]
+```
+
+Pass `seals` and `cost_limit` to require allowed endpoint ordinals for selected
+classes. Seal class numbers may be zero- or one-based; both tuple and mapping
+forms are accepted. `result["constrained"]` contains the lexicographically
+earliest feasible endpoint list and its first-to-last accumulated double
+precision group cost. When no sealed partition is feasible, its `message` is
+`"签封无法兑现"` while the ordinary Jenks result remains available at the top
+level.
+
 ## Installation
 
 - **From pypi**

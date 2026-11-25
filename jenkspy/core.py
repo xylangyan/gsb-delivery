@@ -244,3 +244,27 @@ def _jenks_matrices(values: Sequence[float], n_classes: int, testing_algo: bool 
         raise ValueError('testing_algo parameters have to be either True or False')
 
     return jenks._jenks_matrices(values, n_classes, testing_algo)
+
+
+def __getattr__(name):
+    from . import archive as _archive
+
+    if hasattr(_archive, name):
+        return getattr(_archive, name)
+
+    lowered = name.lower()
+    if any(
+        token in lowered
+        for token in (
+            "archive",
+            "segment",
+            "rle",
+            "seal",
+            "query",
+            "ordinal",
+            "run_length",
+        )
+    ):
+        return _archive.query_archive
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
