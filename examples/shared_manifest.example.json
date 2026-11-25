@@ -1,0 +1,282 @@
+{
+  "schema": "gsb.shared_original_rows.v1",
+  "shared": true,
+  "row_count": 8,
+  "total_cost": 62.0,
+  "stats": {
+    "candidate_row_count": 10,
+    "selected_row_count": 8,
+    "total_cost": 62.0,
+    "verification_runs": 14,
+    "mandatory_row_count": 8,
+    "cegar_iterations": 1,
+    "learned_clause_count": 8
+  },
+  "query_requirements": [
+    {
+      "query_id": "rank",
+      "tables": [
+        {
+          "name": "joined",
+          "alias": null
+        },
+        {
+          "name": "bill_left",
+          "alias": "l"
+        },
+        {
+          "name": "flow_right",
+          "alias": "r"
+        }
+      ],
+      "columns": [
+        "bill_no",
+        "display_value",
+        "flow_id",
+        "grp",
+        "l.bill_no",
+        "l.event_time",
+        "l.grp",
+        "l.row_seq",
+        "r.display_value",
+        "r.event_time",
+        "r.flow_id",
+        "rn"
+      ],
+      "join_conditions": [
+        {
+          "type": "left join",
+          "on": {
+            "eq": [
+              "l.bill_no",
+              "r.bill_no"
+            ]
+          }
+        }
+      ],
+      "filters": [
+        {
+          "eq": [
+            "rn",
+            1
+          ]
+        },
+        {
+          "gte": [
+            "l.event_time",
+            {
+              "literal": "2026-01-01"
+            }
+          ]
+        }
+      ],
+      "windows": [
+        {
+          "alias": "rn",
+          "partition_by": "l.grp",
+          "order_by": [
+            {
+              "value": "r.event_time"
+            },
+            {
+              "value": "l.event_time"
+            },
+            {
+              "value": "l.row_seq"
+            },
+            {
+              "value": "r.flow_id"
+            }
+          ],
+          "frame": null
+        }
+      ],
+      "distinct": false
+    },
+    {
+      "query_id": "match",
+      "tables": [
+        {
+          "name": "bill_left",
+          "alias": "l"
+        },
+        {
+          "name": "flow_right",
+          "alias": "r"
+        }
+      ],
+      "columns": [
+        "l.bill_no",
+        "matched",
+        "r.display_value",
+        "r.flow_id",
+        "unmatched"
+      ],
+      "join_conditions": [
+        {
+          "type": "left join",
+          "on": {
+            "eq": [
+              "l.bill_no",
+              "r.bill_no"
+            ]
+          }
+        }
+      ],
+      "filters": [
+        {
+          "gte": [
+            "l.event_time",
+            {
+              "literal": "2026-01-01"
+            }
+          ]
+        }
+      ],
+      "windows": [],
+      "distinct": false
+    },
+    {
+      "query_id": "duplicates",
+      "tables": [
+        {
+          "name": "bill_left",
+          "alias": null
+        }
+      ],
+      "columns": [
+        "bill_no",
+        "row_seq"
+      ],
+      "join_conditions": [],
+      "filters": [
+        {
+          "gte": [
+            "event_time",
+            {
+              "literal": "2026-01-01"
+            }
+          ]
+        }
+      ],
+      "windows": [],
+      "distinct": false
+    },
+    {
+      "query_id": "distinct_values",
+      "tables": [
+        {
+          "name": "bill_left",
+          "alias": null
+        }
+      ],
+      "columns": [
+        "bill_no",
+        "grp"
+      ],
+      "join_conditions": [],
+      "filters": [
+        {
+          "gte": [
+            "event_time",
+            {
+              "literal": "2026-01-01"
+            }
+          ]
+        }
+      ],
+      "windows": [],
+      "distinct": true
+    }
+  ],
+  "rows": [
+    {
+      "source_table": "bill_left",
+      "row_id": "L1",
+      "storage_cost": 10.0,
+      "columns": {
+        "bill_no": "B1",
+        "grp": "G1",
+        "event_time": "2026-01-01 10:00",
+        "row_seq": 1
+      }
+    },
+    {
+      "source_table": "bill_left",
+      "row_id": "L2",
+      "storage_cost": 10.0,
+      "columns": {
+        "bill_no": "B2",
+        "grp": "G1",
+        "event_time": "2026-01-01 11:00",
+        "row_seq": 2
+      }
+    },
+    {
+      "source_table": "bill_left",
+      "row_id": "L3",
+      "storage_cost": 10.0,
+      "columns": {
+        "bill_no": "B3",
+        "grp": "G2",
+        "event_time": "2026-01-01 09:00",
+        "row_seq": 1
+      }
+    },
+    {
+      "source_table": "bill_left",
+      "row_id": "L4",
+      "storage_cost": 10.0,
+      "columns": {
+        "bill_no": "B4",
+        "grp": "G3",
+        "event_time": "2026-01-02 09:00",
+        "row_seq": 1
+      }
+    },
+    {
+      "source_table": "bill_left",
+      "row_id": "L5",
+      "storage_cost": 10.0,
+      "columns": {
+        "bill_no": "B4",
+        "grp": "G3",
+        "event_time": "2026-01-02 09:00",
+        "row_seq": 2
+      }
+    },
+    {
+      "source_table": "flow_right",
+      "row_id": "R1",
+      "storage_cost": 4.0,
+      "columns": {
+        "bill_no": "B1",
+        "flow_id": "F1",
+        "event_time": "2026-01-01 09:59",
+        "display_value": "winner"
+      }
+    },
+    {
+      "source_table": "flow_right",
+      "row_id": "R2",
+      "storage_cost": 4.0,
+      "columns": {
+        "bill_no": "B2",
+        "flow_id": "F2",
+        "event_time": "2026-01-01 10:59",
+        "display_value": null
+      }
+    },
+    {
+      "source_table": "flow_right",
+      "row_id": "R3",
+      "storage_cost": 4.0,
+      "columns": {
+        "bill_no": "B3",
+        "flow_id": "F3",
+        "event_time": "2026-01-01 08:59",
+        "display_value": null
+      }
+    }
+  ]
+}

@@ -75,3 +75,7 @@ unskipping means deciding the parse tree shape as well as writing the grammar.
 
 - `import mo_sql_parsing` must stay under 0.2s — `tests/smoke_test1.py`. Currently ~16ms.
   See CLAUDE.md for what may and may not be imported at module scope.
+
+## Manifest planner follow-up
+
+- **Set-based large-ledger pruning** — `manifest_planner.py:751` still uses black-box replay passes for mandatory-row and cost search; `tests/test_manifest_planner.py:142` proves the small-ledger semantics, not large-ledger scale. Derive join/window partition closures in shared SQL before invoking the cost optimizer.

@@ -1,0 +1,250 @@
+{
+  "tables": [
+    {
+      "name": "bill_left",
+      "rows": [
+        {
+          "row_id": "L0",
+          "storage_cost": 10,
+          "columns": {
+            "bill_no": "B0",
+            "grp": "G0",
+            "event_time": "2025-12-31 23:00",
+            "row_seq": 0
+          }
+        },
+        {
+          "row_id": "L1",
+          "storage_cost": 10,
+          "columns": {
+            "bill_no": "B1",
+            "grp": "G1",
+            "event_time": "2026-01-01 10:00",
+            "row_seq": 1
+          }
+        },
+        {
+          "row_id": "L2",
+          "storage_cost": 10,
+          "columns": {
+            "bill_no": "B2",
+            "grp": "G1",
+            "event_time": "2026-01-01 11:00",
+            "row_seq": 2
+          }
+        },
+        {
+          "row_id": "L3",
+          "storage_cost": 10,
+          "columns": {
+            "bill_no": "B3",
+            "grp": "G2",
+            "event_time": "2026-01-01 09:00",
+            "row_seq": 1
+          }
+        },
+        {
+          "row_id": "L4",
+          "storage_cost": 10,
+          "columns": {
+            "bill_no": "B4",
+            "grp": "G3",
+            "event_time": "2026-01-02 09:00",
+            "row_seq": 1
+          }
+        },
+        {
+          "row_id": "L5",
+          "storage_cost": 10,
+          "columns": {
+            "bill_no": "B4",
+            "grp": "G3",
+            "event_time": "2026-01-02 09:00",
+            "row_seq": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "flow_right",
+      "rows": [
+        {
+          "row_id": "R0",
+          "storage_cost": 4,
+          "columns": {
+            "bill_no": "B0",
+            "flow_id": "F0",
+            "event_time": "2025-12-31 22:59",
+            "display_value": "hidden"
+          }
+        },
+        {
+          "row_id": "R1",
+          "storage_cost": 4,
+          "columns": {
+            "bill_no": "B1",
+            "flow_id": "F1",
+            "event_time": "2026-01-01 09:59",
+            "display_value": "winner"
+          }
+        },
+        {
+          "row_id": "R2",
+          "storage_cost": 4,
+          "columns": {
+            "bill_no": "B2",
+            "flow_id": "F2",
+            "event_time": "2026-01-01 10:59",
+            "display_value": null
+          }
+        },
+        {
+          "row_id": "R3",
+          "storage_cost": 4,
+          "columns": {
+            "bill_no": "B3",
+            "flow_id": "F3",
+            "event_time": "2026-01-01 08:59",
+            "display_value": null
+          }
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "rank",
+      "sql": "\n                    WITH joined AS (\n                      SELECT l.bill_no, l.grp, r.event_time AS right_time,\n                             r.flow_id, r.display_value,\n                             ROW_NUMBER() OVER (\n                               PARTITION BY l.grp\n                               ORDER BY r.event_time, l.event_time, l.row_seq, r.flow_id\n                             ) AS rn\n                      FROM bill_left l\n                      LEFT JOIN flow_right r ON l.bill_no = r.bill_no\n                      WHERE l.event_time >= '2026-01-01'\n                    )\n                    SELECT grp, bill_no, flow_id, display_value, rn\n                    FROM joined\n                    WHERE rn = 1\n                    ORDER BY grp, bill_no\n                ",
+      "expected": {
+        "columns": [
+          "grp",
+          "bill_no",
+          "flow_id",
+          "display_value",
+          "rn"
+        ],
+        "rows": [
+          [
+            "G1",
+            "B1",
+            "F1",
+            "winner",
+            1
+          ],
+          [
+            "G2",
+            "B3",
+            "F3",
+            null,
+            1
+          ],
+          [
+            "G3",
+            "B4",
+            null,
+            null,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "match",
+      "sql": "\n                    SELECT l.bill_no,\n                           CASE WHEN r.flow_id IS NOT NULL\n                                THEN 'matched' ELSE 'unmatched' END AS match_state,\n                           r.display_value\n                    FROM bill_left l\n                    LEFT JOIN flow_right r ON l.bill_no = r.bill_no\n                    WHERE l.event_time >= '2026-01-01'\n                    ORDER BY l.bill_no, r.flow_id\n                ",
+      "expected": {
+        "columns": [
+          "bill_no",
+          "match_state",
+          "display_value"
+        ],
+        "rows": [
+          [
+            "B1",
+            "matched",
+            "winner"
+          ],
+          [
+            "B2",
+            "matched",
+            null
+          ],
+          [
+            "B3",
+            "matched",
+            null
+          ],
+          [
+            "B4",
+            "unmatched",
+            null
+          ],
+          [
+            "B4",
+            "unmatched",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "duplicates",
+      "sql": "\n                    SELECT bill_no, row_seq\n                    FROM bill_left\n                    WHERE event_time >= '2026-01-01'\n                    ORDER BY bill_no, row_seq\n                ",
+      "expected": {
+        "columns": [
+          "bill_no",
+          "row_seq"
+        ],
+        "rows": [
+          [
+            "B1",
+            1
+          ],
+          [
+            "B2",
+            2
+          ],
+          [
+            "B3",
+            1
+          ],
+          [
+            "B4",
+            1
+          ],
+          [
+            "B4",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "distinct_values",
+      "sql": "\n                    SELECT DISTINCT bill_no, grp\n                    FROM bill_left\n                    WHERE event_time >= '2026-01-01'\n                    ORDER BY bill_no\n                ",
+      "expected": {
+        "columns": [
+          "bill_no",
+          "grp"
+        ],
+        "rows": [
+          [
+            "B1",
+            "G1"
+          ],
+          [
+            "B2",
+            "G1"
+          ],
+          [
+            "B3",
+            "G2"
+          ],
+          [
+            "B4",
+            "G3"
+          ]
+        ]
+      }
+    }
+  ]
+}
