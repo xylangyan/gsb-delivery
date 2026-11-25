@@ -13,6 +13,7 @@ nav:
       - 'Architecture': 'architecture.md'
       - 'Plugins': 'plugins.md'
       - Operations: 'operations.md'
+      - Row files: 'rowfile.md'
       - Command-Line: 'cli.md'
       - Locale: 'locale.md'
   - Going deeper: 'links.md'

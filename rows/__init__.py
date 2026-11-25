@@ -17,6 +17,7 @@ from rows.fileio import cfopen  # noqa
 from rows.localization import locale_context  # noqa
 from rows.operations import join, transform, transpose  # noqa
 from rows.table import EagerTable, FlexibleTable, IncrementalTable, StreamTable, Table  # noqa
+from rows.rowfile import Order, RowFile  # noqa
 from rows.version import as_string as __version__  # noqa
 
 

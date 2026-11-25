@@ -12,6 +12,9 @@ to).
 
 ### General Changes and Enhancements
 
+- Add `rows.rowfile` (`RowFile`, `Order`): forward-only, single-pass ingestion
+  with atomic slice correction orders and small-window provenance over a
+  scheduler-provided total-length bound
 - `export_to_html` is now available even if `lxml` is not installed
 - Add Jupyter Notebook integration (implements `_repr_html_`, `.head` and
   `.tail`)
