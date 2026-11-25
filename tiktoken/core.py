@@ -334,6 +334,42 @@ class Encoding:
         text = b"".join(token_bytes).decode("utf-8", errors="strict")
         return text, offsets
 
+    def decode_with_byte_offsets(
+        self, tokens: Sequence[int]
+    ) -> tuple[bytes, list[int], list[int]]:
+        """Decodes tokens and returns their exact ``[start, end)`` byte spans.
+
+        Unlike :meth:`decode_with_offsets`, these offsets never collapse two
+        token starts that fall inside the same multi-byte UTF-8 character.
+        """
+        token_bytes = self.decode_tokens_bytes(tokens)
+        starts: list[int] = []
+        ends: list[int] = []
+        position = 0
+        for token in token_bytes:
+            starts.append(position)
+            position += len(token)
+            ends.append(position)
+        return b"".join(token_bytes), starts, ends
+
+    def encode_with_byte_offsets(
+        self,
+        text: str,
+        *,
+        allowed_special: Literal["all"] | AbstractSet[str] = set(),  # noqa: B006
+        disallowed_special: Literal["all"] | Collection[str] = "all",
+    ) -> tuple[list[int], list[int], list[int]]:
+        """Encodes text and returns token ids with exact byte spans."""
+        tokens = self.encode(
+            text,
+            allowed_special=allowed_special,
+            disallowed_special=disallowed_special,
+        )
+        data, starts, ends = self.decode_with_byte_offsets(tokens)
+        if data != text.encode("utf-8"):
+            raise AssertionError("token byte spans do not reconstruct input text")
+        return tokens, starts, ends
+
     def decode_batch(
         self, batch: Sequence[Sequence[int]], *, errors: str = "replace", num_threads: int = 8
     ) -> list[str]:
