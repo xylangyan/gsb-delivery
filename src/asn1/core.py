@@ -172,13 +172,14 @@ def shift_bits_right(values, unused):  # type (bytes) -> bytes
     if unused == 0:
         return values
 
-    # Shift off unused bits
+    # Shift off unused bits. The low ``unused`` bits of one octet become
+    # the high bits of the next octet.
     remaining = bytearray(values)
     bitmask = (1 << unused) - 1
     removed_bits = 0
 
     for i, byte in enumerate(remaining):
-        remaining[i] = (byte >> unused) | (removed_bits << unused)
+        remaining[i] = (byte >> unused) | (removed_bits << (8 - unused))
         removed_bits = byte & bitmask
 
     return bytes(remaining)
