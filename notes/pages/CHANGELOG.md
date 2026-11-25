@@ -1,4 +1,9 @@
 ## Version 1.4.6 - dev
+	- NEW: `cut_usage` add-on to report exact cutting length per processing layer
+		- deduplicates coincident strokes on one support line per layer
+		- preserves the linetype phase across polyline corners and clipping
+		- supports XCLIP boundaries, inverted clipping paths and paperspace viewports
+		- computes analytic totals without expanding strokes or common repeats
 	- BUGFIX: Fix JSON export of string values with a backslash or double quote
 		- {{pr 1433}}
 	- BUGFIX: xclip: apply the clip boundary transform to the clipping path

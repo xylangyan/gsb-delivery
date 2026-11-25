@@ -29,3 +29,4 @@ Add-ons
     tablepainter
     mtextsurrogate
     gerber_D6673
+    cut_usage
