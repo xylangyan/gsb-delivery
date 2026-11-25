@@ -31,6 +31,7 @@ Generator-based operators for asynchronous iteration
    presentation
    operators
    core
+   handoff
    examples
    utilities
 
