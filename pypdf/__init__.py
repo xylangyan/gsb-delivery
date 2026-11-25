@@ -11,6 +11,12 @@ from ._configuration import Configuration, apply_configuration, get_configuratio
 from ._crypt_providers import crypt_provider
 from ._doc_common import DocumentInformation
 from ._encryption import PasswordType
+from ._form_finalize import (
+    FormFinalizationError,
+    finalize_form_pages,
+    get_form_finalizations,
+    revert_form_finalization,
+)
 from ._page import PageObject, Transformation
 from ._reader import PdfReader
 from ._text_extraction import mult
@@ -34,6 +40,7 @@ _debug_versions = (
 __all__ = [
     "Configuration",
     "DocumentInformation",
+    "FormFinalizationError",
     "ImageType",
     "ObjectDeletionFlag",
     "PageObject",
@@ -46,8 +53,11 @@ __all__ = [
     "__version__",
     "_debug_versions",
     "apply_configuration",
+    "finalize_form_pages",
     "get_configuration",
+    "get_form_finalizations",
     "mult",
     "overwrite_configuration",
     "parse_filename_page_ranges",
+    "revert_form_finalization",
 ]

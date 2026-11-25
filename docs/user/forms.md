@@ -118,3 +118,50 @@ In case of missing _field_ objects in `/Fields`, `writer.reattach_fields()` will
 To ease locating page fields you can use `get_pages_showing_field` of PdfReader or PdfWriter. This method accepts a field object, a *PdfObject* that represents a field (as extracted from `_root_object["/AcroForm"]["/Fields"]`). The method returns a list of pages, because a field can have multiple widgets as mentioned previously (e.g., radio buttons or text displayed on multiple pages).
 
 The page numbers can then be retrieved as usual by using `page.page_number`.
+
+## Finalizing pages as read-only and reverting them
+
+Intake workflows sometimes need to send out a few pages of a form as a
+read-only finalization while the remaining pages keep being filled in the same
+PDF. A reviewer may later send a single finalized page back for edits.
+
+`finalize_form_pages()` bakes the current display of every widget of the given
+pages into the page contents and removes those widgets from the editable form
+(the page annotations, the field kids and the AcroForm fields). Each
+finalization gets a caller-chosen `issue_id` and is archived inside the PDF, so
+the information survives writing to disk and reopening:
+
+```python
+from pypdf import PdfWriter, finalize_form_pages, revert_form_finalization
+
+writer = PdfWriter(clone_from="form.pdf")
+# Freeze the first page; page two stays editable in the same document.
+finalize_form_pages(writer, writer.pages[0], issue_id="OUT-2026-001")
+writer.write("out-partially-finalized.pdf")
+```
+
+The finalized page keeps showing exactly what it displayed at finalization
+time, while its boxes leave both the editable form and the data-entry tree.
+Boxes on the still-editable pages continue to expose the current field
+answers. Boxes are identified by their place in the field tree (the fully
+qualified field name plus the parent field kids), so two boxes that share a
+partial name under different parent fields, and one field owning boxes on
+several pages, are all handled separately.
+
+`revert_form_finalization()` undoes one finalization addressed by its
+`issue_id`. It removes only the read-only drawing produced by that
+finalization and restores the widgets as editable entries, reconnecting them
+to the answers currently held by the field tree:
+
+```python
+revert_form_finalization(writer, "OUT-2026-001")
+```
+
+Only the addressed finalization is touched. Annotations added afterwards,
+artwork originally drawn on the pages, and the stamps of other finalizations
+remain in place even when they reference the same graphical appearance. When a
+field had no remaining editable entry after it was frozen, its value could not
+have changed, so the frozen-time answer is reused; otherwise the restored box
+joins the field's current answer. `get_form_finalizations()` lists the
+finalizations currently recorded in the document.
+
