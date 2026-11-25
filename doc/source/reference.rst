@@ -168,3 +168,32 @@ Functions that operate along a (1d) moving window.
 ------------
 
 .. autofunction:: bottleneck.move_rank
+
+------------
+
+.. autoclass:: bottleneck.RankReissueIndex
+   :members: slip, add_slip, query, count, earliest, changed_positions,
+             corrected_rank, explain
+
+------------
+
+.. autoclass:: bottleneck.CorrectionSlip
+   :members: changed_positions, query, count, earliest, positions_in,
+             corrections_in, corrected_rank, explain
+
+------------
+
+.. autoclass:: bottleneck.CorrectionArchive
+   :members: add, add_many, query, count, earliest, changed_positions, explain
+
+------------
+
+.. autofunction:: bottleneck.query_correction
+
+------------
+
+.. autofunction:: bottleneck.count_reissues
+
+------------
+
+.. autofunction:: bottleneck.earliest_reissue

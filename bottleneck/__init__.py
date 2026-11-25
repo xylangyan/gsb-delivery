@@ -18,6 +18,34 @@ from .move import (
 )
 from .nonreduce import replace
 from .nonreduce_axis import argpartition, nanrankdata, partition, push, rankdata
+from .reissue import (
+    CorrectionArchive,
+    CorrectionIndex,
+    CorrectionPlan,
+    CorrectionQueryResult,
+    CorrectionSlip,
+    DailyRankArchive,
+    IntervalResult,
+    MoveRankCorrectionIndex,
+    MoveRankIndex,
+    RankCorrectionIndex,
+    RankReissueIndex,
+    ReissueIndex,
+    ReissuePlan,
+    ReissueQueryResult,
+    ReissueSlip,
+    build_correction_index,
+    build_index,
+    count_changed_ranks,
+    count_reissues,
+    earliest_changed_rank,
+    earliest_reissue,
+    index_move_rank,
+    index_ranks,
+    move_rank_correction_index,
+    query_correction,
+    query_reissue,
+)
 from .reduce import (
     allnan,
     anynan,
