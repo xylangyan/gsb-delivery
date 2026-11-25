@@ -1,0 +1,44 @@
+{
+  "initial": {
+    "location_no": 100,
+    "loc1": 10,
+    "loc2": 10,
+    "scale_cm": "4321"
+  },
+  "schemas": {
+    "shared": {
+      "name": "StockTicket",
+      "fields": {
+        "location_no": {"type": "int", "mandatory": true},
+        "loc1": {"type": "int"},
+        "loc2": {"type": "int"},
+        "scale_cm": {"type": "int", "factory": "int"}
+      },
+      "invariants": [
+        {"kind": "sum_equals", "fields": ["loc1", "loc2"], "value": 20, "code": "total quantity changed"}
+      ]
+    }
+  },
+  "revisions": [
+    {"id": "R7", "revision": "R7", "field": "location_no", "value": "TEMP-TEXT", "archivable": true},
+    {"id": "R8", "revision": "R8", "field": "location_no", "value": 999, "archivable": true},
+    {"id": "R12", "revision": "R12", "field": "location_no", "value": 4321, "archivable": false},
+    {"id": "R18", "revision": "R18", "field": "loc1", "value": 7, "archivable": false, "group": "MOVE-3"},
+    {"id": "R19", "revision": "R19", "field": "loc2", "value": 13, "archivable": false, "group": "MOVE-3"}
+  ],
+  "commit_groups": [
+    ["R18", "R19"]
+  ],
+  "checkpoints": [
+    {
+      "id": "APPROVAL",
+      "after": "R19",
+      "signoffs": {
+        "location_no": {"revision": "R12", "raw_type": "int", "missing": false},
+        "loc1": {"revision": "R18", "raw_type": "int", "missing": false},
+        "loc2": {"revision": "R19", "raw_type": "int", "missing": false},
+        "scale_cm": {"revision": null, "raw_type": "str", "missing": false}
+      }
+    }
+  ]
+}

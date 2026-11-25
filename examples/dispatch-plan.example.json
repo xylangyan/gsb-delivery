@@ -1,0 +1,100 @@
+{
+  "feasible": true,
+  "write_count": 3,
+  "field_operation_count": 3,
+  "commit_count": 1,
+  "sent_revisions": [
+    "R12",
+    "R18",
+    "R19"
+  ],
+  "sent_revision_labels": [
+    "R12",
+    "R18",
+    "R19"
+  ],
+  "commits": [
+    {
+      "checkpoints": [
+        "APPROVAL"
+      ],
+      "revisions": [
+        "R12",
+        "R18",
+        "R19"
+      ],
+      "revision_labels": [
+        "R12",
+        "R18",
+        "R19"
+      ],
+      "write_count": 3,
+      "field_operation_count": 3
+    }
+  ],
+  "archived_only": [
+    {
+      "revision": "R7",
+      "revision_label": "R7",
+      "reason": "record_entry_rejects_write",
+      "detail": "PTypeError: Invalid type for field StockTicket.location_no, was str"
+    },
+    {
+      "revision": "R8",
+      "revision_label": "R8",
+      "reason": "covered_by_later_sent_write",
+      "detail": "location_no is later delivered by R12"
+    }
+  ],
+  "blockers": [],
+  "verification": {
+    "performed": true,
+    "checkpoints": [
+      {
+        "checkpoint": "APPROVAL",
+        "field": "location_no",
+        "actual_revision": "R12",
+        "actual_raw_type": "int",
+        "missing": false,
+        "ok": true,
+        "problems": []
+      },
+      {
+        "checkpoint": "APPROVAL",
+        "field": "loc1",
+        "actual_revision": "R18",
+        "actual_raw_type": "int",
+        "missing": false,
+        "ok": true,
+        "problems": []
+      },
+      {
+        "checkpoint": "APPROVAL",
+        "field": "loc2",
+        "actual_revision": "R19",
+        "actual_raw_type": "int",
+        "missing": false,
+        "ok": true,
+        "problems": []
+      },
+      {
+        "checkpoint": "APPROVAL",
+        "field": "scale_cm",
+        "actual_revision": null,
+        "actual_raw_type": "str",
+        "missing": false,
+        "ok": true,
+        "problems": []
+      }
+    ]
+  },
+  "optimization": {
+    "used": false,
+    "limit": 12,
+    "free_revisions": 2
+  },
+  "schema_names": {
+    "pclass": "StockTicket",
+    "precord": "StockTicket"
+  }
+}
