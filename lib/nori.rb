@@ -1,14 +1,34 @@
 require "nori/version"
 require "nori/core_ext"
 require "nori/xml_utility_node"
+require "nori/streaming"
 
 class Nori
 
   def self.hash_key(name, options = {})
     name = name.tr("-", "_") if options[:convert_dashes_to_underscores]
     name = name.split(":").last if options[:strip_namespaces]
-    name = options[:convert_tags_to].call(name) if options[:convert_tags_to].respond_to? :call
+    if options[:convert_tags_to].respond_to? :call
+      name = call_tag_converter(options[:convert_tags_to], name, options)
+    end
     name
+  end
+
+  # A tag converter normally takes the tag. A converter that declares a second
+  # positional parameter additionally receives the current record's business id
+  # (or nil during a full-document parse). This lets a streaming caller use the
+  # stable id inside its conversion formula without exposing any other state.
+  # A rest-only signature such as :to_sym.to_proc keeps the one-argument form.
+  def self.call_tag_converter(converter, name, options)
+    arity = converter.respond_to?(:arity) ? converter.arity : 1
+    return converter.call(name) if arity == 1 || arity == -1
+
+    if converter.respond_to?(:parameters)
+      positional = converter.parameters.count { |kind, _| kind == :req || kind == :opt }
+      return converter.call(name) if positional < 2
+    end
+
+    converter.call(name, options[:business_id])
   end
 
   PARSERS = { :rexml => "REXML", :nokogiri => "Nokogiri" }
@@ -26,11 +46,30 @@ class Nori
       :scrub_xml                     => true,
       :standards                     => false,
       :serializable                  => false,
+      :business_id                   => nil,
       :parser                        => :nokogiri
     }
 
     validate_options! defaults.keys, options.keys
     @options = defaults.merge(standards_defaults(options)).merge(options)
+  end
+
+  # A streaming session that emits each record as its closing tag arrives.
+  # See Nori::Streaming::Session.
+  def self.stream(options = {})
+    Streaming::Session.new(options)
+  end
+
+  def stream(options = {})
+    Streaming::Session.new(@options.merge(options))
+  end
+
+  def parse_stream(xml, options = {}, &block)
+    Streaming::Session.new(@options.merge(options)).parse(xml, &block)
+  end
+
+  def self.parse_stream(xml, options = {}, &block)
+    Streaming.parse(xml, options, &block)
   end
 
   def find(hash, *path)

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+* Add `Nori::Streaming::Session`, an incremental record reader. It accepts an XML
+  document in arbitrary pieces and yields each caller-selected record as soon as
+  its closing tag is seen, without waiting for the rest of the document.
+  Commit points are chosen by raw element name and directory hierarchy, before
+  Nori's key normalization. The session keeps a local spool for bytes that have
+  not been committed, assigns one stable business id per original record in a
+  receive ledger, and can checkpoint and resume across a pause inside text,
+  CDATA, a tag or a large attachment. Inherited namespace and `xml:space`
+  declarations are replayed when a record is cut out of its document, and each
+  record is parsed with the options in effect when it started. A tag converter
+  that declares a second parameter also receives the current record's business
+  id; converters with zero or one parameter behave as before. `Nori#parse` is
+  unchanged.
+
+### Fixed
+
+* A `type="file"` node now decodes the join of all of its text children. When
+  the Nokogiri SAX parser split a long base64 attachment into several
+  `#characters` calls, Nori previously decoded only the first chunk and
+  silently truncated the attachment.
+
 ## [2.9.1] - 2026-07-05
 
 ### Fixed

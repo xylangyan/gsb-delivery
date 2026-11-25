@@ -202,6 +202,61 @@ Members of the profile:
   # => {"id"=>"123"}    (with "type" accessible via #attributes)
   ```
 
+## streaming
+
+`Nori::Streaming::Session` accepts a document in pieces and hands back each
+record as soon as its closing tag arrives. `Nori#parse` still waits for the
+complete string; the streaming layer is opt-in and does not change it.
+
+```ruby
+session = Nori::Streaming::Session.new(
+  :records => [{ :path => %w[daily warehouse record] }],
+  :strip_namespaces => true
+)
+
+session.feed(chunk) do |record|
+  record.id                   # one unique business id per original record
+  record.value                # Nori hash for just this record
+  record.byte_start           # absolute offset in the original transmission
+  record.byte_end             # exclusive
+  record.credential           # id, path, byte range, status
+end
+
+session.acknowledge(record.id) # late acknowledgements are fine and idempotent
+session.discard_acknowledged!  # upstream may now delete those bytes
+session.checkpoint!            # atomic snapshot of scanner, spool and ledger
+```
+
+A commit point is selected by the **raw** element name, including any
+namespace prefix and before any of Nori's key normalization, plus an optional
+directory hierarchy. `"record"`, `"p:record"`, `"daily/warehouse/record"`,
+`["daily", "warehouse", "record"]` and
+`[{ :name => "record", :path => %w[daily warehouse record] }]` all work.
+A flat array of strings is a directory hierarchy; use an array of hashes or
+nested arrays to declare several independent commit points.
+
+The session never needs the bytes it has already released. A pause inside
+text, a CDATA section, a start tag or a large attachment only retains the
+half-read token, and a checkpoint keeps the exact absolute offset. Declarations
+inherited from ancestors (namespace prefixes and `xml:space`) are replayed when
+a record is cut out of its document, so the record parses as it would in the
+complete document. A record is parsed with the options that were in effect when
+it started; changing `session.options` affects only records that have not
+started yet.
+
+The receive ledger assigns a business id exactly once per original record, keyed
+by the record's position in the transmission, and can look the record up by
+that id (`session.ledger[id]`). A tag converter declared with two parameters
+receives the current record's business id as its second argument:
+
+```ruby
+converter = lambda { |tag, business_id| "#{tag}:#{business_id}" }
+Nori::Streaming::Session.new(:records => ["record"], :convert_tags_to => converter)
+```
+
+Zero or one required parameters keep the old one-argument behavior, so existing
+converters are unaffected.
+
 ## serializable
 
 `serializable` is a profile that makes Nori return plain, directly-serializable

@@ -118,7 +118,7 @@ class Nori
 
     def prefixed_attribute_name(attribute)
       return attribute unless @options[:convert_tags_to].respond_to? :call
-      @options[:convert_tags_to].call(attribute)
+      Nori.call_tag_converter(@options[:convert_tags_to], attribute, @options)
     end
 
     def add_node(node)
@@ -248,7 +248,11 @@ class Nori
     # Decodes the base64 content of a node typed as "file" into a
     # {StringIOFile} carrying the filename and content type attributes.
     def file_value
-      file = StringIOFile.new((@children.first || '').unpack('m').first)
+      # Nokogiri's SAX callbacks can split one text node into several
+      # #characters calls (a large base64 attachment is the usual case), so the
+      # file content is the join of every text child, not just the first one.
+      content = @children.select { |child| child.is_a?(String) }.join
+      file = StringIOFile.new(content.unpack('m').first)
       file.original_filename = attributes['name'] || 'untitled'
       file.content_type = attributes['content_type'] || 'application/octet-stream'
       file
