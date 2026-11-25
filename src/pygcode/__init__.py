@@ -28,6 +28,11 @@ __all__ = [
     'NullMachine', 'NullState', 'NullMode',
     'Position', 'CoordinateSystem',
 
+    # Sample archive queries
+    'SampleArchive', 'load_sample_archive', 'audit_sample_archive',
+    'count_sample_window', 'first_sample_at',
+    'verify_short_sample_archive', 'replay_sample_gcode_file',
+
     # Line
     'Line',
     # Block
@@ -174,6 +179,15 @@ from .machine import (
     Position, CoordinateSystem,
     Machine, State, Mode,
     NullMachine, NullState, NullMode,
+)
+from .sample_audit import (
+    SampleArchive,
+    load_archive as load_sample_archive,
+    audit as audit_sample_archive,
+    count_window as count_sample_window,
+    first_at as first_sample_at,
+    verify_short_archive as verify_short_sample_archive,
+    replay_gcode_file as replay_sample_gcode_file,
 )
 
 # Line
