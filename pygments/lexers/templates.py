@@ -2341,6 +2341,34 @@ class SqlJinjaLexer(DelegatingLexer):
     def __init__(self, **options):
         super().__init__(SqlLexer, DjangoLexer, **options)
 
+    def get_tokens_with_spans(self, text):
+        """Like :meth:`get_tokens_unprocessed`, but with audit metadata.
+
+        Yields :class:`~pygments.lexers.sql_jinja_audit.AuditToken` objects.
+        Their ``(token_type, value)`` pairs and order are identical to
+        :meth:`get_tokens_unprocessed`; each token additionally carries its
+        exact source interval and SQL/template lineage.
+        """
+        from pygments.lexers.sql_jinja_audit import audit
+        return audit(text, lexer=self).tokens
+
+    def get_tokens_unprocessed_with_spans(self, text):
+        """Alias for :meth:`get_tokens_with_spans`."""
+        return self.get_tokens_with_spans(text)
+
+    def audit(self, text, **options):
+        """Return a source preserving audit of ``text``.
+
+        See :mod:`pygments.lexers.sql_jinja_audit` for the result object,
+        literal item index and round/fragment helpers.
+        """
+        from pygments.lexers.sql_jinja_audit import audit
+        return audit(text, lexer=self, **options)
+
+    def get_literal_items(self, text, **options):
+        """Return the fixed literal items of a SQL+Jinja source slice."""
+        return self.audit(text, **options).items
+
     def analyse_text(text):
         rv = 0.0
         # dbt's ref function

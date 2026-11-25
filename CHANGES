@@ -7,6 +7,11 @@ Version 2.22.0
 --------------
 (not released yet)
 
+- Add ``pygments.lexers.sql_jinja_audit``, source preserving audit helpers for
+  ``SqlJinjaLexer``: exact token intervals, actual-SQL-word lineage across
+  template interruptions, occurrence based literal items, round/fragment
+  lookup, correction sheets and old/new comparison.
+
 Version 2.21.0
 ---------------
 (released August 17th, 2026)

@@ -65,6 +65,38 @@ lexer from:
 .. autoclass:: pygments.lexer.ExtendedRegexLexer
 .. autoclass:: pygments.lexer.DelegatingLexer
 
+.. module:: pygments.lexers.sql_jinja_audit
+
+SQL+Jinja source audit
+----------------------
+
+Source preserving helpers for :class:`~pygments.lexers.templates.SqlJinjaLexer`
+and other delegated template lexers.  They keep the normal token stream and add
+exact source intervals, actual-SQL-word lineage, occurrence based literal items,
+round/fragment lookup, correction sheets and old/new comparison.
+
+.. autoclass:: AuditResult
+   :members: item, query, original_spans, tokens_in, audit_records, as_dict
+
+.. autoclass:: AuditToken
+.. autoclass:: LiteralItem
+.. autoclass:: TemplateReference
+.. autoclass:: SegmentIndex
+   :members: same_word, segments_for_sql, segments_for_template, group_of
+.. autoclass:: AuditHistory
+   :members: add_round, audit_round, window, item_spans, all_spans_for
+.. autoclass:: AuditDiff
+.. autoclass:: Correction
+.. autofunction:: audit
+.. autofunction:: audit_window
+.. autofunction:: audit_fragments
+.. autofunction:: audit_history
+.. autofunction:: compare_audits
+.. autofunction:: compare_tokens
+.. autofunction:: compare_classification
+.. autofunction:: apply_correction
+.. autofunction:: apply_corrections
+
 
 .. module:: pygments.formatter
 

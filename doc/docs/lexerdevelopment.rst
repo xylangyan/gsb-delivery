@@ -597,6 +597,76 @@ the lexer another token type as the third parameter::
     DelegatingLexer.__init__(MyLexer, OtherLexer, Text, **options)
 
 
+Source preserving audit for delegated lexers
+============================================
+
+A delegating lexer's token stream is deliberately a two-layer reading: the
+outer language is stripped, the inner language is lexed, and the outer tokens
+are inserted back.  This is the right *classification*, but it loses the
+identity of an inner token that was interrupted by an outer one.  For SQL with
+Jinja markup, a string such as ::
+
+    SELECT 'receipt_{{ depot }}_daily' AS x
+
+is read as two SQL string pieces around one template variable.  Both pieces
+belong to the same pre-split SQL literal, and the template text is not part of
+that literal.
+
+:mod:`pygments.lexers.sql_jinja_audit` adds this information without changing
+the regular token stream::
+
+    from pygments.lexers.sql_jinja_audit import audit
+
+    result = audit(source)
+    for token in result.tokens:          # same order/types as SqlJinjaLexer
+        print(token.start, token.end, token.token_type, token.value)
+    item = result.items[0]
+    print(item.text)                     # "'receipt__daily'"
+    print(item.source_spans)             # ((7, 16), (27, 34))
+    print(item.variable_names)           # ('depot',)
+
+The important guarantees are:
+
+* every audit token has an exact ``[start, end)`` source interval;
+* all fragments of one actual SQL token share ``sql_index``;
+* a literal item joins only its SQL fragments, never the template text
+  between them;
+* identical literal texts stay distinct because items are occurrence based;
+* template regions stay separately addressable through
+  ``result.references``.
+
+``result.index`` (a :class:`~pygments.lexers.sql_jinja_audit.SegmentIndex`) is
+the lineage index: ``same_word(token)`` returns every fragment of that actual
+SQL word, and ``equivalences`` maps each fragment interval to its siblings.
+
+For historical drafts, pass fragments instead of concatenating a whole draft::
+
+    from pygments.lexers.sql_jinja_audit import audit_fragments, FragmentSpec
+
+    result = audit_fragments([
+        FragmentSpec(old_tail, fragment='a', start=old_offset, round=3),
+        FragmentSpec(next_head, fragment='b', start=new_offset, round=4),
+    ])
+    item, spans = result.query(0)
+
+A token may start at an old fragment tail and finish at the next fragment
+head; ``spans`` reports every original ``(round, fragment, start, end)``
+interval.  :class:`~pygments.lexers.sql_jinja_audit.AuditHistory` materialises
+one requested round or window at a time.
+
+Correction sheets replace one occurrence only::
+
+    from pygments.lexers.sql_jinja_audit import Correction, apply_correction
+
+    source, result = apply_correction(
+        source, Correction('%}', occurrence=0, kind='template_close'))
+
+After the edit the source is re-lexed.  That matters because changing a
+template closing can move the boundary between the two layers, so characters
+that were not edited may still be reclassified.  ``compare_tokens`` reports
+those changes explicitly.
+
+
 Callbacks
 =========
 
