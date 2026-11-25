@@ -276,6 +276,44 @@ SELECT CONVERT_TZ(NOW(), '+00:00', 'Pacific/Honolulu');
 
 It should return the time instead of `NULL`.
 
+## Minute Ledger
+
+For workflows that keep multiple versions of minute totals (published, pending
+approval, and re-submitted corrections), `Groupdate::MinuteLedger` adds a
+versioned audit entry point on top of the raw `group_by_minute` buckets.
+
+```ruby
+ledger = Groupdate::MinuteLedger.new
+ledger.install!
+
+# one-time pre-build of the archive index from the live SQLite query
+ledger.build_index!(Event, :created_at, :amount)
+base = ledger.seed_version!
+
+# tickets apply at most 8 UTC minutes: integer totals or :revoke
+revised = ledger.submit_ticket!(base_version_id: base, changes: { minute => :revoke })
+restored = ledger.submit_ticket!(base_version_id: revised, changes: { minute => 5 })
+```
+
+Every ticket materializes a new full version, so older versions stay
+queryable. Displays use New York time labels (`%Y-%m-%d %H:%M`). Sparse
+displays list labels with data, ordered by the first UTC minute at which each
+label appears, showing the total of the last contributing minute (real zeros
+count as data). Filled displays enumerate every minute between a version's
+first and last data minute and carry the nearest prior total forward.
+
+```ruby
+ledger.display(version)                         # sparse, first 16 rows
+ledger.display(version, fill: true, window: 16...32)
+ledger.diff(left_version, right_version, window: 0...16)
+```
+
+`diff` lists each changed display key once (add, delete, reorder, value change,
+or source-minute change), with both sides' positions, displayed totals, last
+contributing minute, and the real minute that produced each total. Windows are
+half-open and capped at 16 rows; `replay` and `audit!` rerun a version's whole
+table independently to verify the windowed SQL path.
+
 ## History
 
 View the [changelog](https://github.com/ankane/groupdate/blob/master/CHANGELOG.md)

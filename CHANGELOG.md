@@ -1,3 +1,8 @@
+## Unreleased
+
+- Added `Groupdate::MinuteLedger` for versioned UTC minute totals, New York
+  display-order audit, half-open 16-row windows, and whole-table replay checks
+
 ## 6.8.0 (2026-04-04)
 
 - Dropped support for Ruby < 3.3 and Active Record < 7.2
