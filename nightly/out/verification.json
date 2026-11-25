@@ -1,0 +1,267 @@
+{
+  "files": {
+    "preserved_segment_files": [
+      "MAIN_WRITELOCK",
+      "MAIN_ysqqnqm7ew9b2s2z.seg"
+    ],
+    "added_files": [
+      "MAIN_zt5eiqggaeog0y2d.seg",
+      "_MAIN_2.toc"
+    ]
+  },
+  "receipt_lastnight": {
+    "generation": 1,
+    "query": "body:alfa OR body:bravo",
+    "weighting": "BM25F(B=0.75, K1=1.2)",
+    "global_stats": {
+      "doc_count_all": 6,
+      "doc_count_live": 6,
+      "field_length": 11,
+      "avg_field_length": 1.8333333333333333,
+      "terms": {
+        "alfa": {
+          "df": 3,
+          "idf": 1.4054651081081644
+        },
+        "bravo": {
+          "df": 3,
+          "idf": 1.4054651081081644
+        }
+      }
+    },
+    "docid_by_docnum": {
+      "0": "P1",
+      "1": "P2",
+      "2": "P3",
+      "3": "P4",
+      "4": "P5",
+      "5": "P6"
+    },
+    "top4": [
+      {
+        "rank": 1,
+        "docnum": 2,
+        "docid": "P3",
+        "score": 2.710139889738452
+      },
+      {
+        "rank": 2,
+        "docnum": 1,
+        "docid": "P2",
+        "score": 1.9745866830895549
+      },
+      {
+        "rank": 3,
+        "docnum": 0,
+        "docid": "P1",
+        "score": 1.8843354912031898
+      },
+      {
+        "rank": 4,
+        "docnum": 3,
+        "docid": "P4",
+        "score": 1.7265104373714508
+      }
+    ],
+    "full_ranking": [
+      {
+        "rank": 1,
+        "docnum": 2,
+        "docid": "P3",
+        "score": 2.710139889738452
+      },
+      {
+        "rank": 2,
+        "docnum": 1,
+        "docid": "P2",
+        "score": 1.9745866830895549
+      },
+      {
+        "rank": 3,
+        "docnum": 0,
+        "docid": "P1",
+        "score": 1.8843354912031898
+      },
+      {
+        "rank": 4,
+        "docnum": 3,
+        "docid": "P4",
+        "score": 1.7265104373714508
+      },
+      {
+        "rank": 5,
+        "docnum": 4,
+        "docid": "P5",
+        "score": 1.7265104373714508
+      }
+    ]
+  },
+  "new_global_stats": {
+    "doc_count_all": 16,
+    "doc_count_live": 15,
+    "field_length": 24,
+    "avg_field_length": 1.5,
+    "terms": {
+      "alfa": {
+        "df": 12,
+        "idf": 1.2076393647782446
+      },
+      "bravo": {
+        "df": 4,
+        "idf": 2.163150809805681
+      }
+    }
+  },
+  "deleted_permanent_ids": [
+    "P2"
+  ],
+  "deleted_resolution": {
+    "P2": 1
+  },
+  "block_catalog": {
+    "alfa@seg0": {
+      "kind": "doclist",
+      "docs": [
+        0,
+        2,
+        3
+      ],
+      "df": 3,
+      "max_tf": 2,
+      "sum_tf": 4,
+      "min_dl": 1,
+      "max_dl": 2
+    },
+    "bravo@seg0": {
+      "kind": "range",
+      "range": [
+        1,
+        4
+      ],
+      "df": 3,
+      "max_tf": 4,
+      "sum_tf": 6,
+      "min_dl": 1,
+      "max_dl": 4
+    },
+    "alfa@seg1": {
+      "kind": "range",
+      "range": [
+        6,
+        14
+      ],
+      "df": 9,
+      "max_tf": 2,
+      "sum_tf": 10,
+      "min_dl": 1,
+      "max_dl": 3
+    },
+    "bravo@seg1": {
+      "kind": "doclist",
+      "docs": [
+        15
+      ],
+      "df": 1,
+      "max_tf": 3,
+      "sum_tf": 3
+    }
+  },
+  "read_budget": 3,
+  "blocks_read": [
+    "bravo@seg0",
+    "alfa@seg0",
+    "bravo@seg1"
+  ],
+  "blocks_not_read": [
+    "alfa@seg1"
+  ],
+  "published_top4": [
+    {
+      "rank": 1,
+      "docnum": 2,
+      "docid": "P3",
+      "score": 2.966295353633855
+    },
+    {
+      "rank": 2,
+      "docnum": 15,
+      "docid": "Q10",
+      "score": 2.799371636219117
+    },
+    {
+      "rank": 3,
+      "docnum": 4,
+      "docid": "P5",
+      "score": 2.5047009376697362
+    },
+    {
+      "rank": 4,
+      "docnum": 0,
+      "docid": "P1",
+      "score": 1.5181752014355077
+    }
+  ],
+  "fabricated_doc_bound": {
+    "pre_deletion": 4.35932850386685,
+    "post_deletion": 4.317546837654625,
+    "confirmed_top1": 2.966295353633855
+  },
+  "deleted_candidate_would_be": {
+    "docid": "P2",
+    "score": 2.841153302431343
+  },
+  "rank5_witnesses": {
+    "W1": {
+      "filling_head": "Q1=(tf2,dl2), Q2..Q9=(tf1,dl1)",
+      "rank5": {
+        "docid": "Q1",
+        "score": 1.5181752014355077
+      }
+    },
+    "W2": {
+      "filling_head": "Q1=(tf2,dl3), Q2..Q9=(tf1,dl1)",
+      "rank5": {
+        "docid": "P4",
+        "score": 1.3983192644800728
+      }
+    }
+  },
+  "ground_truth_top6": [
+    {
+      "rank": 1,
+      "docnum": 2,
+      "docid": "P3",
+      "score": 2.966295353633855
+    },
+    {
+      "rank": 2,
+      "docnum": 15,
+      "docid": "Q10",
+      "score": 2.799371636219117
+    },
+    {
+      "rank": 3,
+      "docnum": 4,
+      "docid": "P5",
+      "score": 2.5047009376697362
+    },
+    {
+      "rank": 4,
+      "docnum": 0,
+      "docid": "P1",
+      "score": 1.5181752014355077
+    },
+    {
+      "rank": 5,
+      "docnum": 6,
+      "docid": "Q1",
+      "score": 1.5181752014355077
+    },
+    {
+      "rank": 6,
+      "docnum": 3,
+      "docid": "P4",
+      "score": 1.3983192644800728
+    }
+  ]
+}
