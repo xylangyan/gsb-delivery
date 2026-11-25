@@ -19,6 +19,14 @@ Subpackages
 Submodules
 ----------
 
+cattrs.batch module
+-------------------
+
+.. automodule:: cattrs.batch
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 cattrs.cols module
 ------------------
 

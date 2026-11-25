@@ -1,5 +1,6 @@
 from typing import Final
 
+from .batch import Batch, BatchSpec, Reference, TableSpec, export_batch, structure_batch
 from .converters import BaseConverter, Converter, GenConverter, UnstructureStrategy
 from .errors import (
     AttributeValidationNote,
@@ -18,15 +19,20 @@ __all__ = [
     "AttributeValidationNote",
     "BaseConverter",
     "BaseValidationError",
+    "Batch",
+    "BatchSpec",
     "ClassValidationError",
     "Converter",
     "ForbiddenExtraKeysError",
     "GenConverter",
     "IterableValidationError",
     "IterableValidationNote",
+    "Reference",
     "SimpleStructureHook",
     "StructureHandlerNotFoundError",
+    "TableSpec",
     "UnstructureStrategy",
+    "export_batch",
     "get_structure_hook",
     "get_unstructure_hook",
     "global_converter",
@@ -38,6 +44,7 @@ __all__ = [
     "structure",
     "structure_attrs_fromdict",
     "structure_attrs_fromtuple",
+    "structure_batch",
     "transform_error",
     "unstructure",
 ]

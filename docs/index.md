@@ -46,6 +46,7 @@ recipes
 validation
 preconf
 unions
+batching
 usage
 migrations
 indepth

@@ -1,16 +1,31 @@
+from cattrs.batch import (
+    Batch,
+    BatchSpec,
+    Reference,
+    TableSpec,
+    export_batch,
+    structure_batch,
+)
+
 from .converters import BaseConverter, Converter, GenConverter, UnstructureStrategy
 from .gen import override
 
 __all__ = (
     "BaseConverter",
+    "Batch",
+    "BatchSpec",
     "Converter",
     "GenConverter",
+    "Reference",
+    "TableSpec",
     "UnstructureStrategy",
+    "export_batch",
     "global_converter",
     "override",
     "structure",
     "structure_attrs_fromdict",
     "structure_attrs_fromtuple",
+    "structure_batch",
     "unstructure",
 )
 from cattrs import global_converter
