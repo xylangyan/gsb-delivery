@@ -586,10 +586,30 @@ class Query(Literal, LazyListOfList):
         LazyListOfList.__init__(self)
         Literal.__init__(self, predicate_name, terms, kwargs, prearity, aggregate)
 
-    def ask(self):
-        self._data = Body(self.pre_calculations, self).ask()
-        self.todo = None
-        return self._data
+    def ask(self, version=None, *args, **options):
+        if version is None and not args and not options:
+            self._data = Body(self.pre_calculations, self).ask()
+            self.todo = None
+            return self._data
+        from . import versioning
+
+        int_args = [arg for arg in args if isinstance(arg, int) and not isinstance(arg, bool)]
+        cursor = next((arg for arg in args if not isinstance(arg, int)), options.pop('cursor', None))
+        page_size = options.pop('page_size', None) or options.pop('batch_size', None) or options.pop('limit', None)
+        if int_args and page_size is None:
+            page_size = int_args[0]
+        manager = versioning.manager()
+        resolved = manager.resolve_version(version)
+        with manager.activation(resolved):
+            data = Body(self.pre_calculations, self).ask()
+            self.todo = None
+        if cursor is not None:
+            return manager.ask(None, cursor=cursor, page_size=page_size)
+        if page_size is None:
+            return data
+        rows = [tuple(row) for row in data] if data not in (True, None) else ([()] if data is True else [])
+        working_cursor = versioning.Cursor(manager, resolved, str(self), rows, int(page_size or options.get('size') or 100), data)
+        return working_cursor.next_page()
 
     def __pos__(self) -> None:
         " unary + means insert into database as fact "
@@ -646,8 +666,8 @@ class Call(Operation): #call
             return self.as_literal <= other
         return other > self
 
-    def ask(self):
-        return Body(self.as_literal).ask()
+    def ask(self, version=None, *args, **options):
+        return Body(self.as_literal).ask(version, *args, **options)
 
 class Body(LazyListOfList):
     """ created by p(a,b) & q(c,d)  """
@@ -700,21 +720,28 @@ class Body(LazyListOfList):
         """unary ~ means negation """
         return ~(self.literal())
 
-    def ask(self):
+    def ask(self, version=None, *args, **options):
         """ resolve the query and determine the values of its variables"""
-        literal = self.literal()
-        self._data = literal.lua.ask()
-        literal.todo, self.todo = None, None
-        - (literal <= self) # delete the temporary clause
-        # update the variables
-        transposed = list(zip(*(self._data))) if isinstance(self._data, list) else None # transpose result
-        for i, arg in enumerate(self._variables().values()):
-            if self._data is True:
-                arg._data = True
-            elif self._data:
-                arg._data = list(transposed[i])
-            arg.todo = None
-        return self._data
+        if version is None and not args and not options:
+            literal = self.literal()
+            self._data = literal.lua.ask()
+            literal.todo, self.todo = None, None
+            - (literal <= self) # delete the temporary clause
+            # update the variables
+            transposed = list(zip(*(self._data))) if isinstance(self._data, list) else None # transpose result
+            for i, arg in enumerate(self._variables().values()):
+                if self._data is True:
+                    arg._data = True
+                elif self._data:
+                    arg._data = list(transposed[i])
+                arg.todo = None
+            return self._data
+        from . import versioning
+
+        manager = versioning.manager()
+        resolved = manager.resolve_version(version)
+        with manager.activation(resolved):
+            return self.ask()
 
 def add_clause(head,body):
     if isinstance(body, Body):
@@ -843,8 +870,12 @@ def add_program(func):
     load(source_code, newglobals, defined, function=func_name)
     return _NoCallFunction()
 
-def ask(code):
+def ask(code, version=None, *args, **options):
     """ runs the query in the code string """
+    if version is not None or args or options:
+        from . import versioning
+
+        return versioning.ask(code, version=version, *args, **options)
     tree = ast.parse(code, 'ask', 'eval')
     tree = _transform_ast().visit(tree)
     code = compile(tree, 'ask', 'eval')

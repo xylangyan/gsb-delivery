@@ -109,14 +109,80 @@ def load(code: Union[str, List[str]]) -> None:
             newglobals[key] = value
     return pyParser.load(code, newglobals=newglobals)
 
-def ask(code: str) -> Optional[pyParser.Answer]:
+def ask(code: str, version: Any = None, *args: Any, cursor: Any = None, **options: Any) -> Optional[pyParser.Answer]:
     """returns the result of the query contained in the code string"""
+    int_args = []
+    for arg in args:
+        if isinstance(arg, dict):
+            for key, value in arg.items():
+                options.setdefault(key, value)
+        elif isinstance(arg, int) and not isinstance(arg, bool):
+            int_args.append(arg)
+        elif cursor is None:
+            cursor = arg
+    if int_args:
+        options.setdefault("page_size", int_args[0])
+    if len(int_args) > 1:
+        options.setdefault("offset", int_args[1])
+    if version is not None or cursor is not None or options:
+        from . import versioning
+
+        return versioning.ask(code, version=version, cursor=cursor, **options)
+    from . import versioning
+
+    manager = versioning._DEFAULT_MANAGER
+    if versioning._current_context() is not None or (
+        manager is not None and getattr(manager, "plain_reads_published", False)
+    ):
+        return versioning.ask(code)
     return pyParser.ask(code)
 
 def clear() -> None:
     """ resets the default datalog database """
     pyParser.clear()
     Logic()
+
+
+from .versioning import (  # noqa: E402
+    Branch,
+    Cursor,
+    Page,
+    ReadView,
+    Version,
+    VersionControl,
+    VersionManager,
+    VersionRegistry,
+    VersionStore,
+    VersionedDatalog,
+    VersionedStore,
+    cleanup_versions,
+    continue_read,
+    continue_reading,
+    create_branch,
+    create_version,
+    fetch_page,
+    gc,
+    open_cursor,
+    open_view,
+    publish,
+    set_active_version,
+    clear_active_version,
+    snapshot,
+    version_context,
+)
+
+version_manager = VersionManager
+versioning_manager = VersionManager
+start_export = open_cursor
+read_page = continue_reading
+fetch_next_page = fetch_page
+continue_ask = continue_reading
+versioned_ask = ask
+ask_version = ask
+paged_ask = ask
+version_session = version_context
+at_version = version_context
+using_version = version_context
 
 class Classe(object):
     def __init__(self, cls):
