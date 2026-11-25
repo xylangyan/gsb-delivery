@@ -1,0 +1,91 @@
+{
+  "name": "bao-umsgpack-01-demo",
+  "segments": {
+    "alpha": {
+      "writer": "collector-a",
+      "sinks": ["alpha-out"],
+      "template": {
+        "fields": {
+          "flag": {"kind": "bool"},
+          "id": {"kind": "int", "lo": 0, "hi": 4294967295},
+          "ts": {"kind": "timestamp"}
+        }
+      },
+      "tables": {
+        "old": {
+          "ext_code": 5,
+          "key": [{"const": "alpha"}, {"field": "flag"}, {"field": "id"}],
+          "value": {"field": "ts", "type": "timestamp"}
+        },
+        "final": {
+          "ext_code": 8,
+          "key": [
+            {"const": "alpha"},
+            {"field": "flag", "rules": [{"op": "lookup", "table": {"0": 0, "1": 1}}]},
+            {"field": "id"}
+          ],
+          "value": {"field": "ts", "type": "timestamp"}
+        }
+      },
+      "borrowable": {
+        "tmp42": {
+          "ext_code": 42,
+          "key": [
+            {"const": "alpha"},
+            {"field": "flag", "rules": [{"op": "lookup", "table": {"0": 2, "1": 3}}]},
+            {"field": "id"}
+          ],
+          "value": {"field": "ts", "type": "timestamp"}
+        }
+      }
+    },
+    "beta": {
+      "writer": "collector-b",
+      "sinks": ["beta-out"],
+      "template": {
+        "fields": {
+          "count": {"kind": "int", "lo": 0, "hi": 255},
+          "site": {"kind": "int", "lo": 0, "hi": 2147483647}
+        },
+        "permitted": [
+          {"fields": ["count"], "allow": [[0], [1], [63], [64], [127], [128], [200], [255]]}
+        ]
+      },
+      "tables": {
+        "old": {
+          "ext_code": 6,
+          "key": [{"const": "beta"}, {"field": "count"}, {"field": "site"}],
+          "value": {"field": "count", "type": "int"}
+        },
+        "final": {
+          "ext_code": 7,
+          "key": [
+            {"const": "beta"},
+            {"field": "count", "rules": [{"op": "sign_extend", "bits": 8}]},
+            {"field": "site"}
+          ],
+          "value": {
+            "field": "count",
+            "rules": [{"op": "sign_extend", "bits": 8}, {"op": "scale", "mul": 10, "add": 0}],
+            "type": "int"
+          }
+        }
+      },
+      "borrowable": {
+        "tmp43": {
+          "ext_code": 43,
+          "key": [
+            {"const": "beta"},
+            {"field": "count", "rules": [{"op": "scale", "mul": 1, "add": 1000}]},
+            {"field": "site"}
+          ],
+          "value": {"field": "count", "type": "int"}
+        }
+      }
+    }
+  },
+  "readers": [
+    {"name": "r1", "ext_handlers": {"initial": [5, 6], "may_toggle": [5, 6, 7, 8, 42, 43]}},
+    {"name": "r2", "registered": [5, 6, 7, 8, 42, 43]}
+  ]
+}
