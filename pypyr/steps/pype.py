@@ -88,6 +88,10 @@ def run_step(context):
                   child pipeline in the current working directory.
                 - parent. str. optional. If resolveFromParent is True, default
                   is the calling pipeline's parent.
+                - pipelineDir. Path. optional. Release directory to resolve
+                  the child pipeline from. Defaults to the calling pipeline's
+                  release directory, if it has one.
+                - releaseDir. Path. optional. Alias for pipelineDir.
 
     If none of groups, success & failure specified, will run the default pypyr
     steps, on_success & on_failure sequence.
@@ -111,17 +115,39 @@ def run_step(context):
 
     pype_args = get_arguments(context)
 
+    loader_info = context.current_pipeline.pipeline_definition.info
+    pype_formatted = context.get_formatted('pype')
+    pipeline_dir = pype_formatted.get(
+        'pipelineDir',
+        pype_formatted.get(
+            'releaseDir',
+            getattr(loader_info, 'pipeline_dir', None)
+            if pype_args.loader == loader_info.loader else None))
+
     try:
-        pipeline, args = Pipeline.new_pipe_and_args(
-            name=pype_args.pipeline_name,
-            context_args=pype_args.pipe_arg,
-            parse_input=not pype_args.skip_parse,
-            dict_in=pype_args.args,
-            loader=pype_args.loader,
-            groups=pype_args.step_groups,
-            success_group=pype_args.success_group,
-            failure_group=pype_args.failure_group,
-            py_dir=pype_args.py_dir)
+        if pipeline_dir:
+            pipeline, args = Pipeline.new_pipe_and_args(
+                name=pype_args.pipeline_name,
+                context_args=pype_args.pipe_arg,
+                parse_input=not pype_args.skip_parse,
+                dict_in=pype_args.args,
+                loader=pype_args.loader,
+                groups=pype_args.step_groups,
+                success_group=pype_args.success_group,
+                failure_group=pype_args.failure_group,
+                py_dir=pype_args.py_dir,
+                pipeline_dir=pipeline_dir)
+        else:
+            pipeline, args = Pipeline.new_pipe_and_args(
+                name=pype_args.pipeline_name,
+                context_args=pype_args.pipe_arg,
+                parse_input=not pype_args.skip_parse,
+                dict_in=pype_args.args,
+                loader=pype_args.loader,
+                groups=pype_args.step_groups,
+                success_group=pype_args.success_group,
+                failure_group=pype_args.failure_group,
+                py_dir=pype_args.py_dir)
 
         if pype_args.use_parent_context:
             logger.info("pyping %s, using parent context.",

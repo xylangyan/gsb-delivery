@@ -15,13 +15,15 @@ logger = logging.getLogger(__name__)
 class ContextParserCache(Cache):
     """Get functions from the pypeloader cache."""
 
-    def get_context_parser(self, parser_module_name):
+    def get_context_parser(self, parser_module_name, pipeline_dir=None):
         """Get cached get_parsed_context function. Adds to cache if not exist.
 
         Args:
             parser_module_name: load the module specified by this, get its
                                 get_parsed_context function and add it to
                                 cache.
+            pipeline_dir: optional. Release directory to resolve the parser
+                module from.
 
         Return:
             function: the get_parsed_context function of module specified
@@ -29,8 +31,16 @@ class ContextParserCache(Cache):
         """
         logger.debug("starting")
 
-        parser_function = self.get(parser_module_name,
-                                   lambda: load_the_parser(parser_module_name))
+        cache_key = ((parser_module_name, str(pipeline_dir)) if pipeline_dir
+                     else parser_module_name)
+        if pipeline_dir:
+            parser_function = self.get(
+                cache_key,
+                lambda: load_the_parser(parser_module_name, pipeline_dir))
+        else:
+            parser_function = self.get(
+                cache_key,
+                lambda: load_the_parser(parser_module_name))
 
         logger.debug("done")
         return parser_function
@@ -40,18 +50,24 @@ class ContextParserCache(Cache):
 contextparser_cache = ContextParserCache()
 
 
-def load_the_parser(parser_module_name):
+def load_the_parser(parser_module_name, pipeline_dir=None):
     """Load the module specified by parser_module_name, returns its function.
 
     Args:
         parser_module_name: string: name of module to load
+        pipeline_dir: optional. Release directory to resolve the parser module
+            from.
 
     Returns:
         function: the get_parsed_context function in the module
     """
     logger.debug("starting")
 
-    parser_module = pypyr.moduleloader.get_module(parser_module_name)
+    if pipeline_dir:
+        parser_module = pypyr.moduleloader.get_module(parser_module_name,
+                                                      pipeline_dir)
+    else:
+        parser_module = pypyr.moduleloader.get_module(parser_module_name)
     logger.debug("context parser module found: %s", parser_module_name)
 
     try:

@@ -66,14 +66,18 @@ class PipelineInfo():
             otherwise set on pype. Default True.
         is_parent_cascading (bool): Parent cascades to child pipelines if not
             otherwise set on pype. Default True.
+        pipeline_dir (Path): The release directory this pipeline belongs to.
+            None means the loader's normal look-up sequence applies.
     """
 
     __slots__ = ['pipeline_name', 'loader', 'parent',
-                 'is_loader_cascading', 'is_parent_cascading']
+                 'is_loader_cascading', 'is_parent_cascading',
+                 'pipeline_dir']
 
     def __init__(self, pipeline_name, loader, parent,
                  is_parent_cascading=True,
-                 is_loader_cascading=True):
+                 is_loader_cascading=True,
+                 pipeline_dir=None):
         """Initialize PipelineInfo.
 
         Args:
@@ -84,12 +88,15 @@ class PipelineInfo():
                 not otherwise set on pype. Default True.
             is_parent_cascading (bool): Parent cascades to child pipelines if
                 not otherwise set on pype. Default True.
+            pipeline_dir (Path-like): The release directory this pipeline
+                belongs to. Default None.
         """
         self.pipeline_name = pipeline_name
         self.loader = loader
         self.parent = parent
         self.is_loader_cascading = is_loader_cascading
         self.is_parent_cascading = is_parent_cascading
+        self.pipeline_dir = pipeline_dir
 
     def __eq__(self, other):
         """Check all instance attributes are equal."""

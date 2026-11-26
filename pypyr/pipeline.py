@@ -60,6 +60,9 @@ class Pipeline():
         failure_group (str: Step-group name to run on pipeline failure.
             Default if not set is on_failure.
         py_dir (Path-like): Custom python modules resolve from this dir.
+        pipeline_dir (Path-like): Directory of the release this pipeline
+            belongs to. Pipelines, context parsers, steps and custom python
+            modules resolve from here. None means legacy look-up behaviour.
         pipeline_definition (pypyr.pipedef.PipelineDefinition): The pipeline
             definition (its body/yaml payload) and loader information. Set by
             run(), not init.
@@ -69,7 +72,7 @@ class Pipeline():
     """
 
     __slots__ = ['name', 'context_args', 'parse_input', 'loader', 'groups',
-                 'success_group', 'failure_group', 'py_dir',
+                 'success_group', 'failure_group', 'py_dir', 'pipeline_dir',
                  'pipeline_definition', 'steps_runner']
 
     # region constructors
@@ -81,7 +84,9 @@ class Pipeline():
                  groups: list[str] | None = None,
                  success_group: str | None = None,
                  failure_group: str | None = None,
-                 py_dir: str | bytes | PathLike | None = None) -> None:
+                 py_dir: str | bytes | PathLike | None = None,
+                 pipeline_dir: str | bytes | PathLike | None = None,
+                 release_dir: str | bytes | PathLike | None = None) -> None:
         """Initialize a Pipeline.
 
         Args:
@@ -98,6 +103,8 @@ class Pipeline():
             failure_group (str: Step-group name to run on pipeline failure.
                                 Default if not set is on_failure.
             py_dir (Path-like): Custom python modules resolve from this dir.
+            pipeline_dir (Path-like): Release directory to resolve pipelines,
+                context parsers, steps and custom modules from.
 
         Returns:
             None
@@ -110,6 +117,9 @@ class Pipeline():
         self.success_group = success_group
         self.failure_group = failure_group
         self.py_dir = py_dir
+        self.pipeline_dir = Path(
+            pipeline_dir or release_dir).resolve() if (
+                pipeline_dir or release_dir) else None
 
         # initialize here, but use later
         # not using a classmethod fromLoader factory style thing coz PipeDef
@@ -129,8 +139,10 @@ class Pipeline():
         groups: list[str] | None = None,
         success_group: str | None = None,
         failure_group: str | None = None,
-        py_dir: str | bytes | PathLike | None = None) -> tuple[Pipeline,
-                                                               dict | None]:
+        py_dir: str | bytes | PathLike | None = None,
+        pipeline_dir: str | bytes | PathLike | None = None,
+        release_dir: str | bytes | PathLike | None = None
+    ) -> tuple[Pipeline, dict | None]:
         """Return new Pipeline instance and dict_in args.
 
         Will initialize from config.shortcuts if arg `name` matches a shortcut.
@@ -164,6 +176,8 @@ class Pipeline():
             failure_group (str: Step-group name to run on pipeline failure.
                                 Default if not set is on_failure.
             py_dir (Path-like): Custom python modules resolve from this dir.
+            pipeline_dir (Path-like): Release directory to resolve pipelines,
+                context parsers, steps and custom modules from.
 
         Returns:
             New Pipeline instance, intialized from shortcut if name matches.
@@ -228,6 +242,10 @@ class Pipeline():
                     # will still honor cwd for cli if not set, since it'll only
                     # override input if shortcut dir actually set.
                     py_dir = Path(dir_str)
+
+                pipeline_dir_str = shortcut.get('pipeline_dir')
+                if pipeline_dir_str:
+                    pipeline_dir = Path(pipeline_dir_str)
             else:
                 logger.debug("no shortcut found in config for %s", name)
 
@@ -236,14 +254,23 @@ class Pipeline():
         parse_input = cls._get_parse_input(parse_args=parse_input,
                                            args_in=context_args,
                                            dict_in=dict_in)
-        pipeline = cls(name=name,
-                       context_args=context_args,
-                       parse_input=parse_input,
-                       loader=loader,
-                       groups=groups,
-                       success_group=success_group,
-                       failure_group=failure_group,
-                       py_dir=py_dir)
+        pipeline_kwargs = {
+            'name': name,
+            'context_args': context_args,
+            'parse_input': parse_input,
+            'loader': loader,
+            'groups': groups,
+            'success_group': success_group,
+            'failure_group': failure_group,
+            'py_dir': py_dir}
+
+        if pipeline_dir:
+            pipeline_kwargs['pipeline_dir'] = pipeline_dir
+
+        if release_dir:
+            pipeline_kwargs['release_dir'] = release_dir
+
+        pipeline = cls(**pipeline_kwargs)
 
         logger.debug("done")
         return pipeline, dict_in
@@ -327,8 +354,15 @@ class Pipeline():
         # pipeline loading deliberately outside try catch. If the pipeline
         # doesn't exist there is no failure handler that can possibly run so
         # this is very much a fatal stop error.
-        self.pipeline_definition = loader_instance.get_pipeline(name=self.name,
-                                                                parent=parent)
+        if self.pipeline_dir:
+            self.pipeline_definition = loader_instance.get_pipeline(
+                name=self.name,
+                parent=parent,
+                pipeline_dir=self.pipeline_dir)
+        else:
+            self.pipeline_definition = loader_instance.get_pipeline(
+                name=self.name,
+                parent=parent)
 
         # add current pipeline's info to the callstack & remove when pipeline
         # done.
@@ -372,9 +406,20 @@ class Pipeline():
                 success_group = config.default_success_group
                 failure_group = config.default_failure_group
 
-        steps_runner = StepsRunner(
-            pipeline_body=self.pipeline_definition.pipeline,
-            context=context)
+        pipeline_dir = (self.pipeline_definition.info.pipeline_dir
+                        if self.pipeline_definition.info else None)
+        if not pipeline_dir:
+            pipeline_dir = self.pipeline_dir
+
+        if pipeline_dir:
+            steps_runner = StepsRunner(
+                pipeline_body=self.pipeline_definition.pipeline,
+                context=context,
+                pipeline_dir=pipeline_dir)
+        else:
+            steps_runner = StepsRunner(
+                pipeline_body=self.pipeline_definition.pipeline,
+                context=context)
 
         self.steps_runner = steps_runner
 
@@ -451,8 +496,18 @@ class Pipeline():
 
         if parser_module_name:
             logger.debug("context parser specified: %s", parser_module_name)
-            get_parsed_context = contextparser_cache.get_context_parser(
-                parser_module_name)
+            pipeline_dir = (self.pipeline_definition.info.pipeline_dir
+                            if self.pipeline_definition.info else None)
+            if not pipeline_dir:
+                pipeline_dir = self.pipeline_dir
+
+            if pipeline_dir:
+                get_parsed_context = contextparser_cache.get_context_parser(
+                    parser_module_name,
+                    pipeline_dir)
+            else:
+                get_parsed_context = contextparser_cache.get_context_parser(
+                    parser_module_name)
 
             logger.debug("running parser %s", parser_module_name)
 

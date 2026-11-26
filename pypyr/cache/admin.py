@@ -7,6 +7,7 @@ from pypyr.cache.loadercache import loader_cache
 from pypyr.cache.namespacecache import pystring_namespace_cache
 from pypyr.cache.parsercache import contextparser_cache
 from pypyr.cache.stepcache import step_cache
+import pypyr.moduleloader
 
 logger = logging.getLogger(__name__)
 
@@ -21,5 +22,6 @@ def clear_all() -> None:
     pystring_namespace_cache.clear()
     contextparser_cache.clear()
     step_cache.clear()
+    pypyr.moduleloader.clear_release_module_cache()
 
     logger.debug("all cache cleared.")

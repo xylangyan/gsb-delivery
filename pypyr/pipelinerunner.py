@@ -24,7 +24,9 @@ def run(
     success_group: str | None = None,
     failure_group: str | None = None,
     loader: str | None = None,
-    py_dir: str | bytes | PathLike | None = None
+    py_dir: str | bytes | PathLike | None = None,
+    pipeline_dir: str | bytes | PathLike | None = None,
+    release_dir: str | bytes | PathLike | None = None
 ) -> Context:
     """Run a pipeline. pypyr's entrypoint.
 
@@ -94,6 +96,13 @@ def run(
         loader (str): optional. Absolute name of pipeline loader module.
             If not specified will use pypyr.loaders.file.
         py_dir (Path-like): Custom python modules resolve from this dir.
+        pipeline_dir (Path-like): optional. Release directory for this run.
+            Pipelines, context parsers, steps and custom python modules
+            resolve from here. If set, pipeline look-up is scoped to this
+            release: the calling parent, then pipeline_dir, then
+            pipeline_dir/pipelines. If not set, the legacy look-up sequence
+            relative to the current working directory applies.
+        release_dir (Path-like): optional. Alias for pipeline_dir.
 
     Returns:
         pypyr.context.Context(): The pypyr context as it is after the pipeline
@@ -101,15 +110,30 @@ def run(
     """
     logger.debug("starting pypyr")
 
-    pipeline, args = Pipeline.new_pipe_and_args(name=pipeline_name,
-                                                context_args=args_in,
-                                                parse_input=parse_args,
-                                                dict_in=dict_in,
-                                                loader=loader,
-                                                groups=groups,
-                                                success_group=success_group,
-                                                failure_group=failure_group,
-                                                py_dir=py_dir)
+    if pipeline_dir or release_dir:
+        pipeline, args = Pipeline.new_pipe_and_args(
+            name=pipeline_name,
+            context_args=args_in,
+            parse_input=parse_args,
+            dict_in=dict_in,
+            loader=loader,
+            groups=groups,
+            success_group=success_group,
+            failure_group=failure_group,
+            py_dir=py_dir,
+            pipeline_dir=pipeline_dir,
+            release_dir=release_dir)
+    else:
+        pipeline, args = Pipeline.new_pipe_and_args(
+            name=pipeline_name,
+            context_args=args_in,
+            parse_input=parse_args,
+            dict_in=dict_in,
+            loader=loader,
+            groups=groups,
+            success_group=success_group,
+            failure_group=failure_group,
+            py_dir=py_dir)
 
     context = Context(args) if args else Context()
 

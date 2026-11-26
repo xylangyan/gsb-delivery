@@ -193,14 +193,22 @@ def add_sys_path(path):
     _known_dirs.add(path)
 
 
-def get_module(module_abs_import):
+def get_module(module_abs_import, pipeline_dir=None):
     """Use importlib to get the module dynamically.
 
     Get instance of the module specified by the module_abs_import.
     This means that module_abs_import must be resolvable from this package.
 
+    If pipeline_dir is specified, the module resolves from pipeline_dir first.
+    Modules loaded from a pipeline_dir are cached per pipeline_dir, so that
+    different release directories can use same-named modules in the same
+    process without leaking one release's module into another.
+
     Args:
         module_abs_import: string. Absolute name of module to import.
+        pipeline_dir: Path-like. Optional. Resolve the module from this
+            release/pipeline directory before falling back to the usual
+            python import path.
 
     Raises:
         PyModuleNotFoundError: if module not found.
@@ -208,6 +216,14 @@ def get_module(module_abs_import):
     """
     logger.debug("starting")
     logger.debug("loading module %s", module_abs_import)
+
+    if pipeline_dir and module_in_dir(module_abs_import, pipeline_dir):
+        logger.debug("loading %s from pipeline dir %s",
+                     module_abs_import, pipeline_dir)
+        module = _get_release_module(module_abs_import, pipeline_dir)
+        logger.debug("done")
+        return module
+
     try:
         imported_module = importlib.import_module(module_abs_import)
         logger.debug("done")
@@ -235,3 +251,157 @@ def get_module(module_abs_import):
                          "Looking for a file like this: %s",
                          module_abs_import)
         raise PyModuleNotFoundError(extended_msg) from err
+
+
+# region release scoped modules
+
+_release_module_cache = {}
+_release_modules_by_dir = {}
+_release_roots = set()
+_release_module_lock = Lock()
+
+
+def clear_release_module_cache():
+    """Clear all release-scoped modules and their path registrations."""
+    with _release_module_lock:
+        _release_module_cache.clear()
+        _release_modules_by_dir.clear()
+        _release_roots.clear()
+
+
+def module_in_dir(module_abs_import, pipeline_dir):
+    """Return True if module_abs_import exists in pipeline_dir.
+
+    Args:
+        module_abs_import: str. Absolute module name, e.g package.mod.
+        pipeline_dir: Path-like. Directory to check.
+
+    Returns:
+        bool. True if the module's file or package exists in pipeline_dir.
+    """
+    current = Path(pipeline_dir)
+    parts = module_abs_import.split('.')
+
+    for index, part in enumerate(parts):
+        is_last = index == len(parts) - 1
+        module_file = current.joinpath(f'{part}.py')
+        package_dir = current.joinpath(part)
+
+        if is_last:
+            return (module_file.is_file() or
+                    package_dir.joinpath('__init__.py').is_file())
+
+        if not package_dir.is_dir():
+            return False
+
+        current = package_dir
+
+    return False
+
+
+def _is_under(path, root):
+    """Return True if path is root or a descendant of root."""
+    try:
+        path_obj = Path(path).resolve()
+    except (TypeError, ValueError):
+        return False
+
+    return path_obj == root or root in path_obj.parents
+
+
+def _belongs_to_release(module, roots):
+    """Return True if module's file is under any registered release root."""
+    module_file = getattr(module, '__file__', None)
+    if not module_file:
+        return False
+
+    return any(_is_under(module_file, root) for root in roots)
+
+
+def _get_release_module(module_abs_import, pipeline_dir):
+    """Import and cache module_abs_import from pipeline_dir.
+
+    The import happens with pipeline_dir at the front of sys.path. Any modules
+    already loaded from a release directory, and any existing modules with the
+    same top-level package name, are temporarily removed from sys.modules so
+    this import cannot pick up another release's version. The previous
+    sys.modules state and sys.path restore afterwards.
+    """
+    root = Path(pipeline_dir).resolve()
+    cache_key = (str(root), module_abs_import)
+
+    cached = _release_module_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    with _release_module_lock:
+        cached = _release_module_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        _release_roots.add(root)
+        top_level = module_abs_import.partition('.')[0]
+        saved_modules = {}
+        saved_path = list(sys.path)
+        loaded_modules = {}
+
+        try:
+            for name, module in list(sys.modules.items()):
+                is_top_level = (name == top_level or
+                                name.startswith(f'{top_level}.'))
+                if is_top_level or _belongs_to_release(
+                        module, _release_roots):
+                    saved_modules[name] = module
+                    sys.modules.pop(name, None)
+
+            # a previous load of this same release might have newly loaded
+            # helper modules that aren't in the python namespace right now.
+            release_modules = _release_modules_by_dir.get(root, {})
+            for name, module in release_modules.items():
+                if name not in saved_modules:
+                    existing = sys.modules.get(name)
+                    if existing is not None:
+                        saved_modules[name] = existing
+                sys.modules.pop(name, None)
+
+            # put this release's already loaded modules back so a package is
+            # initialized once per release, not once per submodule import.
+            # retain any older submodule objects already loaded by callers.
+            for name, module in release_modules.items():
+                if name not in loaded_modules:
+                    loaded_modules[name] = module
+            sys.modules.update(release_modules)
+
+            sys.path.insert(0, str(root))
+            importlib.invalidate_caches()
+
+            imported_module = importlib.import_module(module_abs_import)
+
+            for name, module in list(sys.modules.items()):
+                module_file = getattr(module, '__file__', None)
+                if module_file and _is_under(module_file, root):
+                    loaded_modules[name] = module
+                elif name == module_abs_import:
+                    loaded_modules[name] = module
+
+            loaded_modules[module_abs_import] = imported_module
+
+            for name in loaded_modules:
+                sys.modules.pop(name, None)
+
+            _release_modules_by_dir.setdefault(root, {}).update(
+                loaded_modules)
+            _release_module_cache[cache_key] = imported_module
+
+            return imported_module
+        finally:
+            sys.path[:] = saved_path
+
+            # remove anything else that might have leaked from this import
+            for name, module in list(sys.modules.items()):
+                if _belongs_to_release(module, _release_roots):
+                    sys.modules.pop(name, None)
+
+            sys.modules.update(saved_modules)
+
+# endregion release scoped modules

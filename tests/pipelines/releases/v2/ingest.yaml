@@ -1,0 +1,7 @@
+context_parser: receipt_rules.input
+steps:
+  - name: receipt_rules.wait
+  - name: pypyr.steps.pype
+    in:
+      pype:
+        name: vendors/east/collect

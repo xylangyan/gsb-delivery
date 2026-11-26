@@ -1,0 +1,6 @@
+steps:
+  - name: pypyr.steps.set
+    in:
+      set:
+        receiptSource: east
+  - name: receipt_rules.emit

@@ -271,7 +271,7 @@ class Step:
 
     """
 
-    def __init__(self, step):
+    def __init__(self, step, pipeline_dir=None):
         """Initialize the class. No duh, huh?.
 
         You can happily expect the initializer to initialize all
@@ -281,6 +281,8 @@ class Step:
             step: a string or a dict. This is the actual step as it exists in
                   the pipeline yaml - which is to say it can just be a string
                   for a simple step, or a dict for a complex step.
+            pipeline_dir: optional. Release directory to resolve step modules
+                  from.
         """
         logger.debug("starting")
 
@@ -297,6 +299,7 @@ class Step:
         self.name = None
         self.while_decorator = None
         self.on_error = None
+        self.pipeline_dir = pipeline_dir
 
         try:
             if isinstance(step, dict):
@@ -308,7 +311,11 @@ class Step:
                 logger.debug("%s is a simple string.", step)
                 self.name = step
 
-            self.run_step_function = step_cache.get_step(self.name)
+            if self.pipeline_dir:
+                self.run_step_function = step_cache.get_step(
+                    self.name, self.pipeline_dir)
+            else:
+                self.run_step_function = step_cache.get_step(self.name)
         except Exception:
             # Exceptions could also happened on the step init phase
             # (ModuleNotFound, KeyError, etc..),

@@ -1,0 +1,10 @@
+steps:
+  - name: pypyr.steps.pype
+    in:
+      pype:
+        name: normalize
+  - name: pypyr.steps.pype
+    in:
+      pype:
+        name: normalize
+        resolveFromParent: false

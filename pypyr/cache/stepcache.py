@@ -15,20 +15,30 @@ logger = logging.getLogger(__name__)
 class StepCache(Cache):
     """Get functions from the Step cache."""
 
-    def get_step(self, step_name):
+    def get_step(self, step_name, pipeline_dir=None):
         """Get cached run_step function. Adds to cache if not exist.
 
         Args:
             step_name: load the step module specified by this, get its
                        run_step function and add it to cache.
+            pipeline_dir: optional. Release directory to resolve the step
+                module from.
 
         Return:
             function: the run_step function of module specified by step_name.
         """
         logger.debug("starting")
 
-        runstep_function = self.get(step_name,
-                                    lambda: load_the_step(step_name))
+        cache_key = ((step_name, str(pipeline_dir)) if pipeline_dir
+                     else step_name)
+        if pipeline_dir:
+            runstep_function = self.get(
+                cache_key,
+                lambda: load_the_step(step_name, pipeline_dir))
+        else:
+            runstep_function = self.get(
+                cache_key,
+                lambda: load_the_step(step_name))
 
         logger.debug("done")
         return runstep_function
@@ -38,18 +48,23 @@ class StepCache(Cache):
 step_cache = StepCache()
 
 
-def load_the_step(step_name):
+def load_the_step(step_name, pipeline_dir=None):
     """Load the module specified by step_name, returns its function.
 
     Args:
         step_name: (string) name of Step module to load
+        pipeline_dir: optional. Release directory to resolve the step module
+            from.
 
     Returns:
         function: the run_step function in the module
     """
     logger.debug("starting")
 
-    step_module = pypyr.moduleloader.get_module(step_name)
+    if pipeline_dir:
+        step_module = pypyr.moduleloader.get_module(step_name, pipeline_dir)
+    else:
+        step_module = pypyr.moduleloader.get_module(step_name)
     logger.debug("step module loaded: %s", step_module)
 
     try:

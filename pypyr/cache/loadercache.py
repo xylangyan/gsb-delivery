@@ -5,6 +5,8 @@ Attributes:
                   Use this attribute to access the cache from elsewhere.
 """
 from collections.abc import Mapping
+import copy
+import inspect
 import logging
 
 from pypyr.cache.cache import Cache
@@ -48,18 +50,21 @@ class Loader():
         """Clear all the pipelines in this Loader's cache."""
         self._pipeline_cache.clear()
 
-    def get_pipeline(self, name, parent):
+    def get_pipeline(self, name, parent, pipeline_dir=None):
         """Get cached PipelineDefinition. Adds it to cache if it doesn't exist.
 
         The cache is local to this Loader instance.
 
-        The combination of parent+name must be unique for this Loader. Parent
-        should therefore have a sensible __str__ implementation because it
-        forms part of the pipeline's identifying str key in the cache.
+        The combination of parent+name+pipeline_dir must be unique for this
+        Loader. Parent should therefore have a sensible __str__ implementation
+        because it forms part of the pipeline's identifying str key in the
+        cache.
 
         Args:
             name (str): Name of pipeline, sans .yaml at end.
             parent (any): Parent in which to look for pipeline.
+            pipeline_dir (any): Release directory in which to look for
+                pipeline. When set, propagates to the loader.
 
         Returns:
             pypyr.pipedef.PipelineDefinition: Yaml payload and loader info
@@ -67,11 +72,14 @@ class Loader():
         """
         # str keys perform better than tuples in dicts
         normalized_name = f'{parent}+{name}' if parent else name
+        if pipeline_dir:
+            normalized_name = f'{normalized_name}+{pipeline_dir}'
+
         return self._pipeline_cache.get(
             normalized_name,
-            lambda: self._load_pipeline(name, parent))
+            lambda: self._load_pipeline(name, parent, pipeline_dir))
 
-    def _load_pipeline(self, name, parent):
+    def _load_pipeline(self, name, parent, pipeline_dir=None):
         """Execute get_pipeline_definition(name, parent) for this loader.
 
         If the loader get_pipeline_definition does not return a
@@ -81,6 +89,8 @@ class Loader():
         Args:
             name (str): Name of pipeline, sans .yaml at end.
             parent (any): Parent in which to look for pipeline.
+            pipeline_dir (any): Release directory in which to look for
+                pipeline.
 
         Returns:
             pypyr.pipedef.PipelineDefinition: Yaml payload and loader info
@@ -89,8 +99,16 @@ class Loader():
         logger.debug("starting")
 
         logger.debug("loading the pipeline definition with %s", self.name)
-        pipeline_definition = self._get_pipeline_definition(pipeline_name=name,
-                                                            parent=parent)
+        if pipeline_dir and _accepts_pipeline_dir(
+                self._get_pipeline_definition):
+            pipeline_definition = self._get_pipeline_definition(
+                pipeline_name=name,
+                parent=parent,
+                pipeline_dir=pipeline_dir)
+        else:
+            pipeline_definition = self._get_pipeline_definition(
+                pipeline_name=name,
+                parent=parent)
 
         # loader can return either just the pipeline yaml payload itself, or a
         # PipelineDefinition wrapping both the pipeline yaml and its metadata.
@@ -101,7 +119,29 @@ class Loader():
                 pipeline=pipeline_definition,
                 info=PipelineInfo(pipeline_name=name,
                                   loader=self.name,
-                                  parent=parent))
+                                  parent=parent,
+                                  pipeline_dir=pipeline_dir))
+        elif (pipeline_dir and
+              getattr(pipeline_definition.info, 'pipeline_dir', None) !=
+              pipeline_dir):
+            # don't mutate a definition shared by other cache keys - wrap it
+            # with a PipelineInfo scoped to this release instead.
+            info = pipeline_definition.info
+            try:
+                pipeline_definition = PipelineDefinition(
+                    pipeline=pipeline_definition.pipeline,
+                    info=copy.copy(info))
+                pipeline_definition.info.pipeline_dir = pipeline_dir
+            except (AttributeError, TypeError):
+                pipeline_definition = PipelineDefinition(
+                    pipeline=pipeline_definition.pipeline,
+                    info=PipelineInfo(
+                        pipeline_name=info.pipeline_name,
+                        loader=info.loader,
+                        parent=info.parent,
+                        is_parent_cascading=info.is_parent_cascading,
+                        is_loader_cascading=info.is_loader_cascading,
+                        pipeline_dir=pipeline_dir))
 
         # if the pipeline is not a dict at top level, failures down-stream get
         # mysterious - this prevents malformed pipe from even making it into
@@ -176,6 +216,20 @@ class LoaderCache(Cache):
 
 # global instance of the cache. use this to access the cache from elsewhere.
 loader_cache = LoaderCache()
+
+
+def _accepts_pipeline_dir(get_pipeline_definition):
+    """Return True if a loader function accepts a pipeline_dir argument."""
+    try:
+        parameters = inspect.signature(get_pipeline_definition).parameters
+    except (TypeError, ValueError):
+        return False
+
+    if 'pipeline_dir' in parameters:
+        return True
+
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD
+               for p in parameters.values())
 
 
 def load_the_loader(loader_name):

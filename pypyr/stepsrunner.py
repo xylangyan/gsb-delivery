@@ -21,15 +21,17 @@ class StepsRunner():
     run_step_groups() is a sensible entrypoint.
     """
 
-    def __init__(self, pipeline_body, context):
+    def __init__(self, pipeline_body, context, pipeline_dir=None):
         """Initialize the Step Runner with the pipeline to maintain state.
 
         Args:
             pipeline_body: the pipeline yaml body.
             context: pypyr.context.Context. The pypyr context. Will mutate.
+            pipeline_dir: optional. Release directory to resolve steps from.
         """
         self.context = context
         self.pipeline_body = pipeline_body
+        self.pipeline_dir = pipeline_dir
 
     def get_pipeline_steps(self, step_group):
         """Get the specified step-group's step from the pipeline.
@@ -113,7 +115,7 @@ class StepsRunner():
             step_count = 0
 
             for step in steps:
-                step_instance = Step(step)
+                step_instance = Step(step, pipeline_dir=self.pipeline_dir)
                 step_instance.run_step(self.context)
                 step_count += 1
 
