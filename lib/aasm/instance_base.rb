@@ -1,10 +1,17 @@
 module AASM
   class InstanceBase
+    EXPLICIT_TARGET_KEYS = [:to, :to_state, :target, :target_state].freeze
+    EXPLICIT_ARGS_KEYS = [
+      :args, :params, :business_params, :arguments, :event_args,
+      :event_params, :business_args, :with_args, :with, :payload
+    ].freeze
+
     attr_accessor :from_state, :to_state, :current_event
 
     def initialize(instance, name=:default) # instance of the class including AASM, name of the state machine
       @instance = instance
       @name = name
+      @event_contexts = []
     end
 
     def current_state
@@ -106,8 +113,14 @@ module AASM
     end
 
     def may_fire_event?(name, *args)
-      if event = @instance.class.aasm(@name).state_machine.events[name]
-        !!event.may_fire?(@instance, *args)
+      if event = @instance.class.aasm(@name).state_machine.events[name.to_sym]
+        explicit = explicit_event_arguments(args)
+        if explicit
+          to_state, business_args = resolve_explicit_arguments(name, explicit)
+          !!event.may_fire?(@instance, explicit_target_value(to_state), *business_args)
+        else
+          !!event.may_fire?(@instance, *args)
+        end
       else
         false # unknown event
       end
@@ -115,13 +128,77 @@ module AASM
 
     def fire(event_name, *args, &block)
       event_exists?(event_name)
-      @instance.send(event_method_name(event_name), *args, &block)
+      explicit = explicit_event_arguments(args)
+      if explicit
+        invoke_explicit_event(event_name, false, explicit, &block)
+      else
+        @instance.send(event_method_name(event_name), *args, &block)
+      end
     end
 
     def fire!(event_name, *args, &block)
       event_exists?(event_name, true)
-      bang_event_name = "#{event_method_name(event_name)}!".to_sym
-      @instance.send(bang_event_name, *args, &block)
+      explicit = explicit_event_arguments(args)
+      if explicit
+        invoke_explicit_event(event_name, true, explicit, &block)
+      else
+        @instance.send("#{event_method_name(event_name)}!", *args, &block)
+      end
+    end
+
+    def with_event_context(event, from_state = nil, to_state = nil)
+      context = event.is_a?(EventContext) ? event : EventContext.new(event, from_state, to_state)
+      push_event_context(context)
+      result = yield
+      result
+    ensure
+      context = pop_event_context
+      if @event_contexts.empty? && context
+        @current_event = context.current_event
+        @from_state = context.from_state
+        @to_state = context.to_state
+      end
+    end
+
+    def current_event
+      context = current_event_context
+      context ? context.current_event : @current_event
+    end
+
+    def current_event=(event)
+      @current_event = event
+    end
+
+    def event_to_fire
+      @current_event
+    end
+
+    def from_state
+      context = current_event_context
+      context ? context.from_state : @from_state
+    end
+
+    def from_state=(state)
+      context = current_event_context
+      if context
+        context.from_state = state
+      else
+        @from_state = state
+      end
+    end
+
+    def to_state
+      context = current_event_context
+      context ? context.to_state : @to_state
+    end
+
+    def to_state=(state)
+      context = current_event_context
+      if context
+        context.to_state = state
+      else
+        @to_state = state
+      end
     end
 
     def set_current_state_with_persistence(state)
@@ -130,7 +207,104 @@ module AASM
       save_success
     end
 
+    def last_event_context
+      context = current_event_context
+      context || @last_event_context
+    end
+
+    def build_event_context(event, to_state = nil)
+      to_state = to_state.to_sym if to_state.respond_to?(:to_sym)
+      EventContext.new(event, current_state, to_state)
+    end
+
+    def current_event_context
+      current_context
+    end
+
     private
+
+    EventContext = Struct.new(:current_event, :from_state, :to_state)
+
+    def explicit_event_arguments(args)
+      return nil unless args.last.is_a?(Hash)
+
+      options = args.last
+      target_key = EXPLICIT_TARGET_KEYS.find { |key| options.key?(key) }
+      args_key = EXPLICIT_ARGS_KEYS.find { |key| options.key?(key) }
+      return nil unless target_key || args_key
+
+      explicit_args = args_key ? explicit_arguments_for(options[args_key]) : []
+      leading_args = args[0...-1]
+      remaining_options = options.reject do |key, _value|
+        target_key == key || args_key == key
+      end
+      explicit_args << remaining_options unless remaining_options.empty?
+
+      {
+        :to_state => target_key ? options[target_key] : nil,
+        :args_key => args_key,
+        :leading_args => leading_args,
+        :args => explicit_args
+      }
+    end
+
+    def explicit_arguments_for(value)
+      return [] if value.nil?
+      value.is_a?(Array) ? value : [value]
+    end
+
+    def explicit_target_value(state)
+      return ::AASM::NO_VALUE if state.nil?
+      state.respond_to?(:to_sym) ? state.to_sym : state
+    end
+
+    def invoke_explicit_event(event_name, bang, explicit, &block)
+      to_state, business_args = resolve_explicit_arguments(event_name, explicit)
+      options = {
+        :persist => bang,
+        :explicit => true,
+        :to_state => to_state,
+        :current_event => bang ? :"#{event_name}!" : event_name.to_sym
+      }
+      @instance.send(:aasm_fire_event, @name, event_name.to_sym, options, *business_args, &block)
+    end
+
+    def resolve_explicit_arguments(event_name, explicit)
+      leading_args = explicit[:leading_args]
+      to_state = explicit[:to_state]
+
+      if to_state.nil? && explicit[:args_key] && leading_args.any? &&
+         explicit_target_candidate?(event_name, leading_args.first)
+        to_state = leading_args.first
+        leading_args = leading_args[1..-1]
+      end
+
+      [to_state, leading_args + explicit[:args]]
+    end
+
+    def explicit_target_candidate?(event_name, candidate)
+      return false unless candidate.respond_to?(:to_sym)
+      event = @instance.class.aasm(@name).state_machine.events[event_name.to_sym]
+      return false unless event
+      event.transitions_from_state(current_state).any? do |transition|
+        Array(transition.to).map(&:to_sym).include?(candidate.to_sym)
+      end
+    end
+
+    def push_event_context(context)
+      @event_contexts << context
+      context
+    end
+
+    def pop_event_context
+      context = @event_contexts.pop
+      @last_event_context = context if context
+      context
+    end
+
+    def current_context
+      @event_contexts.last
+    end
 
     def event_method_name(event_name)
       config = @instance.class.aasm(@name).state_machine.config

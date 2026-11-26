@@ -96,29 +96,88 @@ private
 
   def aasm_fire_event(state_machine_name, event_name, options, *args, &block)
     event = self.class.aasm(state_machine_name).state_machine.events[event_name]
-    begin
-      old_state = aasm(state_machine_name).state_object_for_name(aasm(state_machine_name).current_state)
+    explicit = options[:explicit]
+    target_state = options[:to_state]
+    event_context = options[:event_context] ||
+      aasm(state_machine_name).build_event_context(
+        options[:current_event] || aasm(state_machine_name).event_to_fire || event_name,
+        explicit ? target_state : nil
+      )
 
-      fire_default_callbacks(event, *process_args(event, aasm(state_machine_name).current_state, *args))
+    aasm(state_machine_name).with_event_context(event_context) do
+      begin
+        old_state = aasm(state_machine_name).state_object_for_name(aasm(state_machine_name).current_state)
 
-      if may_fire_to = event.may_fire?(self, *args)
-        fire_exit_callbacks(old_state, *process_args(event, aasm(state_machine_name).current_state, *args))
-        if new_state_name = event.fire(self, {:may_fire => may_fire_to}, *args)
-          aasm_fired(state_machine_name, event, old_state, new_state_name, options, *args, &block)
+        if explicit && !valid_explicit_target?(event, old_state.name, target_state)
+          aasm_failed(state_machine_name, event_name, old_state, event.failed_callbacks)
+          next
+        end
+
+        callback_args = event_callback_args(event, options, aasm(state_machine_name).current_state, *args)
+
+        fire_default_callbacks(event, *callback_args)
+
+        if (may_fire_to = fire_event_target(event, options, *args))
+          fire_exit_callbacks(old_state, *callback_args)
+          if new_state_name = fire_event(event, options, may_fire_to, *args)
+            event_context.to_state = new_state_name.to_sym
+            aasm_fired(state_machine_name, event, old_state, new_state_name, options, *args, &block)
+          else
+            aasm_failed(state_machine_name, event_name, old_state, event.failed_callbacks)
+          end
         else
           aasm_failed(state_machine_name, event_name, old_state, event.failed_callbacks)
         end
-      else
-        aasm_failed(state_machine_name, event_name, old_state, event.failed_callbacks)
+      rescue StandardError => e
+        event.fire_callbacks(:error, self, e, *event_callback_args(event, options, aasm(state_machine_name).current_state, *args)) ||
+        event.fire_global_callbacks(:error_on_all_events, self, e, *event_callback_args(event, options, aasm(state_machine_name).current_state, *args)) ||
+        raise(e)
+        false
+      ensure
+        event.fire_callbacks(:ensure, self, *event_callback_args(event, options, aasm(state_machine_name).current_state, *args))
+        event.fire_global_callbacks(:ensure_on_all_events, self, *event_callback_args(event, options, aasm(state_machine_name).current_state, *args))
       end
-    rescue StandardError => e
-      event.fire_callbacks(:error, self, e, *process_args(event, aasm(state_machine_name).current_state, *args)) ||
-      event.fire_global_callbacks(:error_on_all_events, self, e, *process_args(event, aasm(state_machine_name).current_state, *args)) ||
-      raise(e)
-      false
-    ensure
-      event.fire_callbacks(:ensure, self, *process_args(event, aasm(state_machine_name).current_state, *args))
-      event.fire_global_callbacks(:ensure_on_all_events, self, *process_args(event, aasm(state_machine_name).current_state, *args))
+    end
+  end
+
+  def valid_explicit_target?(event, from_state, target_state)
+    return true if target_state.nil?
+    return false unless target_state.respond_to?(:to_sym)
+    event.transitions_from_state(from_state).any? do |transition|
+      Array(transition.to).map(&:to_sym).include?(target_state.to_sym)
+    end
+  end
+
+  def event_callback_args(event, options, from_state, *args)
+    return args if options[:explicit]
+    process_args(event, from_state, *args)
+  end
+
+  def explicit_fire_target(options)
+    return ::AASM::NO_VALUE unless options[:explicit]
+    normalize_target_state(options[:to_state])
+  end
+
+  def normalize_target_state(state)
+    return ::AASM::NO_VALUE if state.nil?
+    state.respond_to?(:to_sym) ? state.to_sym : state
+  end
+
+  def fire_event_target(event, options, *args)
+    target_state = explicit_fire_target(options)
+    if options[:explicit]
+      event.may_fire?(self, target_state, *args)
+    else
+      event.may_fire?(self, *args)
+    end
+  end
+
+  def fire_event(event, options, may_fire_to, *args)
+    target_state = explicit_fire_target(options)
+    if options[:explicit]
+      event.fire(self, {:may_fire => may_fire_to}, target_state, *args)
+    else
+      event.fire(self, {:may_fire => may_fire_to}, *args)
     end
   end
 
@@ -146,7 +205,8 @@ private
     persist = options[:persist]
 
     new_state = aasm(state_machine_name).state_object_for_name(new_state_name)
-    callback_args = process_args(event, aasm(state_machine_name).current_state, *args)
+    callback_args = event_callback_args(event, options, aasm(state_machine_name).current_state, *args)
+    post_callback_args = event_callback_args(event, options, old_state.name, *args)
 
     new_state.fire_callbacks(:before_enter, self, *callback_args)
 
@@ -158,7 +218,7 @@ private
       if persist_successful
         yield if block_given?
         event.fire_callbacks(:before_success, self, *callback_args)
-        event.fire_transition_callbacks(self, *process_args(event, old_state.name, *args))
+        event.fire_transition_callbacks(self, *post_callback_args)
         event.fire_callbacks(:success, self, *callback_args)
       end
     else
@@ -177,12 +237,12 @@ private
       event.fire_callbacks(
         :after,
         self,
-        *process_args(event, old_state.name, *args)
+        *post_callback_args
       )
       event.fire_global_callbacks(
         :after_all_events,
         self,
-        *process_args(event, old_state.name, *args)
+        *post_callback_args
       )
 
       self.aasm_event_fired(event.name, old_state.name, aasm(state_machine_name).current_state) if self.respond_to?(:aasm_event_fired)

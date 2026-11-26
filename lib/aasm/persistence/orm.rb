@@ -123,22 +123,30 @@ module AASM
         return super unless aasm_supports_transactions? && options[:persist]
 
         event = self.class.aasm(state_machine_name).state_machine.events[name]
+        event_context = options[:event_context] ||
+          aasm(state_machine_name).build_event_context(
+            options[:current_event] || aasm(state_machine_name).event_to_fire || name,
+            explicit_target_state(options)
+          )
+        options = options.merge(:event_context => event_context)
         event.fire_callbacks(:before_transaction, self, *args)
         event.fire_global_callbacks(:before_all_transactions, self, *args)
 
         begin
           success = if options[:persist] && use_transactions?(state_machine_name)
             aasm_transaction(requires_new?(state_machine_name), requires_lock?(state_machine_name)) do
-              super
+              super(state_machine_name, name, options, *args, &block)
             end
           else
-            super
+            super(state_machine_name, name, options, *args, &block)
           end
 
           if success && !(event.options.keys & [:after_commit, :after_all_commits]).empty?
             aasm_execute_after_commit do
-              event.fire_callbacks(:after_commit, self, *args)
-              event.fire_global_callbacks(:after_all_commits, self, *args)
+              aasm_fire_deferred_callbacks(event, state_machine_name, event_context) do
+                event.fire_callbacks(:after_commit, self, *args)
+                event.fire_global_callbacks(:after_all_commits, self, *args)
+              end
             end
           end
 
@@ -146,6 +154,25 @@ module AASM
         ensure
           event.fire_callbacks(:after_transaction, self, *args)
           event.fire_global_callbacks(:after_all_transactions, self, *args)
+        end
+      end
+
+      def explicit_target_state(options)
+        return nil unless options[:explicit]
+        state = options[:to_state]
+        state.respond_to?(:to_sym) ? state.to_sym : state
+      end
+
+      def aasm_fire_deferred_callbacks(event, state_machine_name, event_context, &block)
+        if event_context
+          aasm(state_machine_name).with_event_context(
+            event_context.current_event,
+            event_context.from_state,
+            event_context.to_state,
+            &block
+          )
+        else
+          block.call
         end
       end
 
