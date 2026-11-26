@@ -52,6 +52,7 @@ validations
 :hidden:
 
 invoke
+durable
 models
 integrations
 weighted_transitions

@@ -112,6 +112,16 @@ class EventQueue:
             self.queue.queue.clear()
         return triggers
 
+    def snapshot(self) -> list[TriggerData]:
+        """The triggers waiting in the queue, without removing them.
+
+        Used by a durable checkpoint, which records the queues and leaves them in place so
+        the running macrostep is unaffected.
+        """
+        with self.queue.mutex:
+            self._drop_cancelled_head()
+            return [trigger for trigger in self.queue.queue if not trigger.cancelled]
+
     def reject_futures(self, exc: Exception):
         """Reject all unresolved futures in the queue.
 
@@ -155,6 +165,12 @@ class BaseEngine:
         self._log_id = f"[{type(sm).__name__}]"
         self._debug = logger.debug if logger.isEnabledFor(logging.DEBUG) else lambda *a, **k: None
         self._root_parallel_final_pending: "State | None" = None
+        self.halt_requested = False
+        """Set by a durable chart to stop at the current step boundary, keeping both
+        queues so a restart resumes from the same position."""
+        self._current_trigger: "TriggerData | None" = None
+        """The trigger whose callbacks are running, so an effect can record which
+        invocation round produced it."""
 
     def clear_cache(self):
         """Clears the cache. Should be called at the start of each processing loop."""
@@ -205,6 +221,27 @@ class BaseEngine:
     def cancel_event(self, send_id: str):
         """Cancel the event with the given send_id."""
         self.external_queue.cancel(send_id)
+
+    def _checkpoint_after_step(self):
+        """Let a durable chart persist the configuration and the queues."""
+        self.sm._checkpoint_after_step()
+
+    def _stale_completion(self, trigger_data: TriggerData) -> bool:
+        """Whether ``trigger_data`` is a completion from a retired invocation generation.
+
+        A state that is exited and re-entered reuses a declared invoke id, creating a new
+        generation for the same id.  A ``done.invoke`` left behind by the previous round
+        carries the old generation and must not pass the new round.
+        """
+        return self._invoke_manager.is_stale_completion(trigger_data)
+
+    def _may_take_external(self, take_external: bool) -> bool:
+        """Whether the loop may take a pending external trigger now.
+
+        Never once a halt was requested, and not at all when the caller asked to settle
+        only the internal events, which a resumed durable run does first.
+        """
+        return take_external and not self.halt_requested
 
     def _on_error_handler(self) -> "Callable[[Exception], None] | None":
         """Return a per-block error handler, or ``None``.

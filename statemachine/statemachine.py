@@ -175,7 +175,29 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
         # for async code, the user should manually call `await sm.activate_initial_state()`
         # after state machine creation.
         self._engine = self._get_engine()
-        self._engine.start(**kwargs)
+        if not self._restore_pending_checkpoint():
+            self._engine.start(**kwargs)
+
+    def _restore_pending_checkpoint(self) -> bool:
+        """Resume from a pending checkpoint before the initial state is entered.
+
+        A plain ``StateChart`` has nothing to restore.  :class:`~statemachine.durable.
+        DurableStateChart` overrides this to apply a checkpoint, so the engine starts at the
+        recorded configuration instead of entering the initial state and running its entry
+        callbacks again.
+
+        Returns:
+            ``True`` when the state was restored and the initial activation must be skipped.
+        """
+        return False
+
+    def _checkpoint_after_step(self) -> None:
+        """Persist a durable checkpoint at a safe step boundary.
+
+        Called by the engine after each microstep and after each queue transition.  A plain
+        ``StateChart`` keeps nothing, so this is a no-op; ``DurableStateChart`` overrides it.
+        """
+        return None
 
     def _get_engine(self):
         if self._callbacks.has_async_callbacks:
@@ -221,6 +243,21 @@ class StateChart(Generic[TModel], metaclass=StateMachineMetaclass):
 
     def activate_initial_state(self) -> Any:
         result = self._engine.activate_initial_state()
+        if not isawaitable(result):
+            return result
+        return run_async_from_sync(result)
+
+    def settle_internal(self) -> Any:
+        """Settle the current macrostep without taking a pending external trigger.
+
+        Eventless transitions and the internal queue run; the external queue is left as it
+        is, in order.  A durable chart uses this on resume so a pending ``error.execution``
+        is processed before an external event queued earlier can advance the run.
+        """
+        if isinstance(self._engine, AsyncEngine):
+            result = self._engine.processing_loop(None, take_external=False)
+        else:
+            result = self._engine.processing_loop(take_external=False)
         if not isawaitable(result):
             return result
         return run_async_from_sync(result)

@@ -28,6 +28,16 @@ class TriggerData:
     Allow revoking a delayed :ref:`TriggerData` instance.
     """
 
+    generation: "int | None" = field(compare=False, default=None)
+    """The invocation generation that produced this trigger, when it is a platform event
+    such as ``done.invoke``.
+
+    An invoked child re-enters the same waiting state after it exits, reusing the original
+    invoke id. The generation tells the completion of one round apart from that of the next,
+    so a late notification from an exited invocation cannot pass the new round. ``None``
+    marks a trigger sent by user code, which has no generation.
+    """
+
     execution_time: float = field(default=0.0)
     """The time at which the :ref:`Event` should run, on the :func:`time.monotonic` clock, so
     that a step of the wall clock neither holds nor hastens it."""

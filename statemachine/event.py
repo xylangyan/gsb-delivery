@@ -181,11 +181,13 @@ class Event(AddCallbacksMixin, str):
         if machine is None:
             raise RuntimeError(_("Event {} cannot be called without a SM instance").format(self))
 
+        generation = kwargs.pop("_generation", None)
         kwargs = {k: v for k, v in kwargs.items() if k not in _event_data_kwargs}
         trigger_data = TriggerData(
             machine=machine,
             event=self,
             send_id=send_id,
+            generation=generation,
             args=args,
             kwargs=kwargs,
         )

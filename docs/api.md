@@ -19,6 +19,37 @@
     :undoc-members:
 ```
 
+## DurableStateChart
+
+```{versionadded} 3.3.0
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.durable.DurableStateChart
+    :members:
+    :undoc-members:
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.durable.Journal
+    :members:
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.durable.CheckpointStore
+    :members:
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.durable.MemoryCheckpointStore
+    :members:
+```
+
+```{eval-rst}
+.. autoclass:: statemachine.durable.PickleFileStore
+    :members:
+```
+
 ## State
 
 ```{seealso}

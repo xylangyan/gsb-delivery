@@ -45,7 +45,7 @@ class SyncEngine(BaseEngine):
                 self._processing.release()
         return self.processing_loop()
 
-    def processing_loop(self):
+    def processing_loop(self, take_external: bool = True):
         """Process event triggers.
 
         The event is put on a queue, and only the first event will have the result collected.
@@ -53,6 +53,12 @@ class SyncEngine(BaseEngine):
         .. note::
             While processing the queue items, if others events are generated, they
             will be processed sequentially (and not nested).
+
+        Args:
+            take_external: When ``False``, settle the current macrostep (eventless
+                transitions and the internal queue) and stop without taking a pending
+                external trigger.  A resumed run uses this to handle its pending failure
+                before an external event queued earlier can advance it.
 
         """
         # We make sure that only the first event enters the processing critical section,
@@ -68,7 +74,7 @@ class SyncEngine(BaseEngine):
         try:
             with _processing_step(self):
                 took_events = True
-                while took_events and self.running:
+                while took_events and self.running and not self.halt_requested:
                     self.clear_cache()
                     try:
                         took_events = self._run_macrostep()
@@ -77,18 +83,22 @@ class SyncEngine(BaseEngine):
                     except Exception:
                         self.clear()
                         raise
+                    self._checkpoint_after_step()
                     self._check_root_final_state()
-                    if not self.running:
+                    if not self.running or not self._may_take_external(take_external):
                         break
 
                     took_external_events, first_result = self._take_due_external_event(
                         first_result
                     )
                     took_events = took_events or took_external_events
+                    if took_external_events:
+                        self._checkpoint_after_step()
 
                 if not self.running:
                     self._drop_external_events()
         finally:
+            self.halt_requested = False
             self._processing.release()
         self._debug("%s Processing loop ended", self._log_id)
         return first_result if first_result is not self._sentinel else None
@@ -96,10 +106,11 @@ class SyncEngine(BaseEngine):
     def _run_macrostep(self) -> bool:
         """Take eventless transitions and internal events until neither enables a transition.
 
-        Returns whether any transition was taken. The internal queue is empty on return.
+        Returns whether any transition was taken. The internal queue is empty on return,
+        unless a halt was requested at a step boundary: then it is left for the restart.
         """
         took_events = False
-        while True:
+        while not self.halt_requested:
             self._microstep_count = 0
             self._debug(
                 "%s Macrostep %d: eventless/internal queue",
@@ -119,6 +130,10 @@ class SyncEngine(BaseEngine):
                 self._debug("%s Enabled transitions: %s", self._log_id, enabled_transitions)
                 took_events = True
                 self.microstep(list(enabled_transitions), internal_event)
+                # A microstep is atomic; the queue it filled (error.execution, done.state,
+                # or a raised event) is the state a restart resumes into.
+                self._checkpoint_after_step()
+        return took_events
 
     def _take_due_external_event(self, first_result):
         """Take the external event at the head of the queue, if it is due.
@@ -158,6 +173,10 @@ class SyncEngine(BaseEngine):
 
         Returns the event's microstep result, or the sentinel when it enabled no transition.
         """
+        if self._stale_completion(external_event):
+            self._debug("%s Dropping stale completion %s", self._log_id, external_event.event)
+            return self._sentinel
+
         # Finalize + autoforward for active invocations
         self._invoke_manager.handle_external_event(external_event)
 
@@ -226,6 +245,7 @@ class SyncEngine(BaseEngine):
         This includes exiting states, executing transition content, and entering states.
         """
         self._microstep_count += 1
+        self._current_trigger = trigger_data
         self._debug(
             "%s macro:%d micro:%d transitions: %s",
             self._log_id,

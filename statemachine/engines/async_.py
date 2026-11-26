@@ -305,6 +305,7 @@ class AsyncEngine(BaseEngine):
 
     async def microstep(self, transitions: "list[Transition]", trigger_data: TriggerData):
         self._microstep_count += 1
+        self._current_trigger = trigger_data
         self._debug(
             "%s macro:%d micro:%d transitions: %s",
             self._log_id,
@@ -363,7 +364,11 @@ class AsyncEngine(BaseEngine):
         """
         return await self.processing_loop()
 
-    async def processing_loop(self, caller_future: "asyncio.Future[object] | None" = None):
+    async def processing_loop(
+        self,
+        caller_future: "asyncio.Future[object] | None" = None,
+        take_external: bool = True,
+    ):
         """Process event triggers, a macrostep at a time.
 
         Each macrostep takes eventless transitions and internal events until neither enables a
@@ -373,6 +378,9 @@ class AsyncEngine(BaseEngine):
         When ``caller_future`` is provided, the caller can ``await`` it to
         receive its own event's result — even if another coroutine holds the
         processing lock. If that coroutine is cancelled, the caller takes the loop over.
+
+        ``take_external=False`` settles the current macrostep and stops without taking a
+        pending external trigger, so a resumed run handles its pending failure first.
         """
         while not self._processing.acquire(blocking=False):
             if caller_future is None:
@@ -382,8 +390,9 @@ class AsyncEngine(BaseEngine):
                 return caller_future.result()
 
         try:
-            return await self._run_processing_loop(caller_future)
+            return await self._run_processing_loop(caller_future, take_external)
         finally:
+            self.halt_requested = False
             self._processing.release()
             self._wake_lock_waiters()
 
@@ -407,28 +416,35 @@ class AsyncEngine(BaseEngine):
         for released in self._lock_waiters:
             self._resolve_future(released, None)
 
-    async def _run_processing_loop(self, caller_future: "asyncio.Future[object] | None"):
+    async def _run_processing_loop(
+        self,
+        caller_future: "asyncio.Future[object] | None",
+        take_external: bool = True,
+    ):
         self._debug("%s Processing loop started: %s", self._log_id, self.sm.current_state_value)
         first_result = self._sentinel
         macrostep = _MacrostepCaller()
         try:
             with _processing_step(self):
                 took_events = True
-                while took_events and self.running:
+                while took_events and self.running and not self.halt_requested:
                     self.clear_cache()
                     took_events = await self._run_macrostep()
 
                     # Spawn invoke handlers for states entered during this macrostep.
                     await self._invoke_manager.spawn_pending_async()
+                    self._checkpoint_after_step()
                     macrostep.answer()
                     self._check_root_final_state()
-                    if not self.running:
+                    if not self.running or not self._may_take_external(take_external):
                         break
 
                     took_external_events, first_result = await self._take_due_external_event(
                         first_result, macrostep
                     )
                     took_events = took_events or took_external_events
+                    if took_external_events:
+                        self._checkpoint_after_step()
 
                 macrostep.answer()
                 if not self.running:
@@ -458,10 +474,11 @@ class AsyncEngine(BaseEngine):
     async def _run_macrostep(self) -> bool:
         """Take eventless transitions and internal events until neither enables a transition.
 
-        Returns whether any transition was taken. The internal queue is empty on return.
+        Returns whether any transition was taken. The internal queue is empty on return,
+        unless a halt was requested at a step boundary: then it is left for the restart.
         """
         took_events = False
-        while True:
+        while not self.halt_requested:
             self._microstep_count = 0
             self._debug(
                 "%s Macrostep %d: eventless/internal queue",
@@ -481,6 +498,10 @@ class AsyncEngine(BaseEngine):
                 self._debug("%s Enabled transitions: %s", self._log_id, enabled_transitions)
                 took_events = True
                 await self.microstep(list(enabled_transitions), internal_event)
+                # A microstep is atomic; the queue it filled (error.execution, done.state,
+                # or a raised event) is the state a restart resumes into.
+                self._checkpoint_after_step()
+        return took_events
 
     async def _take_due_external_event(self, first_result, macrostep: "_MacrostepCaller"):
         """Take the external event at the head of the queue, if it is due.
@@ -530,6 +551,10 @@ class AsyncEngine(BaseEngine):
 
         Returns the event's microstep result, or the sentinel when it enabled no transition.
         """
+        if self._stale_completion(external_event):
+            self._debug("%s Dropping stale completion %s", self._log_id, external_event.event)
+            return self._sentinel
+
         # Finalize + autoforward for active invocations
         self._invoke_manager.handle_external_event(external_event)
 

@@ -65,6 +65,8 @@ class _InvokeCallableWrapper:
         self._invoke_handler = handler
         self._is_class = isinstance(handler, type)
         self._instance: Any = None
+        self.invoke_id = getattr(handler, "invoke_id", None)
+        """Declared ``id`` of the invocation, forwarded so ``_make_context`` can use it."""
         name = getattr(handler, "__name__", type(handler).__name__)
         self.__name__ = name
         self.__qualname__ = getattr(handler, "__qualname__", name)
@@ -161,6 +163,9 @@ class InvokeContext:
     cancelled: threading.Event = field(default_factory=threading.Event)
     """Set when the owning state is exited; handlers should check this to stop early."""
 
+    generation: int = 1
+    """The round of the owning state this invocation belongs to."""
+
     kwargs: dict = field(default_factory=dict)
     """Keyword arguments from the event that triggered the state entry."""
 
@@ -175,6 +180,12 @@ class Invocation:
     thread: "threading.Thread | None" = None
     task: "asyncio.Task[Any] | None" = None
     terminated: bool = False
+    generation: int = 1
+    """The round of the owning state this invocation belongs to.
+
+    A declared invoke id is reused when the state is exited and entered again, so the
+    completion of one round carries the generation of that round.
+    """
     _handler: Any = None
 
 
@@ -281,6 +292,8 @@ class InvokeManager:
         self._engine = engine
         self._active: dict[str, Invocation] = {}
         self._pending: "list[tuple[State, dict]]" = []
+        self._generations: dict[str, int] = {}
+        """Last generation handed out for each invoke id, so a reused id goes to the next."""
 
     @property
     def _debug(self):
@@ -293,6 +306,44 @@ class InvokeManager:
     @property
     def sm(self) -> "StateChart":
         return self._engine.sm
+
+    def is_stale_completion(self, trigger_data) -> bool:
+        """Whether a completion event belongs to a retired round of its invocation.
+
+        Only a completion that names a generation can be stale, and only when a round of
+        its invoke id is known: the round the id is in now, or one a checkpoint recorded.
+        A machine that tracks no round accepts the completion as any event; that keeps a
+        plain ``StateChart`` behaving exactly as before.
+        """
+        generation = getattr(trigger_data, "generation", None)
+        if generation is None:
+            return False
+        event_name = str(trigger_data.event) if trigger_data.event else None
+        if not event_name or not event_name.startswith("done.invoke."):
+            return False
+        invokeid = event_name[len("done.invoke.") :]
+        current = self._generations.get(invokeid)
+        if current is None:
+            # No round of this invoke id is known here, so nothing can tell it apart.
+            return False
+        return int(current) != int(generation)
+
+    def live_generations(self) -> "dict[str, int]":
+        """The current generation of each live invocation, for a durable checkpoint."""
+        return {
+            inv_id: generation
+            for inv_id, generation in self._generations.items()
+            if inv_id in self._active and not self._active[inv_id].ctx.cancelled.is_set()
+        }
+
+    def restore_generations(self, generations: "dict[str, int]"):
+        """Adopt the generations a checkpoint recorded as current.
+
+        The handlers themselves cannot be resumed, so only their ids are known: a completion
+        delivered after the restart carries the recorded generation of a live round and is
+        routed to it, while a notification from an earlier, exited round is still told apart.
+        """
+        self._generations.update(generations)
 
     # --- Engine hooks ---
 
@@ -375,7 +426,11 @@ class InvokeManager:
             )
 
         ctx = self._make_context(state, event_kwargs, handler=handler)
-        invocation = Invocation(invokeid=ctx.invokeid, state_id=state.id, ctx=ctx)
+        generation = self._next_generation(ctx.invokeid)
+        invocation = Invocation(
+            invokeid=ctx.invokeid, state_id=state.id, ctx=ctx, generation=generation
+        )
+        ctx.generation = generation
 
         invocation._handler = handler
         self._active[ctx.invokeid] = invocation
@@ -412,7 +467,9 @@ class InvokeManager:
                 self.sm.send("error.execution", error=e)
         else:
             if not ctx.cancelled.is_set():
-                self.sm.send(f"done.invoke.{ctx.invokeid}", data=result)
+                self.sm.send(
+                    f"done.invoke.{ctx.invokeid}", data=result, _generation=invocation.generation
+                )
         finally:
             invocation.terminated = True
             self._debug(
@@ -445,7 +502,11 @@ class InvokeManager:
 
         handler = self._resolve_handler(callback.meta.func)
         ctx = self._make_context(state, event_kwargs, handler=handler)
-        invocation = Invocation(invokeid=ctx.invokeid, state_id=state.id, ctx=ctx)
+        generation = self._next_generation(ctx.invokeid)
+        invocation = Invocation(
+            invokeid=ctx.invokeid, state_id=state.id, ctx=ctx, generation=generation
+        )
+        ctx.generation = generation
 
         invocation._handler = handler
         self._active[ctx.invokeid] = invocation
@@ -492,7 +553,7 @@ class InvokeManager:
                 await self.sm.send("error.execution", error=e)
         else:
             if not ctx.cancelled.is_set():
-                await self._send_done_async(ctx.invokeid, result)
+                await self._send_done_async(ctx.invokeid, result, invocation.generation)
         finally:
             invocation.terminated = True
             self._debug(
@@ -502,14 +563,14 @@ class InvokeManager:
                 ctx.cancelled.is_set(),
             )
 
-    async def _send_done_async(self, invokeid: str, result: Any):
+    async def _send_done_async(self, invokeid: str, result: Any, generation: int):
         """Send ``done.invoke`` and report an error raised while processing it.
 
         The invocation's task drives the macrostep when the machine is idle, and no caller
         awaits that task, so the error goes to the event loop's exception handler.
         """
         try:
-            await self.sm.send(f"done.invoke.{invokeid}", data=result)
+            await self.sm.send(f"done.invoke.{invokeid}", data=result, _generation=generation)
         except Exception as e:
             asyncio.get_running_loop().call_exception_handler(
                 {"message": f"Error while processing done.invoke.{invokeid}", "exception": e}
@@ -554,11 +615,12 @@ class InvokeManager:
     def send_to_child(self, invokeid: str, event: str, **data) -> bool:
         """Send an event to an invoked child session by its invokeid.
 
-        Returns True if the event was forwarded, False if the invocation was
-        not found or doesn't support event forwarding.
+        When a declared id is reused across rounds, the event goes to the round that is
+        live now, not to a retired one.  Returns True if the event was forwarded, False if
+        no live invocation of that id accepts it.
         """
         invocation = self._active.get(invokeid)
-        if invocation is None:
+        if invocation is None or invocation.ctx.cancelled.is_set():
             return False
         handler = invocation._handler
         if handler is not None and hasattr(handler, "on_event"):
@@ -617,6 +679,16 @@ class InvokeManager:
                     "%s invoke autoforward: %s -> %s", self._log_id, event_name, inv.invokeid
                 )
                 handler.on_event(event_name, **trigger_data.kwargs)
+
+    def _next_generation(self, invokeid: str) -> int:
+        """The round of ``invokeid`` this activation starts.
+
+        A declared id is reused when its state is exited and re-entered, so the generation
+        advances; an id minted fresh for this call always starts at one.
+        """
+        generation = self._generations.get(invokeid, 0) + 1
+        self._generations[invokeid] = generation
+        return generation
 
     def _make_context(
         self, state: "State", event_kwargs: "dict | None" = None, handler: Any = None
