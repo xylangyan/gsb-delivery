@@ -1,0 +1,81 @@
+{
+  "selection": {
+    "selected_plan_id": "approved-min",
+    "candidate_count": 3,
+    "safe_count": 2,
+    "baseline_plan_id": "original-heavy",
+    "cost_bytes": 94380
+  },
+  "results": [
+    {
+      "plan_id": "original-heavy",
+      "equivalent": true,
+      "schedule_count": 70,
+      "cost_bytes": 104440,
+      "response_item_count": 10,
+      "missing_required": [],
+      "state_count": 25,
+      "divergence": null,
+      "branches": {
+        "alpha": "alpha-manifest",
+        "beta": "beta-supplement"
+      }
+    },
+    {
+      "plan_id": "approved-min",
+      "equivalent": true,
+      "schedule_count": 70,
+      "cost_bytes": 94380,
+      "response_item_count": 8,
+      "missing_required": [],
+      "state_count": 25,
+      "divergence": null,
+      "branches": {
+        "alpha": "alpha-manifest",
+        "beta": "beta-supplement"
+      }
+    },
+    {
+      "plan_id": "shared-narrow",
+      "equivalent": false,
+      "schedule_count": 70,
+      "cost_bytes": 93740,
+      "response_item_count": 7,
+      "missing_required": [],
+      "state_count": 24,
+      "divergence": {
+        "schedule": "BBBBAAAA",
+        "job": "beta",
+        "ordinal": 3,
+        "global_index": 4,
+        "kind": "trace",
+        "expected": {
+          "step": "detail",
+          "attempt": 2,
+          "method": "GET",
+          "url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7",
+          "status": 200,
+          "exception": null,
+          "original_id": "ORIG_DETAIL_B"
+        },
+        "actual": {
+          "step": "detail",
+          "attempt": 2,
+          "method": "GET",
+          "url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7",
+          "status": 200,
+          "exception": null,
+          "original_id": "ORIG_DETAIL_A"
+        },
+        "message": "job beta step #4 differs"
+      },
+      "branches": {
+        "alpha": "alpha-manifest",
+        "beta": "beta-supplement"
+      }
+    }
+  ],
+  "repro_scripts": {
+    "shared-narrow": "/Users/guo/Documents/GSB/1109/batches/accounts55-bao-20261127/control/questions/GSB1109-20261122-BAO-REQUESTS-MOCK-01/workspace/replay_output/repro_shared_narrow.py"
+  }
+}

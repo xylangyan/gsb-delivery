@@ -1,0 +1,149 @@
+{
+  "selection": {
+    "selected_plan_id": "approved-min",
+    "candidate_count": 3,
+    "safe_count": 2,
+    "baseline_plan_id": "original-heavy",
+    "cost_bytes": 94380
+  },
+  "locally_minimal": true,
+  "plan": {
+    "id": "approved-min",
+    "description": "批准的较短序列：共用忙回包原件，但保留作业各自登记",
+    "registrations": [
+      {
+        "id": "catalog-station-subset",
+        "method": "GET",
+        "url": "http://supply-test.local/catalog?station=ST-7",
+        "responses": [
+          {
+            "id": "catalog-single-page",
+            "original": "ORIG_CATALOG_SINGLE_PAGE",
+            "status": 200,
+            "json": {
+              "branch": "page",
+              "next_url": "http://supply-test.local/catalog?station=ST-7&cursor=2"
+            }
+          }
+        ]
+      },
+      {
+        "id": "catalog-cursor-page",
+        "method": "GET",
+        "url": "http://supply-test.local/catalog?station=ST-7&cursor=2",
+        "complete_qs": true,
+        "responses": [
+          {
+            "id": "catalog-cursor-ok",
+            "original": "ORIG_CATALOG_CURSOR",
+            "status": 200,
+            "json": {
+              "branch": "manifest",
+              "detail_url": "http://supply-test.local/detail?line=A&station=ST-7"
+            }
+          }
+        ]
+      },
+      {
+        "id": "catalog-duplicate-narrow",
+        "method": "GET",
+        "url": "http://supply-test.local/catalog?station=ST-7&station=ST-7",
+        "complete_qs": true,
+        "responses": [
+          {
+            "id": "catalog-duplicate-intake",
+            "original": "ORIG_CATALOG_DUPLICATE_INTAKE",
+            "status": 200,
+            "json": {
+              "branch": "intake",
+              "intake_url": "http://supply-test.local/intake?source=SRC-789&station=ST-7&station=ST-7"
+            }
+          }
+        ]
+      },
+      {
+        "id": "intake-source-additional",
+        "method": "GET",
+        "url": "http://supply-test.local/intake",
+        "additional_matcher": {
+          "all": [
+            {
+              "query_contains": {
+                "source": "SRC-789"
+              }
+            },
+            {
+              "query_equals": {
+                "station": [
+                  "ST-7",
+                  "ST-7"
+                ]
+              }
+            }
+          ]
+        },
+        "responses": [
+          {
+            "id": "intake-source-ok",
+            "original": "ORIG_INTAKE_SOURCE",
+            "status": 200,
+            "json": {
+              "branch": "detail",
+              "detail_url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7"
+            }
+          }
+        ]
+      },
+      {
+        "id": "detail-alpha",
+        "method": "GET",
+        "url": "http://supply-test.local/detail?line=A&station=ST-7",
+        "complete_qs": true,
+        "responses": [
+          {
+            "id": "detail-alpha-busy",
+            "original": "ORIG_DETAIL_BUSY",
+            "status": 503,
+            "json": {
+              "retry": true
+            }
+          },
+          {
+            "id": "detail-alpha-ok",
+            "original": "ORIG_DETAIL_A",
+            "status": 200,
+            "json": {
+              "line": "A",
+              "accepted": true
+            }
+          }
+        ]
+      },
+      {
+        "id": "detail-beta-narrow",
+        "method": "GET",
+        "url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7",
+        "complete_qs": true,
+        "responses": [
+          {
+            "id": "detail-beta-busy",
+            "original": "ORIG_DETAIL_BUSY",
+            "status": 503,
+            "json": {
+              "retry": true
+            }
+          },
+          {
+            "id": "detail-beta-ok",
+            "original": "ORIG_DETAIL_B",
+            "status": 200,
+            "json": {
+              "line": "B",
+              "accepted": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

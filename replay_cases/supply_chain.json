@@ -1,0 +1,473 @@
+{
+  "id": "supply-chain-local",
+  "name": "供货清单本机回归参考案例",
+  "baseline_plan_id": "original-heavy",
+  "schedule": {
+    "attempts_per_job": {
+      "alpha": 4,
+      "beta": 4
+    },
+    "max_attempts_per_job": 6
+  },
+  "required_receipts": [
+    "ORIG_CATALOG_SINGLE_PAGE",
+    "ORIG_CATALOG_CURSOR",
+    "ORIG_CATALOG_DUPLICATE_INTAKE",
+    "ORIG_INTAKE_SOURCE",
+    "ORIG_DETAIL_BUSY",
+    "ORIG_DETAIL_A",
+    "ORIG_DETAIL_B"
+  ],
+  "originals": {
+    "ORIG_CATALOG_SINGLE_PAGE": {"raw_bytes": 18420},
+    "ORIG_CATALOG_CURSOR": {"raw_bytes": 9310},
+    "ORIG_CATALOG_DUPLICATE_INTAKE": {"raw_bytes": 15270},
+    "ORIG_INTAKE_SOURCE": {"raw_bytes": 8120},
+    "ORIG_DETAIL_BUSY": {"raw_bytes": 640},
+    "ORIG_DETAIL_A": {"raw_bytes": 22110},
+    "ORIG_DETAIL_B": {"raw_bytes": 19870},
+    "ORIG_DETAIL_ARCHIVE": {"raw_bytes": 5030}
+  },
+  "jobs": {
+    "alpha": {
+      "initial": "catalog",
+      "requests": {
+        "catalog": {
+          "method": "GET",
+          "url": "http://supply-test.local/catalog",
+          "params": [["station", "ST-7"]]
+        },
+        "page2": {
+          "method": "GET",
+          "url_var": "next_url"
+        },
+        "detail": {
+          "method": "GET",
+          "url_var": "detail_url"
+        }
+      },
+      "transitions": [
+        {
+          "state": "catalog",
+          "when": {"status": 200, "json": {"branch": "page"}},
+          "set_vars": {"next_url": "next_url"},
+          "next": "page2"
+        },
+        {
+          "state": "page2",
+          "when": {"status": 200, "json": {"branch": "manifest"}},
+          "set_vars": {"detail_url": "detail_url"},
+          "next": "detail"
+        },
+        {
+          "state": "detail",
+          "when": {"status": 503, "attempt_lt": 2},
+          "next": "detail"
+        },
+        {
+          "state": "detail",
+          "when": {"status": 200},
+          "terminal": "alpha-manifest"
+        }
+      ]
+    },
+    "beta": {
+      "initial": "catalog",
+      "requests": {
+        "catalog": {
+          "method": "GET",
+          "url": "http://supply-test.local/catalog",
+          "params": [["station", "ST-7"], ["station", "ST-7"]]
+        },
+        "intake": {
+          "method": "GET",
+          "url_var": "intake_url"
+        },
+        "detail": {
+          "method": "GET",
+          "url_var": "detail_url"
+        }
+      },
+      "transitions": [
+        {
+          "state": "catalog",
+          "when": {"status": 200, "json": {"branch": "intake"}},
+          "set_vars": {"intake_url": "intake_url"},
+          "next": "intake"
+        },
+        {
+          "state": "intake",
+          "when": {"status": 200, "json": {"branch": "detail"}},
+          "set_vars": {"detail_url": "detail_url"},
+          "next": "detail"
+        },
+        {
+          "state": "detail",
+          "when": {"status": 503, "attempt_lt": 2},
+          "next": "detail"
+        },
+        {
+          "state": "detail",
+          "when": {"status": 200},
+          "terminal": "beta-supplement"
+        }
+      ]
+    }
+  },
+  "plans": [
+    {
+      "id": "original-heavy",
+      "description": "原始顺序登记：作业明细分开，末尾保留未消耗归档项",
+      "registrations": [
+        {
+          "id": "catalog-station-subset",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7",
+          "responses": [
+            {
+              "id": "catalog-single-page",
+              "original": "ORIG_CATALOG_SINGLE_PAGE",
+              "status": 200,
+              "json": {
+                "branch": "page",
+                "next_url": "http://supply-test.local/catalog?station=ST-7&cursor=2"
+              }
+            }
+          ]
+        },
+        {
+          "id": "catalog-cursor-page",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7&cursor=2",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "catalog-cursor-ok",
+              "original": "ORIG_CATALOG_CURSOR",
+              "status": 200,
+              "json": {
+                "branch": "manifest",
+                "detail_url": "http://supply-test.local/detail?line=A&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "catalog-duplicate-narrow",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "catalog-duplicate-intake",
+              "original": "ORIG_CATALOG_DUPLICATE_INTAKE",
+              "status": 200,
+              "json": {
+                "branch": "intake",
+                "intake_url": "http://supply-test.local/intake?source=SRC-789&station=ST-7&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "intake-source-additional",
+          "method": "GET",
+          "url": "http://supply-test.local/intake",
+          "additional_matcher": {
+            "all": [
+              {"query_contains": {"source": "SRC-789"}},
+              {"query_equals": {"station": ["ST-7", "ST-7"]}}
+            ]
+          },
+          "responses": [
+            {
+              "id": "intake-source-ok",
+              "original": "ORIG_INTAKE_SOURCE",
+              "status": 200,
+              "json": {
+                "branch": "detail",
+                "detail_url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "detail-alpha",
+          "method": "GET",
+          "url": "http://supply-test.local/detail?line=A&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "detail-alpha-busy",
+              "original": "ORIG_DETAIL_BUSY",
+              "status": 503,
+              "json": {"retry": true}
+            },
+            {
+              "id": "detail-alpha-ok",
+              "original": "ORIG_DETAIL_A",
+              "status": 200,
+              "json": {"line": "A", "accepted": true}
+            },
+            {
+              "id": "detail-alpha-archive-unused",
+              "original": "ORIG_DETAIL_ARCHIVE",
+              "status": 200,
+              "json": {"archive": true}
+            }
+          ]
+        },
+        {
+          "id": "detail-beta-narrow",
+          "method": "GET",
+          "url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "detail-beta-busy",
+              "original": "ORIG_DETAIL_BUSY",
+              "status": 503,
+              "json": {"retry": true}
+            },
+            {
+              "id": "detail-beta-ok",
+              "original": "ORIG_DETAIL_B",
+              "status": 200,
+              "json": {"line": "B", "accepted": true}
+            },
+            {
+              "id": "detail-beta-archive-unused",
+              "original": "ORIG_DETAIL_ARCHIVE",
+              "status": 200,
+              "json": {"archive": true}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "approved-min",
+      "description": "批准的较短序列：共用忙回包原件，但保留作业各自登记",
+      "registrations": [
+        {
+          "id": "catalog-station-subset",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7",
+          "responses": [
+            {
+              "id": "catalog-single-page",
+              "original": "ORIG_CATALOG_SINGLE_PAGE",
+              "status": 200,
+              "json": {
+                "branch": "page",
+                "next_url": "http://supply-test.local/catalog?station=ST-7&cursor=2"
+              }
+            }
+          ]
+        },
+        {
+          "id": "catalog-cursor-page",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7&cursor=2",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "catalog-cursor-ok",
+              "original": "ORIG_CATALOG_CURSOR",
+              "status": 200,
+              "json": {
+                "branch": "manifest",
+                "detail_url": "http://supply-test.local/detail?line=A&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "catalog-duplicate-narrow",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "catalog-duplicate-intake",
+              "original": "ORIG_CATALOG_DUPLICATE_INTAKE",
+              "status": 200,
+              "json": {
+                "branch": "intake",
+                "intake_url": "http://supply-test.local/intake?source=SRC-789&station=ST-7&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "intake-source-additional",
+          "method": "GET",
+          "url": "http://supply-test.local/intake",
+          "additional_matcher": {
+            "all": [
+              {"query_contains": {"source": "SRC-789"}},
+              {"query_equals": {"station": ["ST-7", "ST-7"]}}
+            ]
+          },
+          "responses": [
+            {
+              "id": "intake-source-ok",
+              "original": "ORIG_INTAKE_SOURCE",
+              "status": 200,
+              "json": {
+                "branch": "detail",
+                "detail_url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "detail-alpha",
+          "method": "GET",
+          "url": "http://supply-test.local/detail?line=A&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "detail-alpha-busy",
+              "original": "ORIG_DETAIL_BUSY",
+              "status": 503,
+              "json": {"retry": true}
+            },
+            {
+              "id": "detail-alpha-ok",
+              "original": "ORIG_DETAIL_A",
+              "status": 200,
+              "json": {"line": "A", "accepted": true}
+            }
+          ]
+        },
+        {
+          "id": "detail-beta-narrow",
+          "method": "GET",
+          "url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "detail-beta-busy",
+              "original": "ORIG_DETAIL_BUSY",
+              "status": 503,
+              "json": {"retry": true}
+            },
+            {
+              "id": "detail-beta-ok",
+              "original": "ORIG_DETAIL_B",
+              "status": 200,
+              "json": {"line": "B", "accepted": true}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shared-narrow",
+      "description": "建议合用同一个有状态明细登记；预期会在交错调度下失败",
+      "registrations": [
+        {
+          "id": "catalog-station-subset",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7",
+          "responses": [
+            {
+              "id": "catalog-single-page",
+              "original": "ORIG_CATALOG_SINGLE_PAGE",
+              "status": 200,
+              "json": {
+                "branch": "page",
+                "next_url": "http://supply-test.local/catalog?station=ST-7&cursor=2"
+              }
+            }
+          ]
+        },
+        {
+          "id": "catalog-cursor-page",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7&cursor=2",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "catalog-cursor-ok",
+              "original": "ORIG_CATALOG_CURSOR",
+              "status": 200,
+              "json": {
+                "branch": "manifest",
+                "detail_url": "http://supply-test.local/detail?line=A&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "catalog-duplicate-narrow",
+          "method": "GET",
+          "url": "http://supply-test.local/catalog?station=ST-7&station=ST-7",
+          "complete_qs": true,
+          "responses": [
+            {
+              "id": "catalog-duplicate-intake",
+              "original": "ORIG_CATALOG_DUPLICATE_INTAKE",
+              "status": 200,
+              "json": {
+                "branch": "intake",
+                "intake_url": "http://supply-test.local/intake?source=SRC-789&station=ST-7&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "intake-source-additional",
+          "method": "GET",
+          "url": "http://supply-test.local/intake",
+          "additional_matcher": {
+            "all": [
+              {"query_contains": {"source": "SRC-789"}},
+              {"query_equals": {"station": ["ST-7", "ST-7"]}}
+            ]
+          },
+          "responses": [
+            {
+              "id": "intake-source-ok",
+              "original": "ORIG_INTAKE_SOURCE",
+              "status": 200,
+              "json": {
+                "branch": "detail",
+                "detail_url": "http://supply-test.local/detail?line=B&station=ST-7&station=ST-7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "detail-shared-sequence",
+          "method": "GET",
+          "url": "http://supply-test.local/detail",
+          "additional_matcher": {
+            "query_contains": {"station": "ST-7"}
+          },
+          "responses": [
+            {
+              "id": "shared-busy",
+              "original": "ORIG_DETAIL_BUSY",
+              "status": 503,
+              "json": {"retry": true}
+            },
+            {
+              "id": "shared-ok-a",
+              "original": "ORIG_DETAIL_A",
+              "status": 200,
+              "json": {"line": "A", "accepted": true}
+            },
+            {
+              "id": "shared-ok-b",
+              "original": "ORIG_DETAIL_B",
+              "status": 200,
+              "json": {"line": "B", "accepted": true}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

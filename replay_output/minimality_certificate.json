@@ -1,0 +1,69 @@
+{
+  "locally_minimal": true,
+  "checks": [
+    {
+      "kind": "response_item",
+      "registration": "detail-alpha",
+      "item_id": "detail-alpha-busy",
+      "necessary": true,
+      "first_divergence": "job alpha step #3 differs"
+    },
+    {
+      "kind": "response_item",
+      "registration": "detail-alpha",
+      "item_id": "detail-alpha-ok",
+      "necessary": true,
+      "first_divergence": "job alpha step #4 differs"
+    },
+    {
+      "kind": "response_item",
+      "registration": "detail-beta-narrow",
+      "item_id": "detail-beta-busy",
+      "necessary": true,
+      "first_divergence": "job beta step #3 differs"
+    },
+    {
+      "kind": "response_item",
+      "registration": "detail-beta-narrow",
+      "item_id": "detail-beta-ok",
+      "necessary": true,
+      "first_divergence": "job beta step #4 differs"
+    },
+    {
+      "kind": "registration",
+      "registration": "catalog-station-subset",
+      "necessary": true,
+      "first_divergence": "job alpha step #1 differs"
+    },
+    {
+      "kind": "registration",
+      "registration": "catalog-cursor-page",
+      "necessary": true,
+      "first_divergence": "job alpha step #2 differs"
+    },
+    {
+      "kind": "registration",
+      "registration": "catalog-duplicate-narrow",
+      "necessary": true,
+      "first_divergence": "job beta step #1 differs"
+    },
+    {
+      "kind": "registration",
+      "registration": "intake-source-additional",
+      "necessary": true,
+      "first_divergence": "job beta step #2 differs"
+    },
+    {
+      "kind": "registration",
+      "registration": "detail-alpha",
+      "necessary": true,
+      "first_divergence": "job alpha step #3 differs"
+    },
+    {
+      "kind": "registration",
+      "registration": "detail-beta-narrow",
+      "necessary": true,
+      "first_divergence": "job beta step #3 differs"
+    }
+  ]
+}
