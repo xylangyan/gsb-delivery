@@ -5,6 +5,34 @@ import asyncio
 from datetime import timedelta
 
 from backoff._common import (_init_wait_gen, _maybe_call, _next_wait)
+from backoff._durable import current_resume_context
+from backoff._machine import run_async
+
+
+def _durable_async(target, args, kwargs, context, *, wait_gen, max_tries,
+                   max_time, jitter, giveup=None, predicate=None,
+                   on_success=(), on_backoff=(), on_giveup=(),
+                   raise_on_giveup=True, wait_gen_kwargs=None,
+                   exception_types=None):
+    return run_async(
+        journal=context.journal,
+        context=context,
+        target=target,
+        args=args,
+        kwargs=kwargs,
+        wait_gen=wait_gen,
+        max_tries=max_tries,
+        max_time=max_time,
+        jitter=jitter,
+        giveup=giveup,
+        predicate=predicate,
+        on_success=on_success,
+        on_backoff=on_backoff,
+        on_giveup=on_giveup,
+        raise_on_giveup=raise_on_giveup,
+        wait_gen_kwargs=wait_gen_kwargs or {},
+        exception_types=exception_types,
+    )
 
 
 def _ensure_coroutine(coro_or_func):
@@ -54,6 +82,15 @@ def retry_predicate(target, wait_gen, predicate,
 
     @functools.wraps(target)
     async def retry(*args, **kwargs):
+        context = current_resume_context()
+        if context is not None:
+            return await _durable_async(
+                target, args, kwargs, context, wait_gen=wait_gen,
+                max_tries=max_tries, max_time=max_time, jitter=jitter,
+                predicate=predicate, on_success=on_success,
+                on_backoff=on_backoff, on_giveup=on_giveup,
+                raise_on_giveup=True, wait_gen_kwargs=wait_gen_kwargs,
+            )
 
         # update variables from outer function args
         max_tries_value = _maybe_call(max_tries)
@@ -129,6 +166,17 @@ def retry_exception(target, wait_gen, exception,
 
     @functools.wraps(target)
     async def retry(*args, **kwargs):
+        context = current_resume_context()
+        if context is not None:
+            return await _durable_async(
+                target, args, kwargs, context, wait_gen=wait_gen,
+                max_tries=max_tries, max_time=max_time, jitter=jitter,
+                giveup=giveup, on_success=on_success,
+                on_backoff=on_backoff, on_giveup=on_giveup,
+                raise_on_giveup=raise_on_giveup,
+                wait_gen_kwargs=wait_gen_kwargs,
+                exception_types=exception,
+            )
 
         max_tries_value = _maybe_call(max_tries)
         max_time_value = _maybe_call(max_time)

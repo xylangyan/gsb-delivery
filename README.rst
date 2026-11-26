@@ -384,3 +384,53 @@ directly.
 Default logging can be disabled all together by specifying
 ``logger=None``. In this case, if desired alternative logging behavior
 could be defined by using custom event handlers.
+
+Resumable retries
+=================
+
+Ordinary decorated calls are unchanged.  When a call must be able to continue
+after a process stop, enter a :class:`backoff.resume` context::
+
+    journal = backoff.Journal("collector.jsonl")
+
+    @backoff.on_exception(backoff.expo,
+                          CollectorError,
+                          max_tries=lambda: config["MAX_TRIES"])
+    def fetch_page(cursor):
+        return client.fetch(cursor)
+
+    with backoff.resume(journal, key="nightly-collection",
+                        lookup=client.lookup_by_attempt_id):
+        pages = fetch_page(cursor)
+
+Each durable call journals the original attempt number, the value or exception
+that attempt produced, the wait derived from *that* result, every handler that
+completed and the absolute wake-up point of a sleep that really started.  A
+restart therefore:
+
+* keeps the attempt order and never invents a new attempt for work that was
+  already accepted;
+* resumes a started wait at its recorded wake-up time and starts a planned but
+  not-yet-started wait at its original stage (downtime is not counted twice);
+* reuses the configuration snapshot of an interrupted layer run, while a layer
+  entered again (for example the inner layer after an outer wake-up) resolves
+  fresh configuration;
+* treats an attempt whose receipt did not land as unconfirmed.  Use
+  ``lookup`` (called with the attempt id, also available from
+  ``backoff.current_attempt_id()``) or ``journal.acknowledge()`` to restore it
+  without sending the attempt again.
+
+Inspect what a journal proves with::
+
+    journal.report("nightly-collection")
+
+    resumed = backoff.reconcile("resumed.jsonl", key="nightly-collection")
+    uninterrupted = backoff.reconcile("uninterrupted.jsonl", key="nightly-collection")
+    assert resumed.compare(uninterrupted).matches
+
+The report lists, per attempt, its status (``sent``, ``decision_pending``,
+``wait_pending``, ``receipt_pending``, ``receipted``, ``sleeping``,
+``continued``, ``success`` or ``giveup``), ``receipt_phase`` (``before``,
+``after`` or ``terminal``), the completed callbacks, the recorded wait and
+wake-up point and whether a late acceptance receipt was attached to the
+original attempt.

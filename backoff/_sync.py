@@ -5,6 +5,8 @@ import time
 from datetime import timedelta
 
 from backoff._common import (_init_wait_gen, _maybe_call, _next_wait)
+from backoff._durable import current_resume_context
+from backoff._machine import run_sync
 
 
 def _call_handlers(hdlrs, target, args, kwargs, tries, elapsed, **extra):
@@ -20,6 +22,31 @@ def _call_handlers(hdlrs, target, args, kwargs, tries, elapsed, **extra):
         hdlr(details)
 
 
+def _durable(target, args, kwargs, context, *, wait_gen, max_tries, max_time,
+             jitter, giveup=None, predicate=None, on_success=(), on_backoff=(),
+             on_giveup=(), raise_on_giveup=True, wait_gen_kwargs=None,
+             exception_types=None):
+    return run_sync(
+        journal=context.journal,
+        context=context,
+        target=target,
+        args=args,
+        kwargs=kwargs,
+        wait_gen=wait_gen,
+        max_tries=max_tries,
+        max_time=max_time,
+        jitter=jitter,
+        giveup=giveup,
+        predicate=predicate,
+        on_success=on_success,
+        on_backoff=on_backoff,
+        on_giveup=on_giveup,
+        raise_on_giveup=raise_on_giveup,
+        wait_gen_kwargs=wait_gen_kwargs or {},
+        exception_types=exception_types,
+    )
+
+
 def retry_predicate(target, wait_gen, predicate,
                     *,
                     max_tries, max_time, jitter,
@@ -28,6 +55,16 @@ def retry_predicate(target, wait_gen, predicate,
 
     @functools.wraps(target)
     def retry(*args, **kwargs):
+        context = current_resume_context()
+        if context is not None:
+            return _durable(
+                target, args, kwargs, context, wait_gen=wait_gen,
+                max_tries=max_tries, max_time=max_time, jitter=jitter,
+                predicate=predicate, on_success=on_success,
+                on_backoff=on_backoff, on_giveup=on_giveup,
+                raise_on_giveup=True, wait_gen_kwargs=wait_gen_kwargs,
+            )
+
         max_tries_value = _maybe_call(max_tries)
         max_time_value = _maybe_call(max_time)
 
@@ -84,6 +121,18 @@ def retry_exception(target, wait_gen, exception,
 
     @functools.wraps(target)
     def retry(*args, **kwargs):
+        context = current_resume_context()
+        if context is not None:
+            return _durable(
+                target, args, kwargs, context, wait_gen=wait_gen,
+                max_tries=max_tries, max_time=max_time, jitter=jitter,
+                giveup=giveup, on_success=on_success,
+                on_backoff=on_backoff, on_giveup=on_giveup,
+                raise_on_giveup=raise_on_giveup,
+                wait_gen_kwargs=wait_gen_kwargs,
+                exception_types=exception,
+            )
+
         max_tries_value = _maybe_call(max_tries)
         max_time_value = _maybe_call(max_time)
 

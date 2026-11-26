@@ -13,6 +13,24 @@ For examples and full documentation see the README at
 https://github.com/litl/backoff
 """
 from backoff._decorator import on_exception, on_predicate
+from backoff._journal import (
+    AttemptTrace,
+    Journal,
+    LossyValue,
+    Reconciliation,
+    RunTrace,
+    TraceDiff,
+    reconcile,
+)
+from backoff._durable import (
+    NOT_FOUND,
+    AttemptOutcome,
+    ResumeContext,
+    attempt_id,
+    current_attempt_id,
+    current_key,
+    resume,
+)
 from backoff._jitter import full_jitter, random_jitter
 from backoff._wait_gen import constant, expo, fibo, runtime, decay
 
@@ -26,6 +44,20 @@ __all__ = [
     'runtime',
     'full_jitter',
     'random_jitter',
+    'Journal',
+    'Reconciliation',
+    'TraceDiff',
+    'reconcile',
+    'AttemptTrace',
+    'RunTrace',
+    'AttemptOutcome',
+    'LossyValue',
+    'ResumeContext',
+    'resume',
+    'attempt_id',
+    'current_attempt_id',
+    'current_key',
+    'NOT_FOUND',
 ]
 
 __version__ = "2.2.1"

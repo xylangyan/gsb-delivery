@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Optional resumable retries backed by a local append-only journal:
+  `backoff.resume()` for decorated calls and `backoff.Journal` for durable
+  attempt ids, acceptance receipts and reconciliation.
+- `Journal.acknowledge()` stores an acceptance receipt keyed by attempt id;
+  `backoff.current_attempt_id()` exposes the id of the attempt in progress.
+- Reconciliation reports the original attempt order, config snapshots,
+  completed callbacks, receipt phase and actual wake-up point, and can be
+  compared with an uninterrupted run via `Reconciliation.compare()`.
+
 ## [v2.2.1] - 2022-10-05
 
 - Fix type hint for wait generators https://github.com/litl/backoff/issues/177
