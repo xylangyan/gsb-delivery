@@ -1,0 +1,61 @@
+material:
+  table: items
+  id_col: id
+  view_name: v
+  rows:
+    - { id: 1, grp: A, v: a-one }
+    - { id: 2, grp: A, v: a-two }
+    - { id: 3, grp: B, v: b-one }
+    - { id: 4, grp: B, v: b-two }
+    - { id: 5, grp: B, v: b-three }
+
+views:
+  - { version: v1, sql: "SELECT id AS code, v AS label FROM items WHERE grp = 'A' ORDER BY id" }
+  - { version: v2, sql: "SELECT id AS code, v AS label FROM items WHERE grp = 'B' ORDER BY id" }
+
+statements:
+  - { id: S1, sql: "SELECT * FROM v" }
+
+deliveries:
+  - id: D1
+    statement: S1
+    expect_view: v1
+    columns: { code: id, label: v }
+    row_map: { method: sequence, start: 1, step: 1 }
+  - id: D2
+    statement: S1
+    expect_view: v2
+    columns: { code: id, label: v }
+    row_map: { method: sequence, start: 4, step: 1 }
+
+groups:
+  maybe_swap:
+    - { op: pass }
+    - { op: swap_view, view: v2 }
+  maybe_final_step:
+    - { op: pass }
+    - { op: step, handle: H2 }
+
+handovers:
+  - { id: h0, actions: [{ op: prepare, statement: S1 }] }
+  - { id: h1, actions: [{ op: execute, statement: S1, handle: H1, mode: hash }] }
+  - { id: h2, actions: [{ op: columns, handle: H1 }] }
+  - { id: h3, actions: [{ group: maybe_swap }] }
+  - { id: h4, actions: [{ op: execute, statement: S1, handle: H2, mode: array }] }
+  - { id: h5, actions: [{ op: step, handle: H1 }] }
+  - { id: h6, actions: [{ op: step, handle: H2 }] }
+  - { id: h7, actions: [{ op: step, handle: H2 }] }
+  - { id: h8, actions: [{ group: maybe_final_step }] }
+
+ledger:
+  - delivery: D1
+    handle: H1
+    events:
+      - { type: sample, column: code, value: 3 }
+      - { type: row, line: 1 }
+  - delivery: D2
+    handle: H2
+    events:
+      - { type: row, line: 1 }
+      - { type: row, line: 2 }
+      - { type: end }

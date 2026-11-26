@@ -1,0 +1,37 @@
+# No handover can satisfy this book: it spot-checks a value that never appears
+# in either sealed view. The audit reports the earliest observation that every
+# candidate fails, instead of a three-band verdict.
+material:
+  table: items
+  id_col: id
+  view_name: v
+  rows:
+    - { id: 1, grp: A, v: a-one }
+    - { id: 2, grp: A, v: a-two }
+    - { id: 3, grp: B, v: b-one }
+
+views:
+  - { version: v1, sql: "SELECT id AS code, v AS label FROM items WHERE grp = 'A' ORDER BY id" }
+  - { version: v2, sql: "SELECT id AS code, v AS label FROM items WHERE grp = 'B' ORDER BY id" }
+
+statements:
+  - { id: S1, sql: "SELECT * FROM v" }
+
+deliveries:
+  - id: D1
+    statement: S1
+    expect_view: v1
+    columns: { code: id, label: v }
+    row_map: { method: sequence, start: 1, step: 1 }
+
+handovers:
+  - { id: h0, actions: [{ op: prepare, statement: S1 }] }
+  - { id: h1, actions: [{ op: execute, statement: S1, handle: H1, mode: hash }] }
+  - { id: h2, actions: [{ op: step, handle: H1 }] }
+
+ledger:
+  - delivery: D1
+    handle: H1
+    events:
+      - { type: sample, column: code, value: 999 }
+      - { type: row, line: 1 }

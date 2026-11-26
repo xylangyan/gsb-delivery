@@ -1,0 +1,69 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "json"
+require "yaml"
+require "handover_audit"
+
+# Command line entry point for the handover audit:
+#
+#   ruby bin/handover-audit case.yaml            # human-readable verdict
+#   ruby bin/handover-audit case.yaml --json     # full machine-readable report
+#   ruby bin/handover-audit case.yaml --replay D1 3
+#     # exact statement/view/material replay for one published line
+module HandoverAudit
+  module CLI
+    module_function
+
+    def run(argv)
+      path, *rest = argv
+      raise "usage: handover-audit CASE.{yaml,yml,json} [--json | --replay DELIVERY LINE]" if path.nil?
+
+      spec = load_spec(path)
+      audit_case = HandoverAudit::Case.new(spec)
+      solver = HandoverAudit::Solver.new(audit_case).solve
+
+      if rest.include?("--json")
+        puts Report.new(audit_case, solver).to_json
+      elsif rest.first == "--replay"
+        print_replay(solver, rest[1], rest[2])
+      else
+        puts Report.new(audit_case, solver).to_text
+      end
+    rescue HandoverAudit::Case::SpecError => e
+      warn "invalid audit case: #{e.message}"
+      exit 2
+    rescue StandardError => e
+      warn e.message
+      exit 1
+    end
+
+    def load_spec(path)
+      text = File.read(path)
+      case File.extname(path).downcase
+      when ".json" then JSON.parse(text)
+      when ".yaml", ".yml" then YAML.safe_load(text, permitted_classes: [Date, Time, Symbol], aliases: true)
+      else raise "unsupported case file extension: #{path}"
+      end
+    end
+
+    def print_replay(solver, delivery, line)
+      raise "--replay needs DELIVERY and LINE" if delivery.nil? || line.nil?
+
+      entries = solver.replay(delivery.to_sym, Integer(line))
+      if entries.empty?
+        puts "line #{line} of #{delivery} is outside the audited receipts"
+        return
+      end
+      entries.each do |entry|
+        tuple = entry[:provenance]
+        puts "view=#{tuple[:view]} view_row=#{tuple[:view_ordinal] + 1} " \
+             "material=#{tuple[:material_id]} mode=#{tuple[:mode]} handle=#{tuple[:handle]}"
+      end
+    end
+  end
+end
+
+HandoverAudit::CLI.run(ARGV)
