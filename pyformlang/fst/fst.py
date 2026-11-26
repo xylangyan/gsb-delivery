@@ -206,6 +206,36 @@ class FST:
                                        generated + output_string,
                                        next_state))
 
+    def replay(self, input_word: Iterable[Any], max_length: int = -1):
+        """Replay the receipts of :meth:`translate` by ordinal number.
+
+        See :class:`pyformlang.fst.replay.TranslationReplay`.
+        """
+        # Imported lazily so that the traversal above stays self-contained.
+        # pylint: disable=import-outside-toplevel,cyclic-import
+        from pyformlang.fst.replay import TranslationReplay
+        return TranslationReplay(self, input_word, max_length)
+
+    def receipts(self, input_word: Iterable[Any], max_length: int = -1):
+        """Return the translated words in receipt order, as ``translate``.
+
+        This is a convenience wrapper around :meth:`replay`; the result is a
+        list, unlike the lazy :meth:`translate`.
+        """
+        return [receipt.output
+                for receipt in self.replay(input_word, max_length)]
+
+    def compare_limits(self, input_word: Iterable[Any], old_max_length: int,
+                       new_max_length: int):
+        """Compare two length limits for the same input word.
+
+        See :class:`pyformlang.fst.replay.VersionedReplay`.
+        """
+        # pylint: disable=import-outside-toplevel,cyclic-import
+        from pyformlang.fst.replay import VersionedReplay
+        return VersionedReplay.from_limits(
+            self, input_word, old_max_length, new_max_length)
+
     def intersection(self, indexed_grammar):
         """ Compute the intersection with an other object
 

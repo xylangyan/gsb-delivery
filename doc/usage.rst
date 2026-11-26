@@ -325,6 +325,38 @@ transducer into a NetworkX graph and to save it into a dot file.
     #  ['tu', 'es', 'bien', 'content'],
     #  ['tu', 'es', 'content']]
 
+Receipt replay
+--------------
+
+``translate`` is a generator whose order is part of its behaviour.  When the
+translations are numbered receipts, ``replay`` gives the same enumeration with
+stable one-based ordinals, and it can be queried without building the whole
+list:
+
+.. code-block:: python
+
+    replay = fst.replay(["you", "are", "happy"], max_length=4)
+    replay.receipt(1)           # Receipt(ordinal=1, output=[...], ...)
+    replay.receipt(1).output    # the short code, as a list
+    replay.receipt(1).final_state
+    replay.receipt(1).provenance  # the transition that formed the code
+    replay[0:2]                 # the first two receipts, lazily
+    replay.ordinal_of(["tu", "es", "content"], 3)  # reverse lookup
+
+Two length limits can be compared on the same word:
+
+.. code-block:: python
+
+    both = fst.compare_limits(["you", "are", "happy"], 2, 8)
+    both.ordinals(["tu", "es", "content"], 3)  # (old_number, new_number)
+    both.renumber(2)                            # new number, or None
+    both.range_stats(1, 4)                      # moved / missing counts
+
+The enumeration keeps the original depth-first order: edges in registration
+order, first arrival per state, and the same ``max_length`` check.  A code is
+identified by its symbols and its final state, so the same code at two final
+states is two receipts.
+
 Context-Free Grammar
 ====================
 
