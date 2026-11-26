@@ -8,3 +8,4 @@
 from cabarchive.file import CabFile
 from cabarchive.archive import CabArchive
 from cabarchive.errors import CorruptionError, NotSupportedError
+from cabarchive.repack import Repacker, RepackResult
