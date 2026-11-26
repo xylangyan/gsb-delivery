@@ -75,6 +75,36 @@ Example
     asyncio.run(main())
 
 
+Handing the queue over to a new event loop
+------------------------------------------
+
+The synchronous side is loop-agnostic, so producer threads can keep using
+the same ``sync_q`` while the asyncio writer is restarted on a fresh event
+loop. Call ``rebind_event_loop()`` from the new loop instead of creating a
+new queue: the stored items, ordering, and unfinished-task counts are all
+kept, while every coroutine still waiting on the old loop gets a definite
+``QueueRebindError`` (or ``ItemNotDeliveredError`` when a blocked put's
+item was never admitted). The coroutine returns only after the old loop
+confirms the handover, at which point that loop can be stopped with no
+hanging waiter or uncollectable notification left behind.
+
+.. code:: python
+
+    async def new_writer(queue: janus.Queue[int]) -> None:
+        report = await queue.rebind_event_loop()
+        # report.not_enqueued / pending_in_queue /
+        # taken_unconfirmed / confirmed account for every item.
+        while True:
+            item = await queue.async_q.get()
+            ...
+            queue.async_q.task_done()
+
+Use ``wait_rebind()`` elsewhere on the new loop to block until an
+in-progress handover has been confirmed, and inspect the returned
+``RebindReport`` to distinguish items never enqueued, still queued, taken
+but unconfirmed, and already confirmed.
+
+
 Limitations
 ===========
 
@@ -93,8 +123,10 @@ time-tested, but has some limitations.
   `asyncio queue <https://docs.python.org/3/library/asyncio-queue.html>`_ modules,
   otherwise `the slowdown can be significant
   <https://github.com/aio-libs/janus/issues/419>`_.
-* You cannot use queues for communicating between two different event loops
-  because, like all asyncio primitives, they bind to the current one.
+* An asyncio queue binds to the event loop of the first coroutine that
+  uses it. A queue cannot be shared between two *running* event loops at
+  the same time, but it can be handed over from a stopped/replaced loop to
+  a new one with ``rebind_event_loop()`` (see below).
 
 Development status is production/stable. The ``janus`` library is maintained to
 support the latest versions of Python and fixes, but no major changes will be
