@@ -36,6 +36,7 @@ Code Snippets and Recipes for Loguru
 .. |log| replace:: :meth:`~loguru._logger.Logger.log()`
 .. |level| replace:: :meth:`~loguru._logger.Logger.level()`
 .. |configure| replace:: :meth:`~loguru._logger.Logger.configure()`
+.. |Outbound| replace:: :class:`~loguru._outbound.Outbound`
 .. |complete| replace:: :meth:`~loguru._logger.Logger.complete()`
 
 .. _`unicode`: https://docs.python.org/3/howto/unicode.html
@@ -126,6 +127,39 @@ Another thing you should consider is to change the access permissions of your lo
 
     logger.add("combined.log", opener=opener)
 
+
+Logging distinct data to internal and outbound sinks
+----------------------------------------------------
+
+When a log message must be archived internally while a reduced copy is sent to an external
+destination, the ``outbound`` parameter of |add| can be used. It applies to the sink it is passed
+to, so the same logging call still produces an untouched record for the other sinks. Only the
+columns listed in ``fields`` are kept in the ``extra`` dict, ``exclude`` removes arbitrary record
+keys, and ``mask`` replaces values. Paths can point to nested dictionaries, and masked values used
+to format the message are also replaced in the text (the other values are left intact)::
+
+    logger.add("internal.log", format="{time} {message}")
+
+    logger.add(
+        "outbound.log",
+        format="{message}",
+        outbound={
+            "fields": ["ticket", "station", "summary.amount"],
+            "mask": ["ticket"],
+        },
+    )
+
+    logger.info(
+        "{ticket} at {station}", ticket="PX7", station="PX7",
+        summary={"ticket": "T-1", "amount": 5},
+    )
+
+The internal file receives the original values, while the outbound one only contains the approved
+columns, with the ticket replaced by ``"***"``. A dictionary passed to ``outbound`` is forwarded to
+|Outbound|; a callable can alternatively be provided to build the projected record manually. The
+projection is built from a snapshot of the event, so a ``filter``, ``format`` or ``patch`` function
+of one sink cannot alter what another sink receives, even with ``enqueue=True``. The ``mask`` option
+also accepts a mapping to use a different replacement for each path.
 
 Avoiding logs to be printed twice on the terminal
 -------------------------------------------------

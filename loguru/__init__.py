@@ -10,10 +10,11 @@ import sys as _sys
 from . import _defaults
 from ._logger import Core as _Core
 from ._logger import Logger as _Logger
+from ._outbound import Outbound
 
 __version__ = "0.8.0"
 
-__all__ = ["logger"]
+__all__ = ["logger", "Outbound"]
 
 logger = _Logger(
     core=_Core(),

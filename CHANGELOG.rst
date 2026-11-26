@@ -1,6 +1,7 @@
 `Unreleased`_
 =============
 
+- Add a new ``outbound`` option to ``logger.add()``, allowing a sink to receive a projected copy of the record with selected fields, excluded columns, and masked values while other sinks keep the original data.
 - Make file rotation more resilient to transient filesystem errors, such as on NFS (`#1547 <https://github.com/Delgan/loguru/pull/1547>`_).
 - Fix incomplete tracebacks when logging a ``BaseExceptionGroup`` containing non-``Exception`` errors (`#1542 <https://github.com/Delgan/loguru/issue/1542>`_, thanks `@Rajatendu1 <https://github.com/Rajatendu1>`_).
 

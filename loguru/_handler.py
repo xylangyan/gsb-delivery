@@ -8,6 +8,7 @@ from threading import Thread
 
 from ._colorizer import Colorizer
 from ._locks_machinery import create_handler_lock
+from ._outbound import copy_record
 
 
 def prepare_colored_format(format_, ansi_level):
@@ -28,6 +29,42 @@ class Message(str):
     __slots__ = ("record",)
 
 
+def _serialize_elapsed(elapsed):
+    if elapsed is None:
+        return None
+    return {"repr": elapsed, "seconds": elapsed.total_seconds()}
+
+
+def _serialize_file(file_):
+    if file_ is None:
+        return None
+    return {"name": file_.name, "path": file_.path}
+
+
+def _serialize_level(level):
+    if level is None:
+        return None
+    return {"icon": level.icon, "name": level.name, "no": level.no}
+
+
+def _serialize_process(process):
+    if process is None:
+        return None
+    return {"id": process.id, "name": process.name}
+
+
+def _serialize_thread(thread):
+    if thread is None:
+        return None
+    return {"id": thread.id, "name": thread.name}
+
+
+def _serialize_time(time):
+    if time is None:
+        return None
+    return {"repr": time, "timestamp": time.timestamp()}
+
+
 class Handler:
     def __init__(
         self,
@@ -45,7 +82,8 @@ class Handler:
         error_interceptor,
         exception_formatter,
         id_,
-        levels_ansi_codes
+        levels_ansi_codes,
+        outbound=None
     ):
         self._name = name
         self._sink = sink
@@ -61,6 +99,7 @@ class Handler:
         self._exception_formatter = exception_formatter
         self._id = id_
         self._levels_ansi_codes = levels_ansi_codes  # Warning, reference shared among handlers
+        self._outbound = outbound
 
         self._decolorized_format = None
         self._precolorized_formats = {}
@@ -124,24 +163,52 @@ class Handler:
         finally:
             self._lock_acquired.acquired = False
 
-    def emit(self, record, level_id, from_decorator, is_raw, colored_message):
+    def emit(
+        self,
+        record,
+        level_id,
+        from_decorator,
+        is_raw,
+        colored_message,
+        message_context=None,
+        event_record=None,
+    ):
         try:
             if self._levelno > record["level"].no:
                 return
 
+            if self._outbound is not None:
+                origin = copy_record(event_record) if event_record is not None else record
+            else:
+                origin = record
+
             if self._filter is not None:
-                if not self._filter(record):
+                if not self._filter(origin):
                     return
+
+            if self._outbound is not None:
+                record = self._outbound.project(origin)
+                if message_context is not None and not is_raw:
+                    projected_message, projected_colored = self._outbound.build_message(
+                        message_context,
+                        record,
+                        colorize=self._colorize,
+                        ansi_level=self._levels_ansi_codes[level_id],
+                    )
+                    if projected_message is not None:
+                        record["message"] = projected_message
+                        colored_message = projected_colored
 
             if self._is_formatter_dynamic:
                 dynamic_format = self._formatter(record)
 
             formatter_record = record.copy()
 
-            if not record["exception"]:
+            exception = record.get("exception")
+            if not exception:
                 formatter_record["exception"] = ""
             else:
-                type_, value, tb = record["exception"]
+                type_, value, tb = exception
                 formatter = self._exception_formatter
                 lines = formatter.format_exception(type_, value, tb, from_decorator=from_decorator)
                 formatter_record["exception"] = "".join(lines)
@@ -195,7 +262,7 @@ class Handler:
                 formatted = self._serialize_record(formatted, record)
 
             str_record = Message(formatted)
-            str_record.record = record
+            str_record.record = copy_record(record) if self._enqueue else record
 
             with self._protected_lock():
                 if self._stopped:
@@ -253,6 +320,10 @@ class Handler:
     def levelno(self):
         return self._levelno
 
+    @property
+    def has_outbound(self):
+        return self._outbound is not None
+
     @staticmethod
     def _format_record(log_format, record):
         try:
@@ -272,7 +343,7 @@ class Handler:
 
     @staticmethod
     def _serialize_record(text, record):
-        exception = record["exception"]
+        exception = record.get("exception")
 
         if exception is not None:
             exception = {
@@ -284,27 +355,20 @@ class Handler:
         serializable = {
             "text": text,
             "record": {
-                "elapsed": {
-                    "repr": record["elapsed"],
-                    "seconds": record["elapsed"].total_seconds(),
-                },
+                "elapsed": _serialize_elapsed(record.get("elapsed")),
                 "exception": exception,
-                "extra": record["extra"],
-                "file": {"name": record["file"].name, "path": record["file"].path},
-                "function": record["function"],
-                "level": {
-                    "icon": record["level"].icon,
-                    "name": record["level"].name,
-                    "no": record["level"].no,
-                },
-                "line": record["line"],
-                "message": record["message"],
-                "module": record["module"],
-                "name": record["name"],
-                "process": {"id": record["process"].id, "name": record["process"].name},
-                "template": record["template"],
-                "thread": {"id": record["thread"].id, "name": record["thread"].name},
-                "time": {"repr": record["time"], "timestamp": record["time"].timestamp()},
+                "extra": record.get("extra"),
+                "file": _serialize_file(record.get("file")),
+                "function": record.get("function"),
+                "level": _serialize_level(record.get("level")),
+                "line": record.get("line"),
+                "message": record.get("message"),
+                "module": record.get("module"),
+                "name": record.get("name"),
+                "process": _serialize_process(record.get("process")),
+                "template": record.get("template"),
+                "thread": _serialize_thread(record.get("thread")),
+                "time": _serialize_time(record.get("time")),
             },
         }
 

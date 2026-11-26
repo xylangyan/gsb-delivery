@@ -76,6 +76,8 @@ listed here and might be useful to type hint your code:
 - ``RecordProcess``: the ``record["process"]`` with ``id`` and ``name`` attributes.
 - ``RecordException``: the ``record["exception"]`` with ``type``, ``value`` and ``traceback``
   attributes.
+- ``Outbound``: the projection applied to a record before it reaches a sink configured with the
+  ``outbound`` option of ``logger.add()``. It can be imported from ``loguru``.
 
 If that is not enough, one can also use the |loguru-mypy|_ library developed by `@kornicameister`_.
 Plugin can be installed separately using::

@@ -241,6 +241,20 @@ logger.add(sys.stderr, format="{extra[utc]} {message}")
 logger = logger.patch(lambda record: record["extra"].update(utc=datetime.utcnow()))
 ```
 
+When a sink should only receive a subset of the record, use the `outbound` argument. It projects a copy of the record for that sink only, so the original data remains available to the others. The `fields` argument keeps approved `extra` columns, `exclude` removes keys, and `mask` replaces values (including their occurrences in the formatted message):
+
+```python
+logger.add("internal.log", format="{message}")
+logger.add(
+    "external.log",
+    format="{message}",
+    outbound={"fields": ["ticket", "station"], "mask": ["ticket"]},
+)
+logger.info("{ticket} at {station}", ticket="PX7", station="PX7")
+# internal.log: PX7 at PX7
+# external.log: *** at PX7
+```
+
 ### Lazy evaluation of expensive functions
 
 Sometime you would like to log verbose information without performance penalty in production, you can use the [`opt()`](https://loguru.readthedocs.io/en/stable/api/logger.html#loguru._logger.Logger.opt) method to achieve this.

@@ -121,6 +121,7 @@ from ._file_sink import FileSink
 from ._get_frame import get_frame
 from ._handler import Handler
 from ._locks_machinery import create_logger_lock
+from ._outbound import MessageContext, copy_record, make_outbound
 from ._recattrs import RecordException, RecordFile, RecordLevel, RecordProcess, RecordThread
 from ._simple_sinks import AsyncSink, CallableSink, StandardSink, StreamSink
 
@@ -284,6 +285,7 @@ class Logger:
         enqueue=_defaults.LOGURU_ENQUEUE,
         context=_defaults.LOGURU_CONTEXT,
         catch=_defaults.LOGURU_CATCH,
+        outbound=None,
         **kwargs
     ):
         r"""Add a handler sending log messages to a sink adequately configured.
@@ -326,6 +328,12 @@ class Logger:
             Whether errors occurring while sink handles logs messages should be automatically
             caught. If ``True``, an exception message is displayed on |sys.stderr| but the exception
             is not propagated to the caller, preventing your app to crash.
+        outbound : :class:`Outbound`, |dict| or |callable|_, optional
+            If provided, the messages sent to this sink are built from a projected copy of the
+            record. The projection can keep only some columns of ``extra``, exclude arbitrary
+            fields, or mask their values while leaving the other sinks untouched. A |dict| is
+            used as keyword arguments for :class:`Outbound`, while a |callable|_ receives the
+            record and returns the projected one.
         **kwargs
             Additional parameters that are only valid to configure a coroutine or file sink (see
             below).
@@ -1033,6 +1041,8 @@ class Logger:
         if not isinstance(encoding, str):
             encoding = "ascii"
 
+        outbound_config = make_outbound(outbound)
+
         if isinstance(context, str):
             context = get_context(context)
         elif context is not None and not isinstance(context, BaseContext):
@@ -1066,6 +1076,7 @@ class Logger:
                 error_interceptor=error_interceptor,
                 exception_formatter=exception_formatter,
                 levels_ansi_codes=self._core.levels_ansi_codes,
+                outbound=outbound_config,
             )
 
             handlers = self._core.handlers.copy()
@@ -2174,6 +2185,11 @@ class Logger:
             args = [arg() for arg in args]
             kwargs = {key: value() for key, value in kwargs.items()}
 
+        template = str(message)
+        message_args = args
+        message_kwargs = dict(kwargs)
+        captured_keys = tuple(kwargs) if capture else ()
+
         if capture and kwargs:
             log_record["extra"].update(kwargs)
 
@@ -2198,14 +2214,29 @@ class Logger:
         else:
             colored_message = None
 
+        message_context = MessageContext(
+            template, message_args, message_kwargs, colors, captured_keys, record
+        )
+
         if core.patcher:
             core.patcher(log_record)
 
         for patcher in patchers:
             patcher(log_record)
 
+        has_outbound = any(handler.has_outbound for handler in core.handlers.values())
+        event_record = copy_record(log_record) if has_outbound else None
+
         for handler in core.handlers.values():
-            handler.emit(log_record, level_id, from_decorator, raw, colored_message)
+            handler.emit(
+                log_record,
+                level_id,
+                from_decorator,
+                raw,
+                colored_message,
+                message_context,
+                event_record,
+            )
 
     def trace(__self, __message, *args, **kwargs):  # noqa: N805
         r"""Log ``message.format(*args, **kwargs)`` with severity ``'TRACE'``."""

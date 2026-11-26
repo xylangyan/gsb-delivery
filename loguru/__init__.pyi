@@ -132,6 +132,25 @@ CompressionFunction = Callable[[str], None]
 
 StandardOpener = Callable[[str, int], int]
 
+OutboundFunction = Callable[[Record], Record]
+
+class Outbound:
+    fields: Optional[Sequence[str]]
+    exclude: Optional[Sequence[str]]
+    mask: Optional[Union[str, Sequence[str], Dict[str, Any]]]
+    mask_value: Any
+    def __init__(
+        self,
+        *,
+        fields: Optional[Sequence[str]] = ...,
+        exclude: Optional[Sequence[str]] = ...,
+        mask: Optional[Union[str, Sequence[str], Dict[str, Any]]] = ...,
+        mask_value: Any = ...
+    ) -> None: ...
+    def project(self, record: Dict[str, Any]) -> Dict[str, Any]: ...
+
+OutboundConfig = Union[Outbound, OutboundFunction, Dict[str, Any]]
+
 class BasicHandlerConfig(TypedDict, total=False):
     sink: Union[TextIO, Writable, Callable[[Message], None], Handler]
     level: Union[str, int]
@@ -143,6 +162,7 @@ class BasicHandlerConfig(TypedDict, total=False):
     diagnose: bool
     enqueue: bool
     catch: bool
+    outbound: Optional[OutboundConfig]
 
 class FileHandlerConfig(TypedDict, total=False):
     sink: Union[str, PathLikeStr]
@@ -155,6 +175,7 @@ class FileHandlerConfig(TypedDict, total=False):
     diagnose: bool
     enqueue: bool
     catch: bool
+    outbound: Optional[OutboundConfig]
     rotation: Optional[
         Union[
             str,
@@ -188,6 +209,7 @@ class AsyncHandlerConfig(TypedDict, total=False):
     diagnose: bool
     enqueue: bool
     catch: bool
+    outbound: Optional[OutboundConfig]
     context: Optional[Union[str, BaseContext]]
     loop: Optional[AbstractEventLoop]
 
@@ -216,7 +238,8 @@ class Logger:
         diagnose: bool = ...,
         enqueue: bool = ...,
         context: Optional[Union[str, BaseContext]] = ...,
-        catch: bool = ...
+        catch: bool = ...,
+        outbound: Optional[OutboundConfig] = ...
     ) -> int: ...
     @overload
     def add(
@@ -232,6 +255,7 @@ class Logger:
         diagnose: bool = ...,
         enqueue: bool = ...,
         catch: bool = ...,
+        outbound: Optional[OutboundConfig] = ...,
         context: Optional[Union[str, BaseContext]] = ...,
         loop: Optional[AbstractEventLoop] = ...
     ) -> int: ...
@@ -250,6 +274,7 @@ class Logger:
         enqueue: bool = ...,
         context: Optional[Union[str, BaseContext]] = ...,
         catch: bool = ...,
+        outbound: Optional[OutboundConfig] = ...,
         rotation: Optional[
             Union[
                 str,
