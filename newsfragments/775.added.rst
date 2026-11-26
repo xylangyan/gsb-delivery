@@ -1,0 +1,9 @@
+:mod:`logbook.reconciliation` reconciles buffered handler deliveries under
+several quota profiles.  It simulates :class:`~logbook.GroupHandler` and
+:class:`~logbook.FingersCrossedHandler` replay, reports per-number and
+per-round receipt counts, finds the first missing or duplicated original
+record and the first divergence between profiles, and drills into a failed
+attempt's received prefix and later re-emissions.  Repeated history is
+compressed into segments that can stand in for up to a billion operations,
+with interval counts calculated arithmetically and a lazy
+:class:`~logbook.reconciliation.HistoryWalk` for bounded traversal.

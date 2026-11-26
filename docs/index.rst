@@ -34,6 +34,7 @@ Documentation
    libraries
    unittesting
    ticketing
+   reconciliation
    compat
    api/index
    designexplained

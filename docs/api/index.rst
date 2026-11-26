@@ -12,6 +12,7 @@ provided by Logbook.
    queues
    ticketing
    more
+   reconciliation
    notifiers
    compat
    internal
