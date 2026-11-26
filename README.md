@@ -188,6 +188,22 @@ and similarly for a renderer in the contrib package:
 mistletoe foo.md --renderer mistletoe.contrib.jira_renderer.JiraRenderer
 ```
 
+### Versioned reference index
+
+`mistletoe.reference_index` keeps a versioned index of the links, images and
+link reference definitions in a document, and updates it from the ranges an
+editor reports on save:
+
+```python
+from mistletoe.reference_index import ReferenceIndex
+
+index = ReferenceIndex(open("manual.md").read())
+index.apply_edits([(1024, 1050, "replacement text")])
+index.changes.resources_to_recheck
+```
+
+See [reference-index.md](reference-index.md) for the full description.
+
 
 ### mistletoe interactive mode
 

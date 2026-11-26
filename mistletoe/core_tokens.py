@@ -25,6 +25,38 @@ code_pattern = re.compile(r"(?<!\\|`)(?:\\\\)*(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.D
 
 _code_matches: list[re.Match[str]] = []
 
+"""
+Optional per-block sink used by mistletoe.reference_index.
+
+While a leaf block parses its inline content, ``_inline_sink`` is the list
+owned by that block.  Every Link/Image/AutoLink token is reported to it as
+``(token, match)`` so callers can map inline tokens back to source offsets.
+The hook is purely observational and does not change parsing.
+"""
+_inline_sink = None
+
+"""
+Optional dependency sink used by mistletoe.reference_index.
+
+While a leaf block parses its inline content, ``_inline_dependencies`` is a
+list.  Every reference-label lookup is appended as ``(normalized_label,
+result)`` where ``result`` is ``(destination, title)`` or ``None``.  The list
+lets callers decide whether a previously parsed block is still valid.
+"""
+_inline_dependencies = None
+
+
+def record_inline(token, match):
+    """Report an inline link/image token to the active block sink, if any."""
+    if _inline_sink is not None:
+        _inline_sink.append((token, match))
+
+
+def record_lookup(label, result):
+    """Report a reference-label lookup to the active dependency sink."""
+    if _inline_dependencies is not None:
+        _inline_dependencies.append((normalize_label(label), result))
+
 
 def find_core_tokens(string, root):
     delimiters = []
@@ -332,6 +364,7 @@ def match_link_label(string, offset, root=None):
             match_info = start, end + 1, label
             if label.strip() != '':
                 ref = root.footnotes.get(normalize_label(label), None)
+                record_lookup(label, ref)
                 if ref is not None:
                     return match_info, ref
                 return None
@@ -357,12 +390,32 @@ def get_link_label(text, root):
         elif escaped:
             escaped = False
     if text.strip() != '':
-        return root.footnotes.get(normalize_label(text), None)
+        result = root.footnotes.get(normalize_label(text), None)
+        record_lookup(text, result)
+        return result
     return None
 
 
 def normalize_label(text):
     return ' '.join(text.split()).casefold()
+
+
+"""
+Optional recorder used by mistletoe.reference_index.
+
+When not ``None`` it is called as
+``recorder(start_line, start_column, end_line, end_column, match)`` for each
+link reference definition encountered while a document is parsed, in document
+order.  Lines are 1-based; columns are 0-based and point at the opening
+bracket of the definition label.  ``match`` is the parsed definition tuple.
+"""
+_definition_recorder = None
+
+
+def record_definition(start_line, start_column, end_line, end_column, match):
+    """Report a link reference definition to the active recorder, if any."""
+    if _definition_recorder is not None:
+        _definition_recorder(start_line, start_column, end_line, end_column, match)
 
 
 def next_closer(curr_pos, delimiters):

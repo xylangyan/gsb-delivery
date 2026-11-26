@@ -16,6 +16,13 @@ __all__ = ['EscapeSequence', 'Strikethrough', 'AutoLink', 'CoreTokens',
            'InlineCode', 'LineBreak', 'RawText']
 
 
+# Internal switch used by mistletoe.reference_index.  When set, block tokens
+# still build their tree, but no inline parsing is performed.  This lets an
+# incremental index re-use previously parsed inline results for unchanged
+# blocks instead of parsing every paragraph on every save.
+_suppress_inline_parsing = False
+
+
 def tokenize_inner(content):
     """
     A wrapper around span_tokenizer.tokenize. Pass in all span-level token
@@ -29,6 +36,8 @@ def tokenize_inner(content):
 
     See also: span_tokenizer.tokenize, block_token.tokenize.
     """
+    if _suppress_inline_parsing:
+        return []
     return tokenizer.tokenize(content, _token_types)
 
 
@@ -93,7 +102,9 @@ class CoreTokens(SpanToken):
     precedence = 3
 
     def __new__(cls, match):
-        return globals()[match.type](match)
+        token = globals()[match.type](match)
+        core_tokens.record_inline(token, match)
+        return token
 
     @classmethod
     def find(cls, string):
@@ -229,6 +240,9 @@ class AutoLink(SpanToken):
         self.children = (RawText(content),)
         self.target = content
         self.mailto = not scheme
+        self.dest_type = 'autolink'
+        self.label = None
+        core_tokens.record_inline(self, match)
 
 
 class EscapeSequence(SpanToken):

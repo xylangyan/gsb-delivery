@@ -7,6 +7,7 @@ from itertools import zip_longest
 from typing import Iterable, Optional, Sequence, Union
 import mistletoe.block_tokenizer as tokenizer
 from mistletoe import token, span_token
+from mistletoe import core_tokens
 from mistletoe.core_tokens import (
         follows,
         shift_whitespace,
@@ -118,7 +119,28 @@ class BlockToken(token.Token):
     repr_attributes: tuple[str, ...] = ("line_number",)
 
     def __init__(self, lines, tokenize_func):
-        self.children = tokenize_func(lines)
+        self.inline_matches: list[tuple[object, object]] = []
+        self.inline_dependencies: list[tuple[str, object]] = []
+        if tokenize_func is span_token.tokenize_inner:
+            # The inline source text of this leaf block.  Kept for tooling
+            # (see mistletoe.reference_index) that needs to map inline tokens
+            # back to their source positions.
+            self.inline_content = lines
+            previous_sink = core_tokens._inline_sink
+            previous_dependencies = core_tokens._inline_dependencies
+            sink: list[tuple[object, object]] = []
+            dependencies: list[tuple[str, object]] = []
+            core_tokens._inline_sink = sink
+            core_tokens._inline_dependencies = dependencies
+            try:
+                self.children = tokenize_func(lines)
+            finally:
+                core_tokens._inline_sink = previous_sink
+                core_tokens._inline_dependencies = previous_dependencies
+            self.inline_matches = sink
+            self.inline_dependencies = dependencies
+        else:
+            self.children = tokenize_func(lines)
 
     def __contains__(self, text):
         return any(text in child for child in self.children)
@@ -161,6 +183,7 @@ class Document(BlockToken):
         lines = [line if line.endswith('\n') else '{}\n'.format(line) for line in lines]
         self.footnotes: dict[str, tuple[str, str]] = {}
         self.line_number = 1
+        self.end_line_number: Optional[int] = None
         token._root_node = self
         self.children = tokenize(lines)
         token._root_node = None
@@ -263,10 +286,12 @@ class Quote(BlockToken):
     @classmethod
     def read(cls, lines):
         # first line
-        line = cls.convert_leading_tabs(next(lines).lstrip()).split('>', 1)[1]
+        raw_line = next(lines)
+        line = cls.convert_leading_tabs(raw_line.lstrip()).split('>', 1)[1]
         if len(line) > 0 and line[0] == ' ':
             line = line[1:]
         line_buffer = [line]
+        source_line_buffer = [lines.current_source_line()]
         start_line = lines.line_number()
 
         # set booleans
@@ -299,11 +324,14 @@ class Quote(BlockToken):
                 # lazy continuation, preserve whitespace
                 line_buffer.append(next_line)
             next(lines)
+            source_line_buffer.append(lines.current_source_line())
             next_line = lines.peek()
 
         # parse child block tokens
         Paragraph.parse_setext = False
-        parse_buffer = tokenizer.tokenize_block(line_buffer, _token_types, start_line=start_line, depth=lines.depth + 1)
+        parse_buffer = tokenizer.tokenize_block(
+            line_buffer, _token_types, start_line=start_line,
+            depth=lines.depth + 1, source_lines=source_line_buffer)
         Paragraph.parse_setext = True
         return parse_buffer
 
@@ -647,6 +675,7 @@ class ListItem(BlockToken):
     def read(cls, lines, prev_marker=None):
         next_marker = None
         line_buffer = []
+        source_line_buffer = []
 
         # first line
         line = next(lines)
@@ -670,6 +699,7 @@ class ListItem(BlockToken):
                 return (parse_buffer, indentation, prepend, leader, start_line), next_marker
         else:
             line_buffer.append(content)
+            source_line_buffer.append(lines.current_source_line())
 
         # loop over the following lines, looking for the end of the list item
         breaking_tokens = [t for t in lines.token_types if hasattr(t, 'check_interrupts_paragraph') and not t == List]
@@ -680,6 +710,7 @@ class ListItem(BlockToken):
                 if newline_count:
                     lines.backstep()
                     del line_buffer[-newline_count:]
+                    del source_line_buffer[-newline_count:]
                 break
 
             continuation = cls.parse_continuation(next_line, prepend)
@@ -691,6 +722,7 @@ class ListItem(BlockToken):
                     if newline_count:
                         lines.backstep()
                         del line_buffer[-newline_count:]
+                        del source_line_buffer[-newline_count:]
                     break
                 # ...or it's a new list item
                 marker_info = cls.parse_marker(next_line)
@@ -701,17 +733,21 @@ class ListItem(BlockToken):
                 if newline_count:
                     lines.backstep()
                     del line_buffer[-newline_count:]
+                    del source_line_buffer[-newline_count:]
                     break
                 continuation = next_line
 
             line_buffer.append(continuation)
             newline_count = newline_count + 1 if continuation == '\n' else 0
             next(lines)
+            source_line_buffer.append(lines.current_source_line())
             next_line = lines.peek()
 
         # block-level tokens are parsed here, so that footnotes can be
         # recognized before span-level parsing.
-        parse_buffer = tokenizer.tokenize_block(line_buffer, _token_types, start_line=start_line, depth=lines.depth + 1)
+        parse_buffer = tokenizer.tokenize_block(
+            line_buffer, _token_types, start_line=start_line,
+            depth=lines.depth + 1, source_lines=source_line_buffer)
         return (parse_buffer, indentation, prepend, leader, start_line), next_marker
 
 
@@ -831,9 +867,28 @@ class TableRow(BlockToken):
     def __init__(self, line, row_align=None, line_number=None):
         self.row_align = row_align or [None]
         self.line_number = line_number
-        cells = filter(None, self.split_pattern.split(line.strip()))
-        self.children = [TableCell(self.escaped_pipe_pattern.sub('\\1|', cell.strip()) if cell else '', align, line_number)
-                         for cell, align in zip_longest(cells, self.row_align)]
+        stripped_line = line.strip()
+        base = line.find(stripped_line) if stripped_line else 0
+        cells = []
+        cursor = 0
+        for match_obj in self.split_pattern.finditer(stripped_line):
+            cells.append((stripped_line[cursor:match_obj.start()], cursor))
+            cursor = match_obj.end()
+        cells.append((stripped_line[cursor:], cursor))
+        # Match the historical behavior of dropping empty (not whitespace-only) cells.
+        cells = [cell for cell in cells if cell[0] != '']
+        self.children = []
+        for cell, align in zip_longest(cells, self.row_align):
+            if cell is None:
+                cell_text, offset = '', 0
+            else:
+                cell_text, offset = cell
+            leading = len(cell_text) - len(cell_text.lstrip())
+            content = self.escaped_pipe_pattern.sub('\\1|', cell_text.strip()) if cell_text else ''
+            token = TableCell(content, align, line_number)
+            if cell_text:
+                token.source_start = base + offset + leading
+            self.children.append(token)
 
 
 class TableCell(BlockToken):
@@ -845,14 +900,17 @@ class TableCell(BlockToken):
 
     Attributes:
         align (bool): align option for current cell (default to None).
+        source_start (int or None): 0-based column where the cell content
+            starts in its source line, when known.
     """
     children: Iterable[span_token.SpanToken]
 
     repr_attributes = BlockToken.repr_attributes + ("align",)
 
-    def __init__(self, content, align=None, line_number=None):
+    def __init__(self, content, align=None, line_number=None, source_start=None):
         self.align = align
         self.line_number = line_number
+        self.source_start = source_start
         super().__init__(content, span_token.tokenize_inner)
 
 
@@ -875,14 +933,33 @@ class Footnote(BlockToken):
     @classmethod
     def read(cls, lines):
         line_buffer = []
+        block_start_line = lines.line_number() + 1
+        source_line_buffer = []
         next_line = lines.peek()
         while next_line is not None and next_line.strip() != '':
             line_buffer.append(next(lines))
+            source_line_buffer.append(lines.current_source_line())
             next_line = lines.peek()
         string = ''.join(line_buffer)
+        block_lines = string.splitlines(keepends=True)
+        prefixes = []
+        for position, entry in enumerate(source_line_buffer):
+            if entry is None or position >= len(block_lines):
+                prefixes.append(None)
+                continue
+            line_number, source_text = entry
+            body = block_lines[position].rstrip('\n')
+            found = source_text.find(body)
+            if found < 0:
+                found = source_text.find(body.lstrip('> \t'))
+            if found < 0:
+                found = len(source_text) - len(source_text.lstrip('> \t'))
+            prefixes.append((line_number, found))
         offset = 0
         matches = []
+        definitions = []
         while offset < len(string) - 1:
+            definition_start = offset
             match_info = cls.match_reference(string, offset)
             if match_info is None:
                 # backtrack the lines that have not been consumed
@@ -890,8 +967,49 @@ class Footnote(BlockToken):
                 break
             offset, match = match_info
             matches.append(match)
+            label_start = definition_start
+            while label_start < len(string) and string[label_start] == ' ':
+                label_start += 1
+            start_line, start_column = cls.line_column(string, label_start)
+            start_entry = cls._prefix_at(prefixes, start_line)
+            if start_entry is not None:
+                source_line, start_prefix = start_entry
+                start_column += start_prefix + 1
+            else:
+                source_line = block_start_line + start_line - 1
+                start_column += 1
+            end_index = offset - 1 if offset > 0 and string[offset - 1] == '\n' else offset
+            end_line, end_column = cls.line_column(string, end_index)
+            end_entry = cls._prefix_at(prefixes, end_line)
+            if end_entry is not None:
+                end_source_line, end_prefix = end_entry
+                end_column += end_prefix + 1
+            else:
+                end_source_line = block_start_line + end_line - 1
+                end_column += 1
+            definitions.append((
+                source_line, start_column, end_source_line, end_column, match,
+            ))
         cls.append_footnotes(matches, token._root_node)
+        if core_tokens._definition_recorder is not None:
+            for start_line, start_column, end_line, end_column, match in definitions:
+                core_tokens.record_definition(
+                    start_line, start_column, end_line, end_column, match)
         return matches or None
+
+    @staticmethod
+    def _prefix_at(prefixes, line_offset):
+        index = line_offset - 1
+        if 0 <= index < len(prefixes):
+            return prefixes[index]
+        return None
+
+    @staticmethod
+    def line_column(string, index):
+        """Return the 1-based line and 0-based column of ``index``."""
+        line = string.count('\n', 0, index) + 1
+        column = index - (string.rfind('\n', 0, index) + 1)
+        return line, column
 
     @classmethod
     def match_reference(cls, string, offset):
