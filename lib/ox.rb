@@ -77,3 +77,4 @@ require 'ox/sax'
 
 # C extension
 require 'ox/ox'
+require 'ox/cancellation_scheduler'
