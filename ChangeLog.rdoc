@@ -1,5 +1,11 @@
 = BinData Changelog
 
+== Unreleased
+
+* Added #preview to records using auto_call_delayed_io.  It lays out the
+  delayed writes into a sparse virtual volume without touching the real
+  output, returning the logical length and repeatable byte windows.
+
 == Version 3.0.1 (2026-09-27)
 
 * Fixed regression with anon classes. Thanks to Babar Al-Amin.

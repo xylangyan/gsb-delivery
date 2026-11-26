@@ -196,7 +196,14 @@ module BinData
         @wnbits  = 0
         @wval    = 0
         @wendian = nil
+
+        # Set when this io is the destination of a preview.  DelayedIO objects
+        # use this to tell preview writes apart from real writes.
+        @preview_session = nil
       end
+
+      # The preview session this io belongs to, or nil for a real write.
+      attr_accessor :preview_session
 
       # Allow transforming data in the output stream.
       # See +BinData::Buffer+ as an example.

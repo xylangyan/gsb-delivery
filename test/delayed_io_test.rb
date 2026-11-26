@@ -282,3 +282,209 @@ describe BinData::DelayedIO, "with multiple auto_call" do
     _(obj.snapshot).must_equal({a: 1, b: 2})
   end
 end
+
+describe BinData::DelayedIO, "with preview" do
+  K = 4294967296
+
+  class PreviewHandoverRecord < BinData::Record
+    auto_call_delayed_io
+
+    virtual :which
+    virtual :outer_enabled, initial_value: true
+    virtual :inner_offset, initial_value: K
+
+    choice :header, selection: :which do
+      # branch A
+      struct do
+        delayed_io :a_patch, read_abs_offset: 4 do
+          uint8 initial_value: 0xa1
+        end
+      end
+      # branch B
+      struct do
+        delayed_io :outer, read_abs_offset: K - 1, onlyif: -> { outer_enabled } do
+          uint8 initial_value: 0x31
+          delayed_io :inner, read_abs_offset: -> { inner_offset } do
+            uint8 initial_value: 0xb2
+          end
+        end
+        delayed_io :marker, read_abs_offset: K do
+          uint8 initial_value: 0xc3
+        end
+      end
+    end
+  end
+
+  def preview_window(preview)
+    preview.read(K - 2, 3)
+  end
+
+  it "returns the logical length and a readable window" do
+    obj = PreviewHandoverRecord.new(which: 1)
+    obj.header.marker
+
+    preview = obj.preview
+    _(preview.num_bytes).must_equal K + 1
+    _(preview_window(preview)).must_equal_binary "\x00\x31\xB2"
+  end
+
+  it "only back-fills the fields connected this time, in access order" do
+    obj = PreviewHandoverRecord.new(which: 1)
+    obj.header.outer
+    obj.header.outer.inner
+    obj.header.marker
+
+    preview = obj.preview
+    _(preview_window(preview)).must_equal_binary "\x00\x31\xC3"
+  end
+
+  it "does not write to the real volume" do
+    io = StringIO.new(("\x00" * 32).b)
+    io.seek(16)
+
+    obj = PreviewHandoverRecord.new(which: 0)
+    obj.write(io)
+    before = io.string.dup
+
+    obj.which = 1
+    obj.header.marker
+    obj.preview
+    _(io.string).must_equal before
+  end
+
+  it "honours onlyif at back-fill time" do
+    obj = PreviewHandoverRecord.new(which: 1)
+    obj.outer_enabled = false
+    obj.header.marker
+
+    preview = obj.preview
+    _(preview_window(preview)).must_equal_binary "\x00\x00\xC3"
+  end
+
+  it "reports a negative inner offset" do
+    obj = PreviewHandoverRecord.new(which: 1)
+    obj.inner_offset = -1
+    obj.header.marker
+
+    err = _ { obj.preview }.must_raise BinData::PreviewError
+    _(err.field.debug_name).must_equal "obj.header.outer.inner"
+    _(err.offset).must_equal(-1)
+  end
+
+  it "keeps an obtained preview readable after a failure" do
+    obj = PreviewHandoverRecord.new(which: 1)
+    obj.header.marker
+    good = obj.preview
+
+    obj.inner_offset = -1
+    _ { obj.preview }.must_raise BinData::PreviewError
+
+    _(preview_window(good)).must_equal_binary "\x00\x31\xB2"
+    _(preview_window(good)).must_equal_binary "\x00\x31\xB2"
+  end
+
+  it "is not changed by later previews or choice changes" do
+    obj = PreviewHandoverRecord.new(which: 0)
+    preview = obj.preview
+    _(preview.read(4, 1)).must_equal_binary "\xA1"
+
+    obj.which = 1
+    obj.header.marker
+    obj.preview
+    obj.preview
+
+    _(preview.read(4, 1)).must_equal_binary "\xA1"
+    _(preview.num_bytes).must_equal 5
+  end
+
+  it "keeps patching the real volume with a retained field" do
+    io = StringIO.new(("\x00" * 200).b)
+    io.seek(100)
+    io.write("\x00\x00\x00\xEE\xA1\xEE".b)
+    io.seek(100)
+
+    obj = PreviewHandoverRecord.new(which: 0)
+    obj.write(io)
+
+    a_patch = obj.header.a_patch
+    _(io.string.byteslice(103, 3)).must_equal_binary "\xEE\xA1\xEE".b
+
+    obj.which = 1
+    obj.header.marker
+    preview = obj.preview
+    _(io.string.byteslice(103, 3)).must_equal_binary "\xEE\xA1\xEE".b
+
+    a_patch.assign(0xA5)
+    a_patch.abs_offset = 5
+    a_patch.write_now!
+
+    _(io.string.byteslice(103, 3)).must_equal_binary "\xEE\xA1\xA5".b
+    _(preview_window(preview)).must_equal_binary "\x00\x31\xB2"
+  end
+end
+
+describe BinData::DelayedIO, "preview with overlapping writes" do
+  class PreviewOverlapRecord < BinData::Record
+    auto_call_delayed_io
+
+    virtual :which
+    choice :header, selection: :which do
+      struct do
+        delayed_io :a, read_abs_offset: 4 do
+          uint8 initial_value: 0xaa
+        end
+      end
+      struct do
+        delayed_io :early, read_abs_offset: K do
+          uint8 initial_value: 0x11
+        end
+        delayed_io :late, read_abs_offset: K do
+          uint8 initial_value: 0x22
+        end
+      end
+    end
+  end
+
+  it "lets the later write win" do
+    obj = PreviewOverlapRecord.new(which: 1)
+    _(obj.preview.read(K, 1)).must_equal_binary "\x22"
+  end
+
+  it "follows access order when fields overlap" do
+    obj = PreviewOverlapRecord.new(which: 1)
+    obj.header.late
+    obj.header.early
+
+    _(obj.preview.read(K, 1)).must_equal_binary "\x11"
+  end
+end
+
+describe BinData::DelayedIO, "preview is sparse" do
+  class SparsePreviewRecord < BinData::Record
+    auto_call_delayed_io
+    uint8 :a
+    delayed_io :far, read_abs_offset: 4294967296 do
+      uint8 initial_value: 0xff
+    end
+  end
+
+  it "reads unwritten regions as zero" do
+    obj = SparsePreviewRecord.new(a: 1, far: 2)
+    preview = obj.preview
+
+    _(preview.num_bytes).must_equal 4294967297
+    _(preview.read(1, 3)).must_equal_binary "\x00\x00\x00"
+    _(preview.read(4294967296, 1)).must_equal_binary "\x02"
+  end
+
+  it "exposes aliases for reading windows" do
+    obj = SparsePreviewRecord.new(a: 1, far: 2)
+    preview = obj.preview
+
+    _(preview.bytes(1, 1)).must_equal_binary "\x00"
+    _(preview.byte_window(4294967296, 1)).must_equal_binary "\x02"
+    _(preview[4294967296, 1]).must_equal_binary "\x02"
+    _(preview.length).must_equal preview.num_bytes
+  end
+end
+

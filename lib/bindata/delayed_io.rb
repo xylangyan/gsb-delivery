@@ -1,5 +1,6 @@
 require 'bindata/base'
 require 'bindata/dsl'
+require 'bindata/preview'
 
 module BinData
   # BinData declarations are evaluated in a single pass.
@@ -43,6 +44,27 @@ module BinData
   #   s = ReversePascalString.read("hello\x05")
   #   s.to_binary_s #=> "hello\x05"
   #
+  # == Previewing
+  #
+  # A record that uses +auto_call_delayed_io+ can lay out a preview of what it
+  # would write without touching the real output.  This is useful for checking
+  # the bytes that the delayed passes would place in the stream.
+  #
+  #   preview = record.preview
+  #   preview.num_bytes     #=> logical length of the previewed volume
+  #   preview.read(10, 4)   #=> bytes at offsets 10..13 (repeatable)
+  #
+  # A preview is a snapshot.  Changing the record, laying out another preview,
+  # or patching the real volume with #write_now! does not change an existing
+  # preview.  Unwritten regions read as zero and are kept sparse, so a volume
+  # with a very large offset can be previewed without materialising the gap.
+  #
+  # The preview follows the +choice+ branch that is actually written and only
+  # back-fills delayed_io objects that are connected to the output and not yet
+  # written.  Each object is evaluated with its +onlyif+ and current
+  # +abs_offset+ at back-fill time.  Inner delayed_io objects that only become
+  # connected while back-filling a struct take part in the same back-fill.
+  #
   #
   # == Parameters
   #
@@ -61,10 +83,12 @@ module BinData
     mandatory_parameters :read_abs_offset, :type
 
     def initialize_instance
-      @type       = get_parameter(:type).instantiate(nil, self)
-      @abs_offset = nil
-      @read_io    = nil
-      @write_io   = nil
+      @type            = get_parameter(:type).instantiate(nil, self)
+      @abs_offset      = nil
+      @read_io         = nil
+      @write_io        = nil
+      @has_write       = false
+      @preview_session = nil
     end
 
     def clear?
@@ -109,7 +133,16 @@ module BinData
     end
 
     def do_write(io) # :nodoc:
-      @write_io = io
+      if io.respond_to?(:preview_session) && io.preview_session
+        # A preview only connects this object if :onlyif allows it.  It must
+        # never disturb the real output, so the real write state is untouched.
+        if include_obj?
+          @preview_session = io.preview_session
+        end
+      else
+        @write_io  = io
+        @has_write = true
+      end
     end
 
     def do_num_bytes # :nodoc:
@@ -117,7 +150,11 @@ module BinData
     end
 
     def include_obj?
-      !has_parameter?(:onlyif) || eval_parameter(:onlyif)
+      return true unless has_parameter?(:onlyif)
+
+      condition = eval_parameter(:onlyif)
+      condition = condition.snapshot if BinData::Base === condition
+      condition ? true : false
     end
 
     # DelayedIO objects aren't read when #read is called.
@@ -136,10 +173,29 @@ module BinData
     # The writing is delayed until this method is called.
     def write_now!
       return unless include_obj?
-      raise IOError, "write to where?" unless @write_io
+      raise IOError, "write to where?" unless @has_write
 
       @write_io.seek_to_abs_offset(abs_offset)
       @type.do_write(@write_io)
+    end
+
+    # Was this object connected to the output of +session+'s preview?
+    def preview_connected_to?(session)
+      @preview_session.equal?(session)
+    end
+
+    # Back-fills this object into +session+'s output.  Writing the inner type
+    # connects any inner DelayedIO objects so that they can participate in the
+    # same back-fill.
+    def preview_write!(session)
+      return unless include_obj?
+
+      offset = abs_offset
+      raise PreviewError.new(self, offset) if offset.negative?
+
+      session.io.seek_to_abs_offset(offset)
+      @type.do_write(session.io)
+      session.io.flush
     end
   end
 
@@ -190,8 +246,52 @@ module BinData
         super(io) { top_level_get(:delayed_ios).each(&:write_now!) }
       end
 
+      # Lays out a preview of what this record would write without writing
+      # anything to the real output.
+      #
+      # Returns a BinData::Preview, which knows the logical length of the
+      # previewed volume and can repeatedly read byte windows from it.
+      #
+      # A preview follows the choice branch that is actually written this
+      # time and only back-fills delayed_io objects that are connected to the
+      # output and not yet written.  It never modifies the real output, so an
+      # existing DelayedIO object can still patch the real volume with
+      # #write_now!.
+      def preview
+        session = PreviewSession.new
+
+        session.visit(self)
+        do_write(session.io)
+        session.io.flush
+        preview_flush_delayed_ios(session)
+
+        BinData::Preview.new(session.volume.snapshot,
+                             session.volume.logical_length)
+      end
+      alias to_preview preview
+      alias preview_write preview
+
       def num_bytes
         to_binary_s.size
+      end
+
+      private
+
+      def preview_flush_delayed_ios(session)
+        loop do
+          progressed = false
+
+          top_level_get(:delayed_ios).dup.each do |delayed_io|
+            next if session.visited?(delayed_io)
+            next unless delayed_io.preview_connected_to?(session)
+
+            session.visit(delayed_io)
+            delayed_io.preview_write!(session)
+            progressed = true
+          end
+
+          break unless progressed
+        end
       end
     end
   end
