@@ -7,6 +7,16 @@ and this project adheres to [Break Versioning](https://www.taoensso.com/break-ve
 
 ## [Unreleased]
 
+### Added
+
+- `Dry::Transformer::Reissue::Planner`, a two-pass `combine` reconciliation
+  engine that attaches ordered ingredient lists and fingerprint-keyed quality
+  procedures, applies atomic patch batches (inserts, withdrawals, reorderings
+  and uniform rule segments) across immutable snapshots, and compresses the
+  reissue orders into contiguous ranges and equal-step arithmetic sequences
+- `Dry::Transformer::ArrayTransformations.reissue_ranges` for compressing
+  changed order numbers into ranges and arithmetic sequences
+
 ## [1.1.0] - unreleased
 
 ### Added

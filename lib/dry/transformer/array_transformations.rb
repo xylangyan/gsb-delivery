@@ -123,6 +123,24 @@ module Dry
         Combine.combine(array, mappings)
       end
 
+      # Compresses order numbers that need resending into contiguous ranges
+      # and equal-step arithmetic sequences.
+      #
+      # @example
+      #   fn = Dry::Transformer(:reissue_ranges)
+      #
+      #   fn.call [1, 2, 3, 7, 9, 11]
+      #   # => [1..3, (7..11).step(2)]
+      #
+      # @param [Array<Integer>] numbers the changed order numbers
+      #
+      # @return [Array<Range, Enumerator::ArithmeticSequence>]
+      #
+      # @api public
+      def self.reissue_ranges(numbers)
+        Reissue::RangeCompressor.compress(numbers)
+      end
+
       # Converts the array of hashes to array of values, extracted by given key
       #
       # @example
