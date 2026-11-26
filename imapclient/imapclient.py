@@ -1461,7 +1461,7 @@ class IMAPClient:
             args.append(to_bytes('"%s"' % datetime_to_INTERNALDATE(msg_time)))
         # Match imaplib's APPEND newline normalization. The message must always
         # be a literal, even when it contains only ASCII characters.
-        args.append(literal(imaplib.MapCRLF.sub(b"\r\n", to_bytes(msg))))
+        args.append(_append_message_literal(msg))
         typ, data = self._raw_command(b"APPEND", args, uid=False)
         self._checkok("append", typ, data)
         return data[0]
@@ -1476,6 +1476,9 @@ class IMAPClient:
         "date" with a datetime instance specifying the internal date to set.
         The keys "flags" and "date" are optional.
 
+        Message newlines are normalised to CRLF before the literal is sent,
+        matching :meth:`append`.
+
         Returns the APPEND response from the server.
         """
 
@@ -1486,9 +1489,9 @@ class IMAPClient:
                         yield to_bytes(seq_to_parenstr(m["flags"]))
                     if "date" in m:
                         yield to_bytes('"%s"' % datetime_to_INTERNALDATE(m["date"]))
-                    yield literal(to_bytes(m["msg"]))
+                    yield _append_message_literal(m["msg"])
                 else:
-                    yield literal(to_bytes(m))
+                    yield _append_message_literal(m)
 
         msgs = list(chunks())
 
@@ -1916,6 +1919,11 @@ def _normalise_sort_criteria(criteria, charset=None):
 
 class literal(bytes):
     """Hold message data that should always be sent as a literal."""
+
+
+def _append_message_literal(msg) -> literal:
+    data = imaplib.MapCRLF.sub(b"\r\n", to_bytes(msg))
+    return literal(data)
 
 
 _literal = literal  # old private name, kept for callers that imported it

@@ -1,0 +1,83 @@
+{
+  "tag": "tag",
+  "allow_reorder": false,
+  "fixtures": [
+    {
+      "name": "relay-a",
+      "literal_plus": false,
+      "label_width": 10,
+      "byte_edges": [160, 260],
+      "tiers": [
+        {"name": "tight", "burst_limit": 4096, "command_limit": 160},
+        {"name": "wide", "burst_limit": 65536, "command_limit": 260}
+      ],
+      "initial_tier": 0,
+      "transitions": {
+        "default": [0, 1],
+        "trigger": [1, 1],
+        "*": [0, 1]
+      }
+    },
+    {
+      "name": "relay-b",
+      "literal_plus": true,
+      "label_width": 10,
+      "byte_edges": [160, 260],
+      "tiers": [
+        {"name": "tight", "burst_limit": 4096, "command_limit": 160},
+        {"name": "wide", "burst_limit": 65536, "command_limit": 260}
+      ],
+      "initial_tier": 0,
+      "transitions": {
+        "default": [0, 1],
+        "trigger": [1, 1],
+        "*": [0, 1]
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "folder": "INBOX/Case",
+      "category": "default",
+      "messages": [
+        {
+          "source": "receipt-1-eml-1",
+          "length": 10,
+          "flags": [],
+          "date": "2024-01-01T00:00:00+08:00",
+          "attribution": "archive://case/1/1"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "folder": "INBOX/Case",
+      "category": "default",
+      "messages": [
+        {
+          "source": "receipt-2-eml-1",
+          "length": 10,
+          "flags": [],
+          "date": "2024-01-01T00:01:00+08:00",
+          "attribution": "archive://case/2/1"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "folder": "INBOX/Case",
+      "category": "trigger",
+      "predecessors": [2],
+      "messages": [
+        {
+          "source": "receipt-3-eml-1",
+          "length": 10,
+          "flags": [],
+          "date": "2024-01-01T00:02:00+08:00",
+          "attribution": "archive://case/3/1"
+        }
+      ]
+    }
+  ]
+}

@@ -490,6 +490,19 @@ class TestAppend(IMAPClientTest):
             b"APPEND", [b'"foobar"', b"msg1", b"msg2"], uid=False
         )
 
+    def test_multiappend_normalizes_newlines_like_append(self):
+        self.client._cached_capabilities = (b"MULTIAPPEND",)
+        self.client._raw_command = Mock()
+
+        self.client.multiappend("foobar", [b"header\n\nfirst\rsecond\r\n"])
+
+        arguments = self.client._raw_command.call_args.args[1]
+        message_literal = arguments[1]
+        self.assertEqual(
+            bytes(message_literal), b"header\r\n\r\nfirst\r\nsecond\r\n"
+        )
+        self.assertIsInstance(message_literal, literal)
+
     def test_multiappend_with_flags_and_internaldate(self):
         self.client._cached_capabilities = (b"MULTIAPPEND",)
         self.client._raw_command = Mock()
