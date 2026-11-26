@@ -3,6 +3,7 @@
 require 'strscan'
 require 'multi_json'
 require 'jsonpath/proxy'
+require 'jsonpath/delete_plan'
 require 'jsonpath/dig'
 require 'jsonpath/enumerable'
 require 'jsonpath/version'
@@ -137,6 +138,10 @@ class JsonPath
 
   def self.for(obj_or_str)
     Proxy.new(process_object(obj_or_str))
+  end
+
+  def self.delete_plan(document, operations, opts = {})
+    DeletePlan.build(document, operations, **opts)
   end
 
   private

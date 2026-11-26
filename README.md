@@ -253,6 +253,58 @@ o = JsonPath.for(json).
 # => {"candy" => "big turks"}
 ```
 
+#### Combining adjacent deletes
+
+When a cleanup list contains adjacent `delete` calls that address the same
+array, `JsonPath::DeletePlan` can combine them into one bracketed call. The
+planner only accepts a combination that leaves the same document at every
+marked handoff as running the original calls one at a time:
+
+```ruby
+json = '{"items":["A","B","C","D"]}'
+operations = ['$.items[1]', '$.items[0]']
+
+plan = JsonPath.delete_plan(json, operations)
+plan.calls        # => ["$.items[1,0]"]
+plan.call_count   # => 1
+
+plan.snapshots    # document at each handoff, after the planned calls
+plan.safe?        # => true
+```
+
+Merged calls keep JsonPath's native cleanup semantics, which run once per call
+rather than once per comma item. Because of that, some merges are not
+equivalent. This example is rejected because the empty object is removed only
+after the first call:
+
+```ruby
+json = '{"items":[{}, "A", "B", "C"]}'
+plan = JsonPath.delete_plan(json, ['$.items[2]', '$.items[0]'])
+plan.calls  # => ["$.items[2]", "$.items[0]"]
+
+replay = plan.rejections.first.replay
+replay[:document]          # => {"items"=>[{}, "A", "B", "C"]}
+replay[:merged_path]       # => "$.items[2,0]"
+replay[:expected_json]     # => {"items"=>["C"]}
+replay[:actual_json]       # => {"items"=>["A", "C"]}
+replay[:first_difference]  # => {:json=>{:path=>"$.items", :expected=>1, :actual=>2}, ...}
+replay[:attempted_calls]   # => ["$.items[2,0]"]
+```
+
+Handoffs are the operation boundaries at which the cleaned document is
+observed. Pass them with `:handoffs` (counted as the number of original
+operations already executed); the final handoff is included by default. Use
+`:check_final => false` to plan only up to explicit handoffs.
+
+`handoff_slots` and `expected_handoff_slots` expose the original slot of each
+surviving value, for example `"$.items[3]"`. These let callers verify that
+equal values which started in different positions were not confused.
+
+The planner uses the concrete manifest to verify each merge. When a segment has
+too many possible partitions for exhaustive checking, `:max_candidates` bounds
+the search. In that case the planner starts from the most merged shape and
+splits only groups whose handoff check fails.
+
 ### Fetch all paths
 
 To fetch all possible paths in given json, you can use `fetch_all_path`` method.
