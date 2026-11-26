@@ -6,6 +6,8 @@ from .dicttoolz import *
 
 from .recipes import *
 
+from .joinindex import join_rows, join_index
+
 from functools import partial, reduce
 
 sorted = sorted

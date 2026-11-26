@@ -97,6 +97,23 @@ Recipes
    countby
    partitionby
 
+Join lineage
+------------
+
+.. currentmodule:: toolz.joinindex
+
+.. autosummary::
+   join_rows
+   join_index
+   JoinIndex
+   JoinRow
+   JoinSpec
+   LineageSegment
+   RangeCounts
+   NewRangeCounts
+   LOST
+   ADDED
+
 Sandbox
 -------
 
@@ -112,6 +129,9 @@ Definitions
 -----------
 
 .. automodule:: toolz.itertoolz
+   :members:
+
+.. automodule:: toolz.joinindex
    :members:
 
 .. automodule:: toolz.recipes
