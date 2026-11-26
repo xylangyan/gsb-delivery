@@ -125,6 +125,7 @@ require "bson/true_class"
 require "bson/undefined"
 require "bson/vector"
 require "bson/version"
+require "bson/stream_cleaner"
 
 # If we are using JRuby, attempt to load the Java extensions, if we are using
 # MRI or Rubinius, attempt to load the C extensions.
