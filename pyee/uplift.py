@@ -7,6 +7,11 @@ from pyee.base import EventEmitter
 
 EMIT_WRAPPERS: dict[EventEmitter, Callable[[], None]] = {}
 
+# Maps each side of an uplifted pair to the other side, so that other
+# machinery (e.g. the delivery queue) can resolve the emit chain without
+# calling the wrapped `emit` itself.
+UPLIFT_PAIRS: dict[EventEmitter, EventEmitter] = {}
+
 
 def unwrap(event_emitter: EventEmitter) -> None:
     """Unwrap an uplifted EventEmitter, returning it to its prior state.
@@ -17,6 +22,40 @@ def unwrap(event_emitter: EventEmitter) -> None:
     """
     if event_emitter in EMIT_WRAPPERS:
         EMIT_WRAPPERS[event_emitter]()
+
+
+def uplift_partner(event_emitter: EventEmitter) -> EventEmitter | None:
+    """Return the emitter paired with `event_emitter` by `uplift`, if any.
+
+    Args:
+        event_emitter: Emitter whose uplift partner is looked up.
+
+    Returns:
+        The paired emitter, or `None` when `event_emitter` is not uplifted.
+    """
+    return UPLIFT_PAIRS.get(event_emitter)
+
+
+def uplift_emit_chain(event_emitter: EventEmitter) -> list[EventEmitter]:
+    """Return the emitters whose handlers run when `event_emitter` emits, in
+    execution order.
+
+    The emitter itself always comes first, matching the wrapped `emit`
+    installed by `uplift`, which prefers the emitter that `emit` was called
+    on before proxying to its partner.
+
+    Args:
+        event_emitter: Emitter whose emit chain is resolved.
+
+    Returns:
+        A list containing `event_emitter` and, when it is uplifted, its
+            partner emitter.
+    """
+    chain = [event_emitter]
+    partner = UPLIFT_PAIRS.get(event_emitter)
+    if partner is not None:
+        chain.append(partner)
+    return chain
 
 
 def _wrap(
@@ -65,11 +104,15 @@ def _wrap(
             del left.unwrap  # type: ignore
         cast(Any, left).emit = left_emit
 
+        UPLIFT_PAIRS.pop(left, None)
+        UPLIFT_PAIRS.pop(right, None)
+
         unwrap(right)
 
     cast(Any, left).emit = wrapped_emit
 
     EMIT_WRAPPERS[left] = unwrap_hook
+    UPLIFT_PAIRS[left] = right
     left.unwrap = _unwrap  # type: ignore
 
 

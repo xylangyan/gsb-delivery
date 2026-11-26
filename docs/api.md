@@ -36,6 +36,11 @@
 ### ::: pyee.uplift
 
 
+## pyee.delivery
+
+### ::: pyee.delivery
+
+
 ## pyee.cls
 
 ### ::: pyee.cls
