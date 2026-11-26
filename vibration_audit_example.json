@@ -1,0 +1,141 @@
+{
+  "archives": {
+    "old": {
+      "segments": [
+        {
+          "id": "near",
+          "count": 8,
+          "start": "9007199254740992",
+          "step": "1",
+          "literal": "integer"
+        },
+        {
+          "id": "zero-int",
+          "count": 1,
+          "start": "0",
+          "step": "0",
+          "literal": "integer",
+          "negative_zero": [
+            0
+          ]
+        },
+        {
+          "id": "u64",
+          "count": 2,
+          "start": "9223372036854775808",
+          "step": "9223372036854775807",
+          "literal": "integer"
+        }
+      ],
+      "shape": [
+        [
+          8,
+          [
+            1
+          ],
+          []
+        ],
+        2
+      ]
+    },
+    "new": {
+      "segments": [
+        {
+          "id": "near-offset",
+          "count": 8,
+          "start": "9007199254740993",
+          "step": "1",
+          "literal": "integer"
+        },
+        {
+          "id": "zero-decimal",
+          "count": 1,
+          "start": "0.0",
+          "step": "0",
+          "literal": {
+            "kind": "fixed",
+            "format": ".1f"
+          },
+          "negative_zero": [
+            0
+          ]
+        },
+        {
+          "id": "u-decimal",
+          "count": 2,
+          "start": "9223372036854775808.0",
+          "step": "0",
+          "literal": {
+            "kind": "fixed",
+            "format": ".1f"
+          }
+        }
+      ],
+      "shape": [
+        [
+          [
+            8
+          ],
+          1,
+          []
+        ],
+        [
+          2
+        ]
+      ]
+    }
+  },
+  "checks": [
+    {
+      "id": "near-2p53-d",
+      "type": "d",
+      "count": 8,
+      "left": {
+        "archive": "old",
+        "offset": 0,
+        "start": "9007199254740992",
+        "step": "1"
+      },
+      "right": {
+        "archive": "new",
+        "offset": 0,
+        "start": "9007199254740993",
+        "step": "1"
+      }
+    },
+    {
+      "id": "negative-zero-d",
+      "type": "d",
+      "count": 1,
+      "left": {
+        "archive": "old",
+        "offset": 8,
+        "start": "0",
+        "step": "0"
+      },
+      "right": {
+        "archive": "new",
+        "offset": 8,
+        "start": "0",
+        "step": "0"
+      }
+    },
+    {
+      "id": "unsigned-with-decimal-u",
+      "type": "u",
+      "count": 2,
+      "left": {
+        "archive": "old",
+        "offset": 9,
+        "start": "9223372036854775808",
+        "step": "9223372036854775807"
+      },
+      "right": {
+        "archive": "new",
+        "offset": 9,
+        "start": "9223372036854775808.0",
+        "step": "0"
+      }
+    }
+  ]
+}
