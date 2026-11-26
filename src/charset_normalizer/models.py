@@ -292,6 +292,25 @@ class CharsetMatches:
                     return result
         raise KeyError
 
+    def get(
+        self, item: int | str, default: CharsetMatch | None = None
+    ) -> CharsetMatch | None:
+        try:
+            return self[item]
+        except KeyError:
+            return default
+
+    def representative(self, encoding: str) -> CharsetMatch | None:
+        """Return the top-level match that owns ``encoding`` as an alias or submatch."""
+        return self.get(encoding)
+
+    def owner_of(self, encoding: str) -> CharsetMatch | None:
+        return self.representative(encoding)
+
+    @property
+    def primary(self) -> CharsetMatch | None:
+        return self.best()
+
     def __len__(self) -> int:
         return len(self._results)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from os import PathLike
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from .cd import (
     coherence_ratio,
@@ -54,6 +54,7 @@ def from_bytes(
     explain: bool = False,
     language_threshold: float = 0.1,
     enable_fallback: bool = True,
+    _shared_cache: dict[str, Any] | None = None,
 ) -> CharsetMatches:
     """
     Given a raw bytes sequence, return the best possibles charset usable to render str objects.
@@ -176,6 +177,12 @@ def from_bytes(
     mess_by_chunk: dict[str, float] = {}
     coherence_by_chunk: dict[tuple[str, str | None], CoherenceMatches] = {}
     explain_mess = explain and 1 <= len(cp_isolation) <= 2
+
+    shared_mess_cache: dict[tuple[Any, ...], float] | None = None
+    shared_coherence_cache: dict[tuple[Any, ...], CoherenceMatches] | None = None
+    if _shared_cache is not None:
+        shared_mess_cache = _shared_cache.setdefault("mess_ratio", {})
+        shared_coherence_cache = _shared_cache.setdefault("coherence_ratio", {})
 
     # When a definitive result (chaos=0.0 and good coherence) is found after testing
     # the prioritized encodings (ascii, utf_8), we can significantly reduce the remaining
@@ -422,9 +429,14 @@ def from_bytes(
                 md_chunks.append(chunk)
 
                 chunk_mess = mess_by_chunk.get(chunk)
+                mess_cache_key = (chunk, threshold, explain_mess)
+                if chunk_mess is None and shared_mess_cache is not None:
+                    chunk_mess = shared_mess_cache.get(mess_cache_key)
                 if chunk_mess is None:
                     chunk_mess = mess_ratio(chunk, threshold, explain_mess)
                     mess_by_chunk[chunk] = chunk_mess
+                    if shared_mess_cache is not None:
+                        shared_mess_cache[mess_cache_key] = chunk_mess
                 md_ratios.append(chunk_mess)
 
                 if chunk_mess >= threshold:
@@ -606,11 +618,16 @@ def from_bytes(
             for chunk in md_chunks:
                 key = (chunk, lg_inclusion)
                 chunk_languages = coherence_by_chunk.get(key)
+                shared_key = (chunk, language_threshold, lg_inclusion)
+                if chunk_languages is None and shared_coherence_cache is not None:
+                    chunk_languages = shared_coherence_cache.get(shared_key)
                 if chunk_languages is None:
                     chunk_languages = coherence_ratio(
                         chunk, language_threshold, lg_inclusion
                     )
                     coherence_by_chunk[key] = chunk_languages
+                    if shared_coherence_cache is not None:
+                        shared_coherence_cache[shared_key] = chunk_languages
                 cd_ratios.append(chunk_languages)
 
         # One chunk is already normalized, rounded and sorted by coherence_ratio.

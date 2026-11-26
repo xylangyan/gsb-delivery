@@ -24,6 +24,19 @@ from __future__ import annotations
 import logging
 
 from .api import from_bytes, from_fp, from_path, is_binary
+from .audit import (
+    AttrDict,
+    SiteAuditor,
+    SwitchSpec,
+    audit_configurations,
+    audit_volume,
+    compare_configurations,
+    first_candidate_difference,
+    inspect_configuration,
+    parse_switch_specs,
+    primary_and_representative,
+    switch_impact_report,
+)
 from .legacy import detect
 from .models import CharsetMatch, CharsetMatches
 from .utils import set_logging_handler
@@ -37,6 +50,17 @@ __all__ = (
     "detect",
     "CharsetMatch",
     "CharsetMatches",
+    "AttrDict",
+    "SwitchSpec",
+    "SiteAuditor",
+    "inspect_configuration",
+    "primary_and_representative",
+    "parse_switch_specs",
+    "first_candidate_difference",
+    "compare_configurations",
+    "audit_configurations",
+    "switch_impact_report",
+    "audit_volume",
     "__version__",
     "VERSION",
     "set_logging_handler",
