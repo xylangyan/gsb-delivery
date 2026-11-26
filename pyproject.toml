@@ -51,6 +51,7 @@ development = ["black", "flake8", "isort", "networkx", "pyshacl", "pytest"]
 [project.scripts]
 pyspdxtools = "spdx_tools.spdx.clitools.pyspdxtools:main"
 pyspdxtools3 = "spdx_tools.spdx3.clitools.pyspdxtools3:main"
+pyspdxtools_handoff = "spdx_tools.spdx.handoff.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/spdx/tools-python"
