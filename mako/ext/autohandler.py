@@ -29,6 +29,8 @@ import os
 import posixpath
 import re
 
+from mako import groups
+
 
 def autohandler(template, context, name="autohandler"):
     lookup = context.lookup
@@ -63,7 +65,9 @@ def autohandler(template, context, name="autohandler"):
 
 def _file_exists(lookup, path):
     psub = re.sub(r"^/", "", path)
-    for d in lookup.directories:
+    scope = groups.current_scope()
+    directories = lookup.directories if scope is None else scope.directories
+    for d in directories:
         if os.path.exists(d + "/" + psub):
             return True
     else:

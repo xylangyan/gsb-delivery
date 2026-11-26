@@ -4,6 +4,7 @@
 # This module is part of Mako and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
+from mako import groups
 from mako import util
 
 _cache_plugins = util.PluginLoader("mako.cache")
@@ -67,30 +68,100 @@ class Cache:
         if isinstance(template, str) and args:
             return
         self.template = template
-        self.id = template.module.__name__
+        self._id = template.module.__name__
         self.starttime = template.module._modified_time
         self._def_regions = {}
         self.impl = self._load_impl(self.template.cache_impl)
 
+    @property
+    def id(self):
+        scope = groups.current_scope()
+        if scope is None:
+            return self._id
+        return scope.cache_id(self._id)
+
+    @id.setter
+    def id(self, value):
+        self._id = value
+
     def _load_impl(self, name):
         return _cache_plugins.load(name)(self)
+
+    def _scope_from_context(self, context):
+        scope = getattr(context, "_mako_scope", None)
+        if scope is not None:
+            return scope
+        return groups.current_scope()
+
+    def _extract_scope(self, kw):
+        explicit = kw.pop("_mako_scope", None)
+        if groups.is_scope(explicit):
+            return explicit
+        for key, value in list(kw.items()):
+            if groups.is_scope(value):
+                kw.pop(key)
+                return value
+
+        lookup = getattr(self.template, "lookup", None)
+        resolver = getattr(lookup, "_mako_resolve_cache_scope", None)
+        if resolver is not None:
+            scope = resolver(kw)
+            if scope is not None:
+                return scope
+
+        for name in groups.SCOPE_KWARG_NAMES:
+            if name in kw:
+                value = kw.pop(name)
+                if groups.is_scope(value):
+                    return value
+                scope = groups.as_scope(value)
+                if scope is not None and scope.directories:
+                    return scope
+        for name in groups.DIRECTORY_KWARG_NAMES:
+            if name in kw:
+                directories = kw.pop(name)
+                return groups.TemplateDirectoryGroup(directories=directories)
+        return groups.current_scope()
+
+    def _scope_key(self, key, scope):
+        if scope is None:
+            return key
+        return scope.cache_key(key)
+
+    def _run_scoped(self, scope, fn):
+        with groups.scope_context(scope):
+            return fn()
 
     def get_or_create(self, key, creation_function, **kw):
         """Retrieve a value from the cache, using the given creation function
         to generate a new value."""
 
-        return self._ctx_get_or_create(key, creation_function, None, **kw)
+        scope = self._extract_scope(kw)
+        return self._run_scoped(
+            scope,
+            lambda: self._ctx_get_or_create(
+                key, creation_function, None, **kw
+            ),
+        )
 
     def _ctx_get_or_create(self, key, creation_function, context, **kw):
         """Retrieve a value from the cache, using the given creation function
         to generate a new value."""
 
+        scope = self._scope_from_context(context)
+        key = self._scope_key(key, scope)
+
         if not self.template.cache_enabled:
             return creation_function()
 
-        return self.impl.get_or_create(
-            key, creation_function, **self._get_cache_kw(kw, context)
-        )
+        def invoke():
+            return self.impl.get_or_create(
+                key,
+                creation_function,
+                **self._get_cache_kw(kw, context),
+            )
+
+        return self._run_scoped(scope, invoke)
 
     def set(self, key, value, **kw):
         r"""Place a value in the cache.
@@ -101,7 +172,14 @@ class Cache:
 
         """
 
-        self.impl.set(key, value, **self._get_cache_kw(kw, None))
+        scope = self._extract_scope(kw)
+        key = self._scope_key(key, scope)
+        self._run_scoped(
+            scope,
+            lambda: self.impl.set(
+                key, value, **self._get_cache_kw(kw, None)
+            ),
+        )
 
     put = set
     """A synonym for :meth:`.Cache.set`.
@@ -120,7 +198,12 @@ class Cache:
          values will use that same backend.
 
         """
-        return self.impl.get(key, **self._get_cache_kw(kw, None))
+        scope = self._extract_scope(kw)
+        key = self._scope_key(key, scope)
+        return self._run_scoped(
+            scope,
+            lambda: self.impl.get(key, **self._get_cache_kw(kw, None)),
+        )
 
     def invalidate(self, key, **kw):
         r"""Invalidate a value in the cache.
@@ -132,7 +215,14 @@ class Cache:
          values will use that same backend.
 
         """
-        self.impl.invalidate(key, **self._get_cache_kw(kw, None))
+        scope = self._extract_scope(kw)
+        key = self._scope_key(key, scope)
+        self._run_scoped(
+            scope,
+            lambda: self.impl.invalidate(
+                key, **self._get_cache_kw(kw, None)
+            ),
+        )
 
     def invalidate_body(self):
         """Invalidate the cached content of the "body" method for this
@@ -162,6 +252,24 @@ class Cache:
 
         self.invalidate(name, __M_defname=name)
 
+    def for_scope(self, scope):
+        """Return a cache proxy bound to one template directory scope."""
+
+        if not groups.is_scope(scope):
+            lookup = getattr(self.template, "lookup", None)
+            finder = getattr(lookup, "_find_scope", None)
+            if finder is not None:
+                found = finder(scope)
+                if found is not None:
+                    scope = found
+            if not groups.is_scope(scope):
+                scope = groups.coerce_scope(scope)
+        return ScopedCache(self, scope)
+
+    for_group = for_scope
+    for_release = for_scope
+    bind = for_scope
+
     def _get_cache_kw(self, kw, context):
         defname = kw.pop("__M_defname", None)
         if not defname:
@@ -177,6 +285,25 @@ class Cache:
             tmpl_kw = tmpl_kw.copy()
             tmpl_kw.setdefault("context", context)
         return tmpl_kw
+
+
+class ScopedCache:
+    """Cache proxy that adds one fixed template directory scope."""
+
+    def __init__(self, cache, scope):
+        self._cache = cache
+        self._scope = scope
+
+    def __getattr__(self, name):
+        attribute = getattr(self._cache, name)
+        if not callable(attribute):
+            return attribute
+
+        def wrapper(*args, **kwargs):
+            kwargs.setdefault("_mako_scope", self._scope)
+            return attribute(*args, **kwargs)
+
+        return wrapper
 
 
 class CacheImpl:

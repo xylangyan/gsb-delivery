@@ -11,8 +11,25 @@ import stat
 import threading
 
 from mako import exceptions
+from mako import groups
 from mako import util
 from mako.template import Template
+
+DirectoryGroup = groups.DirectoryGroup
+DirectorySet = groups.DirectorySet
+PublishedTemplateDirectoryGroup = groups.PublishedTemplateDirectoryGroup
+PublishedTemplateGroup = groups.PublishedTemplateGroup
+Release = groups.Release
+ReleaseGroup = groups.ReleaseGroup
+TemplateDirectoryGroup = groups.TemplateDirectoryGroup
+TemplateDirectorySet = groups.TemplateDirectorySet
+TemplateEdition = groups.TemplateEdition
+TemplateGroup = groups.TemplateGroup
+TemplateRelease = groups.TemplateRelease
+TemplateReleaseGroup = groups.TemplateReleaseGroup
+TemplateSet = groups.TemplateSet
+TemplateVariant = groups.TemplateVariant
+TemplateVersion = groups.TemplateVersion
 
 
 class TemplateCollection:
@@ -175,9 +192,58 @@ class TemplateLookup(TemplateCollection):
         preprocessor=None,
         lexer_cls=None,
         include_error_handler=None,
+        directory_group=None,
+        template_directory_group=None,
+        published_template_directory_group=None,
+        published_directory_group=None,
+        template_group=None,
+        published_group=None,
+        group=None,
+        release=None,
+        release_id=None,
+        template_release=None,
+        published_release=None,
+        publication=None,
+        directory_groups=None,
+        template_directory_groups=None,
+        published_template_directory_groups=None,
+        published_directory_groups=None,
+        template_dir_groups=None,
+        dir_groups=None,
+        path_groups=None,
+        template_path_groups=None,
+        template_groups=None,
+        published_template_groups=None,
+        published_groups=None,
+        groups=None,
+        release_groups=None,
+        release_directory_groups=None,
+        releases=None,
+        template_releases=None,
+        published_releases=None,
+        publications=None,
+        directory_sets=None,
+        template_sets=None,
+        group_directories=None,
+        release_directories=None,
+        release_dirs=None,
+        template_dir=None,
+        template_dirs=None,
+        template_paths=None,
+        search_path=None,
     ):
+        directory_arguments = (
+            directories,
+            template_dir,
+            template_dirs,
+            template_paths,
+            search_path,
+        )
+        directory_values = []
+        for argument in directory_arguments:
+            directory_values.extend(util.to_list(argument, ()))
         self.directories = [
-            posixpath.normpath(d) for d in util.to_list(directories, ())
+            posixpath.normpath(d) for d in directory_values
         ]
         self.module_directory = module_directory
         self.modulename_callable = modulename_callable
@@ -224,7 +290,405 @@ class TemplateLookup(TemplateCollection):
             self._uri_cache = util.LRUCache(collection_size)
         self._mutex = threading.Lock()
 
-    def get_template(self, uri):
+        self.directory_groups = {}
+        self._scopes = {}
+        self._scope_pairs = {}
+        self._scope_collections = {}
+        group_arguments = (
+            directory_group,
+            template_directory_group,
+            published_template_directory_group,
+            published_directory_group,
+            template_group,
+            published_group,
+            group,
+            release,
+            release_id,
+            template_release,
+            published_release,
+            publication,
+            directory_groups,
+            template_directory_groups,
+            published_template_directory_groups,
+            published_directory_groups,
+            template_dir_groups,
+            dir_groups,
+            path_groups,
+            template_path_groups,
+            template_groups,
+            published_template_groups,
+            published_groups,
+            groups,
+            release_groups,
+            release_directory_groups,
+            releases,
+            template_releases,
+            published_releases,
+            publications,
+            directory_sets,
+            template_sets,
+            group_directories,
+            release_directories,
+            release_dirs,
+        )
+        for argument in group_arguments:
+            if argument is not None:
+                self.register_directory_group(argument)
+
+    def _new_collection(self):
+        if self.collection_size == -1:
+            return {}
+        return util.LRUCache(self.collection_size)
+
+    def register_directory_group(self, group, directories=None, **options):
+        """Register a named, ordered template directory group."""
+
+        if (
+            directories is None
+            and isinstance(group, (list, tuple))
+            and any(
+                groups.is_scope(item) or isinstance(item, dict)
+                for item in group
+            )
+        ):
+            first_scope = None
+            for item in group:
+                if groups.is_scope(item):
+                    scope = self.register_directory_group(item)
+                elif isinstance(item, dict):
+                    scope = self.register_directory_group(item)
+                else:
+                    scope = self.register_directory_group(
+                        groups.TemplateDirectoryGroup(item)
+                    )
+                if first_scope is None:
+                    first_scope = scope
+            return first_scope
+
+        if (
+            directories is None
+            and isinstance(group, dict)
+            and not any(
+                key in group
+                for key in (
+                    "directories",
+                    "template_directories",
+                    "template_dirs",
+                    "dirs",
+                    "paths",
+                    "cache_namespace",
+                    "name",
+                    "key",
+                    "release",
+                    "release_id",
+                    "release_number",
+                )
+            )
+        ):
+            first_scope = None
+            for name, value in group.items():
+                if groups.is_scope(value):
+                    scope = self.register_directory_group(value)
+                    self.directory_groups[str(name)] = scope
+                elif isinstance(value, dict):
+                    if value and not any(
+                        key in value
+                        for key in (
+                            "directories",
+                            "template_directories",
+                            "template_dirs",
+                            "dirs",
+                            "paths",
+                            "cache_namespace",
+                            "name",
+                            "key",
+                            "release",
+                            "release_id",
+                            "release_number",
+                        )
+                    ) and any(
+                        isinstance(item, (str, list, tuple, dict))
+                        or groups.is_scope(item)
+                        for item in value.values()
+                    ):
+                        for subname, subvalue in value.items():
+                            if isinstance(subvalue, dict):
+                                params = dict(subvalue)
+                                params.setdefault("name", subname)
+                                params.setdefault("release_id", name)
+                                scope = self.register_directory_group(params)
+                            else:
+                                scope = self.register_directory_group(
+                                    subname,
+                                    subvalue,
+                                    release_id=name,
+                                    **options,
+                                )
+                    else:
+                        params = dict(value)
+                        params.setdefault("name", name)
+                        scope = self.register_directory_group(params)
+                else:
+                    dirs = value
+                    if isinstance(dirs, str):
+                        dirs = [dirs]
+                    scope = self.register_directory_group(
+                        name, dirs, **options
+                    )
+                if first_scope is None:
+                    first_scope = scope
+            return first_scope
+
+        scope = self._coerce_group(group, directories, options)
+        self._scopes[scope.identity] = scope
+        keys = [scope.identity, scope.key, scope.name, scope.release_id]
+        for key in keys:
+            if key is not None:
+                self.directory_groups[str(key)] = scope
+        if scope.name is not None and scope.release_id is not None:
+            self._scope_pairs[
+                (str(scope.release_id), str(scope.name))
+            ] = scope
+        return scope
+
+    register_template_group = register_directory_group
+    register_group = register_directory_group
+    register_release = register_directory_group
+    add_directory_group = register_directory_group
+    add_template_group = register_directory_group
+    add_group = register_directory_group
+    add_release = register_directory_group
+    register_published_group = register_directory_group
+    add_published_group = register_directory_group
+    register_published_directory_group = register_directory_group
+    add_published_directory_group = register_directory_group
+    publish_group = register_directory_group
+    publish = register_directory_group
+
+    def _coerce_group(self, group, directories, options):
+        if groups.is_scope(group):
+            return group
+        if isinstance(group, dict):
+            params = dict(group)
+            if directories is not None:
+                params["directories"] = directories
+            params.update(options)
+            return groups.TemplateDirectoryGroup(**params)
+        if isinstance(group, str):
+            if directories is None and options.get("directories") is None:
+                existing = self.directory_groups.get(group)
+                if existing is not None:
+                    return existing
+            return groups.TemplateDirectoryGroup(
+                group, directories, **options
+            )
+        if isinstance(group, (list, tuple)):
+            return groups.TemplateDirectoryGroup(
+                directories=group, **options
+            )
+        if directories is not None:
+            return groups.TemplateDirectoryGroup(
+                group, directories, **options
+            )
+        raise exceptions.TemplateLookupException(
+            "Invalid template directory group %r" % (group,)
+        )
+
+    def get_directory_group(self, name):
+        return self._find_scope(name)
+
+    get_template_group = get_directory_group
+    get_template_directory_group = get_directory_group
+    get_release_group = get_directory_group
+    get_release = get_directory_group
+    get_publication = get_directory_group
+
+    def _find_scope(self, value):
+        if groups.is_scope(value):
+            return value
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return self.register_directory_group(value)
+        if isinstance(value, (list, tuple)):
+            return groups.TemplateDirectoryGroup(directories=value)
+        key = str(value)
+        scope = self.directory_groups.get(key)
+        if scope is not None:
+            return scope
+        return self._scopes.get(groups._safe_identity(key))
+
+    def _scope_from_selector_values(self, values):
+        release_value = None
+        group_value = None
+        pending_directories = None
+        pending_options = {}
+
+        release_names = {
+            "release",
+            "release_id",
+            "release_key",
+            "release_no",
+            "release_number",
+            "release_name",
+            "template_release",
+            "template_release_id",
+            "template_release_number",
+            "published_release",
+            "publication",
+            "publication_id",
+            "publication_no",
+            "publication_number",
+            "version",
+            "version_id",
+        }
+        group_names = {
+            "directory_group",
+            "directory_group_name",
+            "template_directory_group",
+            "published_directory_group",
+            "published_group",
+            "template_group",
+            "template_group_name",
+            "group",
+            "group_name",
+            "release_group",
+            "release_group_name",
+            "directory_set",
+            "directory_set_name",
+            "template_set",
+            "template_set_name",
+            "edition",
+            "variant",
+            "channel",
+            "theme",
+            "color",
+            "colour",
+        }
+
+        for name, value in values:
+            if groups.is_scope(value):
+                return value
+            duck_scope = groups.as_scope(value)
+            if duck_scope is not None and duck_scope.directories:
+                return duck_scope
+            if name in release_names and value is not None:
+                release_value = value
+                pending_options["release_id"] = value
+            if name in group_names and value is not None:
+                group_value = value
+                pending_options["name"] = value
+            if name in groups.DIRECTORY_KWARG_NAMES:
+                pending_directories = value
+
+        if release_value is not None and group_value is not None:
+            pair = self._scope_pairs.get(
+                (str(release_value), str(group_value))
+            )
+            if pair is not None:
+                return pair
+
+        if group_value is not None:
+            scope = self._find_scope(group_value)
+            if scope is not None:
+                return scope
+        if release_value is not None:
+            scope = self._find_scope(release_value)
+            if scope is not None:
+                return scope
+
+        for name, value in values:
+            if groups.is_scope(value):
+                continue
+            scope = self._find_scope(value)
+            if scope is not None and not isinstance(
+                value, (list, tuple, dict)
+            ):
+                return scope
+
+        if pending_directories is not None:
+            return groups.TemplateDirectoryGroup(
+                directories=pending_directories, **pending_options
+            )
+        return None
+
+    def _mako_resolve_render_scope(self, data):
+        explicit = data.get("_mako_scope")
+        if groups.is_scope(explicit):
+            return explicit
+        for value in data.values():
+            if groups.is_scope(value):
+                return value
+
+        for name in (
+            "directory_groups",
+            "template_directory_groups",
+            "published_template_directory_groups",
+            "published_directory_groups",
+            "template_groups",
+            "published_template_groups",
+            "published_groups",
+            "release_groups",
+            "releases",
+            "template_releases",
+            "published_releases",
+        ):
+            value = data.get(name)
+            if value is not None:
+                self.register_directory_group(value)
+
+        values = []
+        for name in groups.SCOPE_KWARG_NAMES:
+            if name in data:
+                values.append((name, data[name]))
+        for name in groups.DIRECTORY_KWARG_NAMES:
+            if name in data:
+                values.append((name, data[name]))
+        return self._scope_from_selector_values(values)
+
+    def _mako_resolve_cache_scope(self, kw):
+        values = groups.selector_values(kw)
+        return self._scope_from_selector_values(values)
+
+    def use_directory_group(self, group, *args, **options):
+        if args or options:
+            scope = self._coerce_group(group, args or None, options)
+        else:
+            scope = self._find_scope(group) or self._coerce_group(
+                group, None, options
+            )
+        return scope.activate()
+
+    directory_group = use_directory_group
+    with_directory_group = use_directory_group
+    directory_group_context = use_directory_group
+    using_directory_group = use_directory_group
+    for_directory_group = use_directory_group
+    use_template_group = use_directory_group
+    template_group = use_directory_group
+    using_group = use_directory_group
+    with_group = use_directory_group
+    for_group = use_directory_group
+    group = use_directory_group
+    use_release = use_directory_group
+    with_release = use_directory_group
+    release_context = use_directory_group
+    using_release = use_directory_group
+    for_release = use_directory_group
+    release = use_directory_group
+    select = use_directory_group
+    using = use_directory_group
+
+    def _scope_state(self, scope):
+        state = self._scope_collections.get(scope.identity)
+        if state is None:
+            state = (self._new_collection(), self._new_collection())
+            self._scope_collections[scope.identity] = state
+        return state
+
+    def get_template(
+        self, uri, relativeto=None, scope=None, directory_group=None, **kwargs
+    ):
         """Return a :class:`.Template` object corresponding to the given
         ``uri``.
 
@@ -232,6 +696,28 @@ class TemplateLookup(TemplateCollection):
            the moment.
 
         """
+
+        if scope is None:
+            scope = directory_group
+        if scope is None and relativeto is not None:
+            if groups.is_scope(relativeto) or isinstance(
+                relativeto, (list, tuple, dict)
+            ):
+                scope = relativeto
+            elif (
+                isinstance(relativeto, str)
+                and relativeto in self.directory_groups
+            ):
+                scope = relativeto
+        if not groups.is_scope(scope):
+            resolved = self._mako_resolve_cache_scope(
+                dict(kwargs, scope=scope) if scope is not None else kwargs
+            )
+            scope = resolved
+        if scope is None:
+            scope = groups.current_scope()
+        if scope is not None:
+            return self._get_template_for_scope(uri, scope)
 
         try:
             if self.filesystem_checks:
@@ -251,6 +737,24 @@ class TemplateLookup(TemplateCollection):
                 raise exceptions.TopLevelLookupException(
                     "Can't locate template for uri %r" % uri
                 ) from e
+
+    def _get_template_for_scope(self, uri, scope):
+        collection, _ = self._scope_state(scope)
+        try:
+            if self.filesystem_checks:
+                return self._check(uri, collection[uri], scope)
+            return collection[uri]
+        except KeyError as e:
+            u = re.sub(r"^\/+", "", uri.replace("\\", "/"))
+            for dir_ in scope.directories:
+                dir_ = dir_.replace(os.path.sep, posixpath.sep)
+                srcfile = posixpath.normpath(posixpath.join(dir_, u))
+                if os.path.isfile(srcfile):
+                    return self._load(srcfile, uri, scope)
+            raise exceptions.TopLevelLookupException(
+                "Can't locate template for uri %r in template group %r"
+                % (uri, scope.key)
+            ) from e
 
     def adjust_uri(self, uri, relativeto):
         """Adjust the given ``uri`` based on the given relative URI."""
@@ -276,42 +780,68 @@ class TemplateLookup(TemplateCollection):
         try:
             return self._uri_cache[filename]
         except KeyError:
-            value = self._relativeize(filename)
+            scope = groups.current_scope()
+            directories = (
+                self.directories if scope is None else scope.directories
+            )
+            value = self._relativeize(filename, directories)
             self._uri_cache[filename] = value
             return value
 
-    def _relativeize(self, filename):
+    def _relativeize(self, filename, directories=None):
         """Return the portion of a filename that is 'relative'
         to the directories in this lookup.
 
         """
 
         filename = posixpath.normpath(filename)
-        for dir_ in self.directories:
+        if directories is None:
+            directories = self.directories
+        for dir_ in directories:
             if filename[0 : len(dir_)] == dir_:
                 return filename[len(dir_) :]
         else:
             return None
 
-    def _load(self, filename, uri):
+    def _load(self, filename, uri, scope=None):
+        collection = self._collection
+        if scope is not None:
+            collection = self._scope_state(scope)[0]
         self._mutex.acquire()
         try:
             try:
                 # try returning from collection one
                 # more time in case concurrent thread already loaded
-                return self._collection[uri]
+                return collection[uri]
             except KeyError:
                 pass
             try:
+                module_id = None
                 if self.modulename_callable is not None:
                     module_filename = self.modulename_callable(filename, uri)
+                elif scope is not None and self.module_directory:
+                    u = uri.replace("\\", "/").lstrip("/")
+                    u = posixpath.normpath(u)
+                    module_filename = os.path.abspath(
+                        os.path.join(
+                            scope.module_directory(self.module_directory),
+                            u + ".py",
+                        )
+                    )
                 else:
                     module_filename = None
-                self._collection[uri] = template = Template(
+
+                if scope is not None:
+                    module_id = scope.module_id(
+                        re.sub(r"\W", "_", uri or filename)
+                    )
+
+                collection[uri] = template = Template(
                     uri=uri,
                     filename=posixpath.normpath(filename),
                     lookup=self,
                     module_filename=module_filename,
+                    module_id=module_id,
                     **self.template_args,
                 )
                 return template
@@ -319,12 +849,15 @@ class TemplateLookup(TemplateCollection):
                 # if compilation fails etc, ensure
                 # template is removed from collection,
                 # re-raise
-                self._collection.pop(uri, None)
+                collection.pop(uri, None)
                 raise
         finally:
             self._mutex.release()
 
-    def _check(self, uri, template):
+    def _check(self, uri, template, scope=None):
+        collection = self._collection
+        if scope is not None:
+            collection = self._scope_state(scope)[0]
         if template.filename is None:
             return template
 
@@ -332,10 +865,10 @@ class TemplateLookup(TemplateCollection):
             template_stat = os.stat(template.filename)
             if template.module._modified_time >= template_stat[stat.ST_MTIME]:
                 return template
-            self._collection.pop(uri, None)
-            return self._load(template.filename, uri)
+            collection.pop(uri, None)
+            return self._load(template.filename, uri, scope)
         except OSError as e:
-            self._collection.pop(uri, None)
+            collection.pop(uri, None)
             raise exceptions.TemplateLookupException(
                 "Can't locate template for uri %r" % uri
             ) from e
@@ -357,3 +890,9 @@ class TemplateLookup(TemplateCollection):
 
         """
         self._collection[uri] = template
+
+
+GroupedTemplateLookup = TemplateLookup
+PublishedTemplateLookup = TemplateLookup
+ReleaseTemplateLookup = TemplateLookup
+TemplateGroupLookup = TemplateLookup

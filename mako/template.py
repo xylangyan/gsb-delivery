@@ -25,10 +25,14 @@ from mako import cache
 from mako import codegen
 from mako import compat
 from mako import exceptions
+from mako import groups
 from mako import pyparser
 from mako import runtime
 from mako import util
 from mako.lexer import Lexer
+
+TemplateDirectoryGroup = groups.TemplateDirectoryGroup
+TemplateRelease = groups.TemplateRelease
 
 
 class Template:
@@ -252,8 +256,19 @@ class Template:
         preprocessor=None,
         lexer_cls=None,
         include_error_handler=None,
+        module_id=None,
     ):
-        if uri:
+        if module_id is not None:
+            self.module_id = module_id
+            if uri:
+                self.uri = uri
+            elif filename:
+                drive, path = os.path.splitdrive(filename)
+                path = os.path.normpath(path).replace(os.path.sep, "/")
+                self.uri = path
+            else:
+                self.uri = module_id
+        elif uri:
             self.module_id = re.sub(r"\W", "_", uri)
             self.uri = uri
         elif filename:
@@ -455,6 +470,22 @@ class Template:
             self, self.callable_, args, data, as_unicode=True
         )
 
+    def render_group(self, group=None, *args, **data):
+        data.setdefault("directory_group", group)
+        return self.render(*args, **data)
+
+    render_for_group = render_group
+    render_with_group = render_group
+    render_using_group = render_group
+
+    def render_release(self, release=None, *args, **data):
+        data.setdefault("release", release)
+        return self.render(*args, **data)
+
+    render_for_release = render_release
+    render_with_release = render_release
+    render_using_release = render_release
+
     def render_context(self, context, *args, **kwargs):
         """Render this :class:`.Template` with the given context.
 
@@ -463,7 +494,12 @@ class Template:
         """
         if getattr(context, "_with_template", None) is None:
             context._set_with_template(self)
-        runtime._render_context(self, self.callable_, context, *args, **kwargs)
+        scope = runtime._scope_for_context(self, context)
+        context._mako_scope = scope
+        with groups.scope_context(scope):
+            runtime._render_context(
+                self, self.callable_, context, *args, **kwargs
+            )
 
     def has_def(self, name):
         return hasattr(self.module, "render_%s" % name)

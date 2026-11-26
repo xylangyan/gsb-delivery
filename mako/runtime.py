@@ -13,6 +13,7 @@ import sys
 
 from mako import compat
 from mako import exceptions
+from mako import groups
 from mako import util
 
 
@@ -33,6 +34,7 @@ class Context:
         self._kwargs = data.copy()
         self._with_template = None
         self._outputting_as_unicode = None
+        self._mako_scope = None
         self.namespaces = {}
 
         # "capture" function which proxies to the
@@ -154,6 +156,7 @@ class Context:
         c._kwargs = self._kwargs
         c._with_template = self._with_template
         c._outputting_as_unicode = self._outputting_as_unicode
+        c._mako_scope = getattr(self, "_mako_scope", None)
         c.namespaces = self.namespaces
         c.caller_stack = self.caller_stack
         return c
@@ -826,8 +829,10 @@ def _lookup_template(context, uri, relativeto):
             % context._with_template.uri
         )
     uri = lookup.adjust_uri(uri, relativeto)
+    scope = getattr(context, "_mako_scope", None)
     try:
-        return lookup.get_template(uri)
+        with groups.scope_context(scope):
+            return lookup.get_template(uri)
     except exceptions.TopLevelLookupException as e:
         raise exceptions.TemplateLookupException(
             str(compat.exception_as())
@@ -850,28 +855,87 @@ def _populate_self_namespace(context, template, self_ns=None):
     return (template.callable_, context)
 
 
+def _scope_for_render(template, data):
+    lookup = getattr(template, "lookup", None)
+    resolver = getattr(lookup, "_mako_resolve_render_scope", None)
+    if resolver is not None:
+        scope = resolver(data)
+        if scope is not None:
+            return scope
+    return groups.scope_from_data(data)
+
+
+def _scope_for_context(template, context):
+    scope = getattr(context, "_mako_scope", None)
+    if scope is not None:
+        return scope
+
+    data = getattr(context, "_data", None)
+    if data:
+        scope = _scope_for_render(template, data)
+        if scope is not None:
+            return scope
+
+    lookup = getattr(template, "lookup", None)
+    for name in groups.SCOPE_KWARG_NAMES:
+        value = getattr(context, name, None)
+        if value is None:
+            continue
+        if groups.is_scope(value):
+            return value
+        finder = getattr(lookup, "_find_scope", None)
+        if finder is not None:
+            scope = finder(value)
+            if scope is not None:
+                return scope
+        scope = groups.coerce_scope(value)
+        if scope is not None and scope.directories:
+            return scope
+
+    return groups.current_scope()
+
+
 def _render(template, callable_, args, data, as_unicode=False):
     """create a Context and return the string
     output of the given template and template callable."""
 
-    if as_unicode:
-        buf = util.FastEncodingBuffer()
-    else:
-        buf = util.FastEncodingBuffer(
-            encoding=template.output_encoding, errors=template.encoding_errors
-        )
-    context = Context(buf, **data)
-    context._outputting_as_unicode = as_unicode
-    context._set_with_template(template)
+    scope = _scope_for_render(template, data) or groups.current_scope()
+    scope_token = _current_scope_token(scope)
 
-    _render_context(
-        template,
-        callable_,
-        context,
-        *args,
-        **_kwargs_for_callable(callable_, data),
-    )
-    return context._pop_buffer().getvalue()
+    try:
+        if as_unicode:
+            buf = util.FastEncodingBuffer()
+        else:
+            buf = util.FastEncodingBuffer(
+                encoding=template.output_encoding,
+                errors=template.encoding_errors,
+            )
+        context = Context(buf, **data)
+        context._outputting_as_unicode = as_unicode
+        context._mako_scope = scope
+        context._set_with_template(template)
+
+        _render_context(
+            template,
+            callable_,
+            context,
+            *args,
+            **_kwargs_for_callable(callable_, data),
+        )
+        return context._pop_buffer().getvalue()
+    finally:
+        _reset_current_scope(scope_token)
+
+
+def _current_scope_token(scope):
+    if scope is None:
+        return None
+    return groups._current_scope.set(scope)
+
+
+def _reset_current_scope(token):
+    if token is not None:
+        groups._current_scope.reset(token)
 
 
 def _kwargs_for_callable(callable_, data):
