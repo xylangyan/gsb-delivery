@@ -8,6 +8,7 @@ module Hanami
     # @see Hanami::Utils::ClassAttribute::ClassMethods
     module ClassAttribute
       require "hanami/utils/class_attribute/attributes"
+      require "hanami/utils/class_attribute/trial"
 
       # @api private
       def self.included(base)
@@ -95,6 +96,7 @@ module Hanami
           subclass.class_eval do
             @__class_attributes = ca
           end
+          Trial.current&.register(subclass, ca)
 
           super
         end
@@ -102,9 +104,19 @@ module Hanami
         private
 
         # Class accessor for class attributes.
+        #
+        # While a trial window is open on the current fiber, reads and writes
+        # are routed to the window's isolated copy.
+        #
         # @api private
+        #
+        # @see Hanami::Utils::ClassAttribute::Trial
         def class_attributes
-          @__class_attributes
+          if (frame = Trial.current)
+            frame.fetch(self)
+          else
+            @__class_attributes
+          end
         end
       end
     end

@@ -9,6 +9,8 @@ and this project adheres to [Break Versioning](https://www.taoensso.com/break-ve
 
 ### Added
 
+- `Hanami::Utils::ClassAttribute.trial` to preview class attribute changes inside a fiber-local trial window without affecting the values read outside of it. Windows can be nested: a nested window merges into the enclosing one when it ends normally and rolls back when it raises.
+
 ### Changed
 
 - To be consistent, lambdas and callables in callbacks no longer enforce function arity (just like procs/blocks). (@ziggythehamster in #421)

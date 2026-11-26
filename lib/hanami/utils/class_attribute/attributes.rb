@@ -28,6 +28,12 @@ module Hanami
           @attributes.fetch(key, nil)
         end
 
+        # @since 3.0.1
+        # @api private
+        def each(&block)
+          @attributes.each(&block)
+        end
+
         # @since 2.0.0
         # @api private
         def dup
