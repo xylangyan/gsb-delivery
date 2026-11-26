@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+import time
 import warnings
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import wraps
 from inspect import (
@@ -29,6 +31,13 @@ from typing import (
 import tenacity as _t
 
 from ._config import CONFIG, _Config, _Testing
+from ._ticket import (
+    RetryTicket,
+    TicketCancelled,
+    TicketExpired,
+    TicketRejected,
+    current_ticket,
+)
 from .exceptions import TryAgain
 from .instrumentation._data import RetryDetails, guess_name
 
@@ -67,6 +76,112 @@ ExcOrBackoffHook: TypeAlias = (
 
 # Attribute used to store custom backoff in RetryCallState
 _CUSTOM_BACKOFF_ATTR = "_stamina_custom_backoff"
+_CURRENT_TICKET_REQUEST: ContextVar[object | None] = ContextVar(
+    "_stamina_current_ticket_request", default=None
+)
+
+
+def _coerce_ticket(
+    ticket: object | None,
+) -> RetryTicket | None:
+    if ticket is None:
+        ticket = current_ticket()
+
+    if isinstance(ticket, RetryTicket):
+        return ticket
+
+    if isinstance(ticket, (tuple, list)):
+        return RetryTicket(*ticket)
+
+    if isinstance(ticket, dict):
+        return RetryTicket(**ticket)
+
+    if callable(ticket):
+        produced = ticket()
+        return _coerce_ticket(produced)
+
+    return None
+
+
+def _ticket_option(
+    explicit: object | None, kwargs: dict[str, object], *names: str
+) -> object | None:
+    if explicit is not None:
+        return explicit
+
+    for name in names:
+        if name in kwargs:
+            return kwargs.pop(name)
+
+    for key, value in list(kwargs.items()):
+        if isinstance(value, RetryTicket):
+            kwargs.pop(key)
+            return value
+        if any(token in key.lower() for token in ("ticket", "budget")):
+            if value is None:
+                continue
+            coerced = _coerce_ticket(value)
+            if coerced is not None:
+                kwargs.pop(key)
+                return coerced
+
+    return None
+
+
+def _lane_option(
+    explicit: str | None, kwargs: dict[str, object]
+) -> str | None:
+    if explicit is not None:
+        return explicit
+
+    names = (
+        "lane",
+        "source",
+        "source_name",
+        "route",
+        "route_name",
+        "channel",
+        "stream",
+        "collector",
+        "worker",
+        "owner",
+        "key",
+        "label",
+        "tag",
+    )
+    for name in names:
+        value = kwargs.pop(name, None)
+        if isinstance(value, str):
+            return value
+
+    for key, value in list(kwargs.items()):
+        normalized = key.lower()
+        if isinstance(value, str) and any(
+            token in normalized
+            for token in ("lane", "source", "route", "channel", "collector")
+        ):
+            kwargs.pop(key)
+            return value
+
+    return None
+
+
+def _priority_option(
+    explicit: object | None, kwargs: dict[str, object]
+) -> object | None:
+    if explicit is not None:
+        return explicit
+
+    for name in ("priority", "ticket_priority", "priority_level", "level"):
+        if name in kwargs:
+            return kwargs.pop(name)
+
+    for key, value in list(kwargs.items()):
+        if "priority" in key.lower():
+            kwargs.pop(key)
+            return value
+
+    return None
 
 
 class _TenacityBackoffCallbackAdapter:
@@ -127,6 +242,9 @@ def retry_context(
     wait_exp_base: float = 2,
     *,
     name: str = "<context block>",
+    ticket: RetryTicket | Callable[[], RetryTicket] | None = None,
+    priority: object | None = None,
+    lane: str | None = None,
 ) -> _RetryContextIterator:
     """
     Iterator that yields context managers that can be used to retry code
@@ -157,6 +275,9 @@ def retry_context(
         name=name,
         args=(),
         kw={},
+        ticket=ticket,
+        ticket_priority=priority,
+        ticket_lane=lane,
     )
 
 
@@ -262,6 +383,9 @@ class RetryKWs(TypedDict):
     wait_jitter: float | dt.timedelta
     wait_exp_base: float
     name: str
+    ticket: object | None
+    priority: object | None
+    lane: str | None
 
 
 class BaseRetryingCaller:
@@ -284,7 +408,27 @@ class BaseRetryingCaller:
         wait_exp_base: float = 2,
         *,
         name: str = "<context block>",
+        ticket: object | None = None,
+        priority: object | None = None,
+        lane: str | None = None,
+        **ticket_aliases: object,
     ):
+        ticket = _ticket_option(
+            ticket,
+            ticket_aliases,
+            "retry_ticket",
+            "continuation_ticket",
+            "continuation",
+            "resume_ticket",
+            "resume",
+            "batch_ticket",
+            "batch",
+            "quota",
+            "budget",
+            "retry_budget",
+        )
+        lane = _lane_option(lane, ticket_aliases)
+        priority = _priority_option(priority, ticket_aliases)
         self._context_kws = {
             "attempts": attempts,
             "timeout": timeout,
@@ -293,6 +437,9 @@ class BaseRetryingCaller:
             "wait_jitter": wait_jitter,
             "wait_exp_base": wait_exp_base,
             "name": name,
+            "ticket": ticket,
+            "priority": priority,
+            "lane": lane,
         }
 
     def __repr__(self) -> str:
@@ -300,6 +447,10 @@ class BaseRetryingCaller:
             f"{k}={self._context_kws[k]!r}"  # type: ignore[literal-required]
             for k in sorted(self._context_kws)
             if k != "on"
+            and not (
+                k in {"ticket", "priority", "lane"}
+                and self._context_kws[k] is None  # type: ignore[literal-required]
+            )
             and not (
                 k == "name" and self._context_kws["name"] == "<context block>"
             )
@@ -551,6 +702,10 @@ class _RetryContextIterator:
         "_name",
         "_t_a_retrying",
         "_t_kw",
+        "_ticket",
+        "_ticket_lane",
+        "_ticket_priority",
+        "_timeout",
         "_wait_exp_base",
         "_wait_initial",
         "_wait_jitter",
@@ -563,6 +718,10 @@ class _RetryContextIterator:
     _kw: dict[str, object]
 
     _attempts: int | None
+    _ticket: object | None
+    _ticket_priority: object | None
+    _ticket_lane: str | None
+    _timeout: float | None
     _wait_jitter: float
     _wait_initial: float
     _wait_max: float
@@ -581,6 +740,9 @@ class _RetryContextIterator:
         name: str,
         args: tuple[object, ...],
         kw: dict[str, object],
+        ticket: object | None = None,
+        ticket_priority: object | None = None,
+        ticket_lane: str | None = None,
     ) -> _RetryContextIterator:
         if (
             isinstance(on, type) and issubclass(on, BaseException)
@@ -613,6 +775,10 @@ class _RetryContextIterator:
             _args=args,
             _kw=kw,
             _attempts=attempts,
+            _ticket=ticket,
+            _ticket_priority=ticket_priority,
+            _ticket_lane=ticket_lane,
+            _timeout=timeout,
             _wait_jitter=wait_jitter,
             _wait_initial=wait_initial,
             _wait_max=wait_max,
@@ -678,24 +844,46 @@ class _RetryContextIterator:
 
             return
 
-        before_attempt, before_sleep = _make_hook_callbacks(
-            self._name, CONFIG, self._args, self._kw
+        ticket = _coerce_ticket(self._ticket)
+        before_attempt, before_sleep, sync_sleep, _ = _make_hook_callbacks(
+            self._name,
+            CONFIG,
+            self._args,
+            self._kw,
+            ticket=ticket,
+            ticket_priority=self._ticket_priority,
+            ticket_lane=self._ticket_lane,
+            timeout=self._timeout,
         )
 
         for r in _t.Retrying(
             before=before_attempt,
             before_sleep=before_sleep,
+            sleep=sync_sleep,
             **self._apply_maybe_test_mode_to_tenacity_kw(CONFIG.testing),
         ):
             yield Attempt(r, self._backoff_for_attempt_number)
 
     def __aiter__(self) -> AsyncIterator[Attempt]:
         if CONFIG.is_active:
-            before_attempt, before_sleep = _make_hook_callbacks(
-                self._name, CONFIG, self._args, self._kw
+            ticket = _coerce_ticket(self._ticket)
+            (
+                before_attempt,
+                before_sleep,
+                _,
+                async_sleep,
+            ) = _make_hook_callbacks(
+                self._name,
+                CONFIG,
+                self._args,
+                self._kw,
+                ticket=ticket,
+                ticket_priority=self._ticket_priority,
+                ticket_lane=self._ticket_lane,
+                timeout=self._timeout,
             )
             self._t_a_retrying = _t.AsyncRetrying(
-                sleep=_smart_sleep,
+                sleep=async_sleep,
                 before=before_attempt,
                 before_sleep=before_sleep,
                 **self._apply_maybe_test_mode_to_tenacity_kw(CONFIG.testing),
@@ -812,13 +1000,32 @@ def _compute_backoff(
         return max_backoff
 
 
-def _make_hook_callbacks(
+def _raise_original_ticket_failure(ticket_request: object) -> None:
+    original = getattr(ticket_request, "original_exception", None)
+    if original is None:
+        return
+
+    cause = original.__cause__
+    if cause is not None:
+        raise original from cause
+    raise original from None
+
+
+def _make_hook_callbacks(  # noqa: C901
     name: str,
     config: _Config,
     args: tuple[object, ...],
     kw: dict[str, object],
+    *,
+    ticket: RetryTicket | None = None,
+    ticket_priority: object | None = None,
+    ticket_lane: str | None = None,
+    timeout: float | None = None,
 ) -> tuple[
-    Callable[[_t.RetryCallState], None], Callable[[_t.RetryCallState], None]
+    Callable[[_t.RetryCallState], None],
+    Callable[[_t.RetryCallState], None],
+    Callable[[float], None],
+    Callable[[float], Awaitable[None]],
 ]:
     """
     Create the `before_attempt` and `before_sleep` callbacks for one retry run.
@@ -832,12 +1039,34 @@ def _make_hook_callbacks(
     hook_cms: list[AbstractContextManager[None]] = []
     last_idle_for = 0.0
 
-    def before_attempt(_: _t.RetryCallState) -> None:
+    def close_hook_contexts() -> None:
         while hook_cms:
             hook_cms.pop().__exit__(None, None, None)
 
+    def before_attempt(_: _t.RetryCallState) -> None:
+        close_hook_contexts()
+
     def before_sleep(rcs: _t.RetryCallState) -> None:
         nonlocal last_idle_for
+
+        ticket_request = None
+        if ticket is not None:
+            original_exc = (
+                rcs.outcome.exception() if rcs.outcome is not None else None
+            )
+            deadline = None
+            if timeout is not None and CONFIG.testing is None:
+                deadline = rcs.start_time + timeout
+
+            ticket_request = ticket.quote(
+                lane=ticket_lane or name,
+                seconds=rcs.upcoming_sleep,
+                priority=ticket_priority,
+                failed_at=rcs.outcome_timestamp,
+                deadline=deadline,
+                original_exception=original_exc,
+            )
+            _CURRENT_TICKET_REQUEST.set(ticket_request)
 
         wait_for = rcs.idle_for - last_idle_for
 
@@ -851,20 +1080,64 @@ def _make_hook_callbacks(
             kwargs=kw,
         )
 
-        process_details = config.process_details
-        if process_details is not None:
-            details = process_details(details)
+        try:
+            process_details = config.process_details
+            if process_details is not None:
+                details = process_details(details)
 
-        for hook in config.on_retry:
-            maybe_cm = hook(details)
+            for hook in config.on_retry:
+                maybe_cm = hook(details)
 
-            if isinstance(maybe_cm, AbstractContextManager):
-                maybe_cm.__enter__()
-                hook_cms.append(maybe_cm)
+                if isinstance(maybe_cm, AbstractContextManager):
+                    maybe_cm.__enter__()
+                    hook_cms.append(maybe_cm)
+        except BaseException:
+            if ticket_request is not None:
+                ticket.cancel(ticket_request.id, reason="retry-hook-failed")
+            close_hook_contexts()
+            raise
 
         last_idle_for = rcs.idle_for
 
-    return before_attempt, before_sleep
+    def sync_sleep(delay: float) -> None:
+        ticket_request = _CURRENT_TICKET_REQUEST.get()
+        if ticket is None or ticket_request is None:
+            time.sleep(delay)
+            return
+
+        try:
+            ticket.wait(ticket_request)  # type: ignore[arg-type]
+        except TicketCancelled:
+            close_hook_contexts()
+            raise
+        except (TicketExpired, TicketRejected):
+            close_hook_contexts()
+            _raise_original_ticket_failure(ticket_request)
+            raise
+        except BaseException:
+            close_hook_contexts()
+            raise
+
+    async def async_sleep(delay: float) -> None:
+        ticket_request = _CURRENT_TICKET_REQUEST.get()
+        if ticket is None or ticket_request is None:
+            await _smart_sleep(delay)
+            return
+
+        try:
+            await ticket.wait_async(ticket_request)  # type: ignore[arg-type]
+        except TicketCancelled:
+            close_hook_contexts()
+            raise
+        except (TicketExpired, TicketRejected):
+            close_hook_contexts()
+            _raise_original_ticket_failure(ticket_request)
+            raise
+        except BaseException:
+            close_hook_contexts()
+            raise
+
+    return before_attempt, before_sleep, sync_sleep, async_sleep
 
 
 def _make_stop(*, attempts: int | None, timeout: float | None) -> _t.stop_base:
@@ -896,6 +1169,11 @@ def retry(  # noqa: C901
     wait_max: float | dt.timedelta = 5.0,
     wait_jitter: float | dt.timedelta = 1.0,
     wait_exp_base: float = 2,
+    name: str | None = None,
+    ticket: object | None = None,
+    priority: object | None = None,
+    lane: str | None = None,
+    **ticket_aliases: object,
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     r"""
     Retry if one of configured exceptions are raised.
@@ -1003,6 +1281,19 @@ def retry(  # noqa: C901
         If a backoff would end after *timeout*, *stamina* gives up right away.
         Before, it waited past *timeout* and attempted once more.
     """
+    ticket = _ticket_option(
+        ticket,
+        ticket_aliases,
+        "retry_ticket",
+        "continuation_ticket",
+        "resume_ticket",
+        "batch_ticket",
+        "budget",
+        "retry_budget",
+    )
+    lane = _lane_option(lane, ticket_aliases)
+    priority = _priority_option(priority, ticket_aliases)
+
     retry_ctx = _RetryContextIterator.from_params(
         on=on,
         attempts=attempts,
@@ -1014,16 +1305,19 @@ def retry(  # noqa: C901
         name="<unknown>",
         args=(),
         kw={},
+        ticket=ticket,
+        ticket_priority=priority,
+        ticket_lane=lane,
     )
 
     def retry_decorator(wrapped: Callable[P, T]) -> Callable[P, T]:  # noqa: C901
-        name = guess_name(wrapped)
+        decorated_name = name or guess_name(wrapped)
 
         if isgeneratorfunction(wrapped):
 
             @wraps(wrapped)
             def sync_gen_inner(*args: P.args, **kw: P.kwargs) -> T:  # type: ignore[misc]
-                for attempt in retry_ctx.with_name(name, args, kw):
+                for attempt in retry_ctx.with_name(decorated_name, args, kw):
                     with attempt:
                         return (yield from wrapped(*args, **kw))
 
@@ -1033,7 +1327,9 @@ def retry(  # noqa: C901
 
             @wraps(wrapped)
             async def async_gen_inner(*args: P.args, **kw: P.kwargs) -> T:  # type: ignore[misc]
-                async for attempt in retry_ctx.with_name(name, args, kw):
+                async for attempt in retry_ctx.with_name(
+                    decorated_name, args, kw
+                ):
                     with attempt:
                         agen = wrapped(*args, **kw)
                         try:
@@ -1070,7 +1366,7 @@ def retry(  # noqa: C901
 
             @wraps(wrapped)  # noqa: RET503
             def sync_inner(*args: P.args, **kw: P.kwargs) -> T:  # type: ignore[return]
-                for attempt in retry_ctx.with_name(name, args, kw):
+                for attempt in retry_ctx.with_name(decorated_name, args, kw):
                     with attempt:
                         return wrapped(*args, **kw)
 
@@ -1078,7 +1374,7 @@ def retry(  # noqa: C901
 
         @wraps(wrapped)  # noqa: RET503
         async def async_inner(*args: P.args, **kw: P.kwargs) -> T:  # type: ignore[return]
-            async for attempt in retry_ctx.with_name(name, args, kw):
+            async for attempt in retry_ctx.with_name(decorated_name, args, kw):
                 with attempt:
                     return await wrapped(*args, **kw)  # type: ignore[no-any-return]
 
