@@ -1,7 +1,7 @@
 import collections.abc
 import itertools
 from functools import wraps
-from copy import copy
+from copy import deepcopy
 import inspect
 
 
@@ -72,12 +72,12 @@ class Slicerator(object):
         if indices is None and length is None:
             try:
                 length = len(ancestor)
-                indices = list(range(length))
             except TypeError:
                 raise ValueError("The length parameter is required in this "
                                  "case because len(ancestor) is not valid.")
+            indices = range(length)
         elif indices is None:
-            indices = list(range(length))
+            indices = range(length)
         elif length is None:
             try:
                 length = len(indices)
@@ -193,7 +193,11 @@ class Slicerator(object):
 
     @property
     def indices(self):
-        # Advancing indices won't affect this new copy of self._indices.
+        # A sequence can be re-read from the start at will, so hand it back
+        # untouched. Anything else needs a tee so that advancing the returned
+        # iterator won't affect this new copy of self._indices.
+        if isinstance(self._indices, collections.abc.Sequence):
+            return self._indices
         indices, self._indices = itertools.tee(iter(self._indices))
         return indices
 
@@ -232,7 +236,7 @@ class Slicerator(object):
             rel_indices, new_length = key_to_indices(key, len(self))
             if new_length is None:
                 return (self[k] for k in rel_indices)
-            indices = _index_generator(rel_indices, self.indices)
+            indices = _compose_indices(rel_indices, self.indices)
             return Slicerator(self._ancestor, indices, new_length,
                               self._propagate_attrs)
 
@@ -300,7 +304,7 @@ def key_to_indices(key, length):
             # The key is a list of in-range values. Check if they are in range.
             if any(_k < -length or _k >= length for _k in key):
                 raise IndexError("Keys out of range")
-            rel_indices = ((_k if _k >= 0 else length + _k) for _k in key)
+            rel_indices = [_k if _k >= 0 else length + _k for _k in key]
             return rel_indices, new_length
 
     # other cases: it's possibly a number
@@ -328,31 +332,81 @@ def _index_generator(new_indices, old_indices):
 
     The point of all this trouble is that this is done lazily, returning
     a generator without actually looping through the inputs."""
-    # Use iter() to be safe. On a generator, this returns an identical ref.
     new_indices = iter(new_indices)
-    n = next(new_indices)
-    last_n = None
-    done = False
-    while True:
-        old_indices_, old_indices = itertools.tee(iter(old_indices))
-        for i, o in enumerate(old_indices_):
-            # If new_indices is not strictly monotonically increasing, break
-            # and start again from the beginning of old_indices.
-            if last_n is not None and n <= last_n:
-                last_n = None
-                break
-            if done:
+    try:
+        n = next(new_indices)
+    except StopIteration:
+        # An empty window maps to nothing; do not ask the source for a value.
+        return
+
+    if isinstance(old_indices, collections.abc.Sequence):
+        # Random access is cheap, so repeated and descending positions can be
+        # resolved directly without walking the source from the start.
+        while True:
+            yield old_indices[n]
+            try:
+                n = next(new_indices)
+            except StopIteration:
                 return
-            if i == n:
-                last_n = n
-                try:
-                    n = next(new_indices)
-                except StopIteration:
-                    done = True
-                    # Don't stop yet; we still have one last thing to yield.
-                yield o
-            else:
-                continue
+
+    # Streaming case: consume old_indices on demand, caching values already
+    # seen so that non-monotonic new_indices can look back without forcing a
+    # second read of the source.
+    old_stream = iter(old_indices)
+    cache = []
+    while True:
+        while len(cache) <= n:
+            try:
+                cache.append(next(old_stream))
+            except StopIteration:
+                raise IndexError("Key out of range")
+        yield cache[n]
+        try:
+            n = next(new_indices)
+        except StopIteration:
+            return
+
+
+class _ComposedIndices(collections.abc.Sequence):
+    """A lazily composed index: ``inner[outer[i]]`` for each position ``i``.
+
+    Both layers stay in their own reference frame, so a sheet that has been
+    sliced many times is still represented by a handful of ranges. Keeping
+    the layer structure (rather than flattening it to a materialized list)
+    lets positions be resolved one at a time, which is what makes very long
+    sheets tractable."""
+
+    def __init__(self, outer, inner):
+        self._outer = outer
+        self._inner = inner
+        self._len = len(outer)
+
+    def __len__(self):
+        return self._len
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return [self[k] for k in range(*key.indices(self._len))]
+        if key < 0:
+            key += self._len
+        if not 0 <= key < self._len:
+            raise IndexError("Key out of range")
+        return self._inner[self._outer[key]]
+
+    def __iter__(self):
+        for i in self._outer:
+            yield self._inner[i]
+
+    def __repr__(self):
+        return "ComposedIndices({0!r}, {1!r})".format(self._outer, self._inner)
+
+
+def _compose_indices(new_indices, old_indices):
+    """Compose two index layers, staying lazy or streaming as appropriate."""
+    if (isinstance(new_indices, collections.abc.Sequence) and
+            isinstance(old_indices, collections.abc.Sequence)):
+        return _ComposedIndices(new_indices, old_indices)
+    return _index_generator(new_indices, old_indices)
 
 
 class Pipeline(object):
@@ -442,9 +496,15 @@ class Pipeline(object):
                          "'last'.")
 
     def _get(self, key):
-        # We need to copy here: else any _proc_func that acts inplace would
-        # change the ancestor value.
-        return self._proc_func(*(copy(a[key]) for a in self._ancestors))
+        # Copy the data before processing: else any _proc_func that acts
+        # inplace would change the ancestor value. A single memo shared by
+        # all ancestors preserves aliasing between them (two ancestors that
+        # refer to the same object stay linked in the copy), so inplace
+        # changes cannot leak back into the original or into unrelated
+        # positions that alias the same inner object.
+        memo = {}
+        items = [deepcopy(a[key], memo) for a in self._ancestors]
+        return self._proc_func(*items)
 
     def __repr__(self):
         anc_str = ", ".join(type(a).__name__ for a in self._ancestors)
@@ -720,7 +780,11 @@ class SliceableAttribute(object):
 
     @property
     def indices(self):
-        # Advancing indices won't affect this new copy of self._indices.
+        # A sequence can be re-read from the start at will, so hand it back
+        # untouched. Anything else needs a tee so that advancing the returned
+        # iterator won't affect this new copy of self._indices.
+        if isinstance(self._indices, collections.abc.Sequence):
+            return self._indices
         indices, self._indices = itertools.tee(iter(self._indices))
         return indices
 

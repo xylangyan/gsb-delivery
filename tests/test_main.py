@@ -551,3 +551,105 @@ def test_pipeline_propagate_attrs():
         pass
     else:
         raise AssertionError("attr2 should not exist")
+
+
+def test_empty_slices_are_empty():
+    # An empty window must yield nothing, even when composed with other slices
+    # or fancy indices. It must not stop unexpectedly.
+    assert list(v[0:0]) == []
+    assert list(v[2:][0:0]) == []
+    assert list(v[::2][:0]) == []
+    assert list(v[4:][[]]) == []
+    assert list(v[(i for i in [])]) == []
+
+
+def test_nested_fancy_matches_list():
+    # Fancy indices keep their order when composed with a slice: repeated,
+    # descending, and negative positions all refer to the sliced frame.
+    slice1 = v[4:]
+    assert_letters_equal(slice1[[5, 0, 5, 0]], list('jeje'))
+    assert_letters_equal(slice1[[-1, 0, 0]], list('jee'))
+    assert_letters_equal(slice1[::2][[2, 0, -1]], list('iei'))
+
+
+def test_pipeline_does_not_mutate_ancestor():
+    # A process that acts in place receives a copy, so the ancestor is
+    # unchanged after reads.
+    frames = [{'i': i, 'adjust': []} for i in range(5)]
+
+    @pipeline
+    def note(frame):
+        frame['adjust'].append(frame['i'])
+        return (frame['i'], len(frame['adjust']))
+
+    s = Slicerator(frames)
+    p = note(s)
+    assert p[2] == (2, 1)
+    assert p[2] == (2, 1)  # a second read starts from the same clean state
+    assert all(frame['adjust'] == [] for frame in frames)
+
+
+def test_pipeline_preserves_aliasing_within_copy():
+    # Two ancestors that refer to the same inner object stay linked in the
+    # copy handed to the process, but the originals stay untouched.
+    shared = ['start']
+    root = [shared, shared]
+    s1 = Slicerator(root)
+    s2 = Slicerator(root)
+
+    def process(a, b):
+        a.append('x')
+        return (a is b, list(b))
+
+    p = Pipeline(process, s1, s2)
+    assert p[0] == (True, ['start', 'x'])
+    assert shared == ['start']
+
+
+def test_long_sheet_stays_lazy():
+    # Huge sheets may be sliced and indexed without materializing every
+    # position.
+    big = Slicerator(range(10 ** 8))
+    assert len(big) == 10 ** 8
+    trimmed = big[5:]
+    assert trimmed[0] == 5
+    assert trimmed[-1] == 10 ** 8 - 1
+    stepped = trimmed[::1000]
+    assert stepped[0] == 5
+    assert stepped[-1] == 5 + (len(stepped) - 1) * 1000
+
+
+class _CountingSheet(object):
+    """An instrument sheet that records which frames were actually read."""
+
+    def __init__(self, n):
+        self.frames = [{'i': i, 'adjust': []} for i in range(n)]
+        self.reads = []
+
+    def __len__(self):
+        return len(self.frames)
+
+    def __getitem__(self, i):
+        self.reads.append(i)
+        return self.frames[i]
+
+    @index_attr
+    def stamp(self, i):
+        return 'T{}'.format(i)
+
+
+def test_timestamp_lookup_does_not_generate_frames():
+    sheet = _CountingSheet(12)
+    s = Slicerator(sheet, propagate_attrs=['stamp'])
+    assert [s.stamp[i] for i in (0, 4, 11)] == ['T0', 'T4', 'T11']
+    assert sheet.reads == []
+    assert [s[::2].stamp[i] for i in (0, -1)] == ['T0', 'T10']
+
+
+def test_out_of_range_stops_cleanly():
+    slice1 = Slicerator(list(range(10)))[4:]
+    assert_letters_equal(list(slice1[[0, 2]]), [4, 6])
+    with pytest.raises(IndexError):
+        list(slice1[[7]])
+    with pytest.raises(IndexError):
+        list(slice1[6])
