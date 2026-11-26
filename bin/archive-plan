@@ -1,0 +1,38 @@
+# frozen_string_literal: true
+
+# A small CLI over FileUtils::ArchivePlanner.
+#
+#   ruby -Ilib bin/archive-plan manifest.json [--json]
+#
+# The command is read-only: it reads the manifest and prints the plan.
+
+require "optparse"
+require "fileutils"
+
+json = false
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: archive-plan MANIFEST [options]"
+  opts.on("--json", "Emit machine-readable JSON") { json = true }
+  opts.on("-h", "--help", "Show this help") do
+    puts opts
+    exit
+  end
+end
+
+begin
+  parser.parse!
+  path = ARGV.shift
+  abort parser.to_s if path.nil? || !ARGV.empty?
+  plan = FileUtils::ArchivePlanner.from_file(path).plan
+rescue Errno::ENOENT => e
+  abort "archive-plan: #{e.message}"
+rescue JSON::ParserError, Psych::SyntaxError => e
+  abort "archive-plan: invalid manifest: #{e.message}"
+end
+
+if json
+  puts plan.to_json
+else
+  puts plan
+end
+exit(plan.feasible? ? 0 : 1)

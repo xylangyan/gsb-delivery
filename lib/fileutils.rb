@@ -2723,4 +2723,9 @@ module FileUtils
     end
   end
 
+  autoload :ArchivePlan, File.expand_path("fileutils/archive_plan", __dir__)
+  autoload :ArchivePlanner, File.expand_path("fileutils/archive_plan", __dir__)
+
 end
+
+require_relative "fileutils/archive_plan"
