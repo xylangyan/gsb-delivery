@@ -18,7 +18,7 @@ setup(
     author='Tomaz Solc',
     author_email='tomaz.solc@tablix.org',
 
-    packages=['unidecode'],
+    packages=['unidecode', 'querycode'],
     package_data={'unidecode': ['py.typed']},
     python_requires=">=3.7",
 

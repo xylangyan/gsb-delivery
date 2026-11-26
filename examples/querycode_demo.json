@@ -1,0 +1,262 @@
+{
+  "fragments": {
+    "F01": "ﬁ",
+    "F02": "s",
+    "F03": "ß",
+    "F04": "Straße",
+    "F05": "①",
+    "F06": "Ⅰ",
+    "F07": "­",
+    "F08": "⁠",
+    "F09": "ﬁx",
+    "F10": "f",
+    "F11": "i",
+    "F12": "e",
+    "F13": "sh",
+    "F14": "",
+    "F15": "Ünïcode",
+    "F16": " ",
+    "F17": "-"
+  },
+  "templates": {
+    "A_NAME": {
+      "seq": [
+        {
+          "alt": [
+            {
+              "frag": "F01"
+            },
+            {
+              "frag": "F10"
+            }
+          ]
+        },
+        {
+          "frag": "F02"
+        },
+        {
+          "rep": {
+            "expr": {
+              "frag": "F03"
+            },
+            "min": 0,
+            "max": 1
+          }
+        }
+      ]
+    },
+    "A_ALT_ROUTE": {
+      "alt": [
+        {
+          "seq": [
+            {
+              "frag": "F01"
+            },
+            {
+              "frag": "F02"
+            }
+          ]
+        },
+        {
+          "seq": [
+            {
+              "frag": "F10"
+            },
+            {
+              "frag": "F11"
+            },
+            {
+              "frag": "F02"
+            }
+          ]
+        },
+        {
+          "seq": [
+            {
+              "frag": "F10"
+            },
+            {
+              "frag": "F11"
+            },
+            {
+              "frag": "F02"
+            },
+            {
+              "frag": "F07"
+            }
+          ]
+        }
+      ]
+    },
+    "A_EMPTY": {
+      "seq": [
+        {
+          "frag": "F02"
+        },
+        {
+          "frag": "F07"
+        },
+        {
+          "frag": "F08"
+        }
+      ]
+    },
+    "A_STRICT": {
+      "seq": [
+        {
+          "frag": "F05"
+        },
+        {
+          "frag": "F14"
+        }
+      ]
+    },
+    "A_OK_STRICT": {
+      "seq": [
+        {
+          "frag": "F06"
+        },
+        {
+          "frag": "F02"
+        }
+      ]
+    },
+    "B_NAME": {
+      "seq": [
+        {
+          "frag": "F10"
+        },
+        {
+          "frag": "F11"
+        },
+        {
+          "frag": "F02"
+        }
+      ]
+    },
+    "B_REPEAT": {
+      "seq": [
+        {
+          "frag": "F15"
+        },
+        {
+          "frag": "F16"
+        },
+        {
+          "frag": "F15"
+        }
+      ]
+    },
+    "B_REPLACE": {
+      "seq": [
+        {
+          "frag": "F09"
+        },
+        {
+          "frag": "F14"
+        }
+      ]
+    },
+    "B_EMPTY": {
+      "seq": [
+        {
+          "frag": "F02"
+        },
+        {
+          "frag": "F07"
+        }
+      ]
+    },
+    "C_NAME": {
+      "seq": [
+        {
+          "frag": "F01"
+        },
+        {
+          "frag": "F02"
+        },
+        {
+          "frag": "F17"
+        },
+        {
+          "frag": "F06"
+        }
+      ]
+    },
+    "B_NAME_ALT": {
+      "seq": [
+        {
+          "frag": "F10"
+        },
+        {
+          "frag": "F11"
+        },
+        {
+          "frag": "F02"
+        },
+        {
+          "frag": "F07"
+        }
+      ]
+    },
+    "A_ONLY": {
+      "frag": "F05"
+    },
+    "B_ONLY": {
+      "frag": "F05"
+    }
+  },
+  "sources": {
+    "OLD_A": {
+      "templates": [
+        "A_NAME",
+        "A_ALT_ROUTE",
+        "A_EMPTY",
+        "A_STRICT",
+        "A_OK_STRICT",
+        "A_ONLY"
+      ],
+      "missing": "strict"
+    },
+    "OLD_B": {
+      "templates": [
+        "B_NAME",
+        "B_NAME_ALT",
+        "B_REPEAT",
+        "B_REPLACE",
+        "B_EMPTY",
+        "B_ONLY"
+      ],
+      "missing": "replace",
+      "replace_str": "_"
+    },
+    "NEW_C": {
+      "templates": [
+        "C_NAME"
+      ],
+      "missing": "ignore"
+    }
+  },
+  "queries": [
+    {
+      "source": "OLD_A",
+      "prefix": "f",
+      "limit": 10
+    },
+    {
+      "source": "OLD_A",
+      "prefix": "s",
+      "limit": 10
+    },
+    {
+      "source": "OLD_B",
+      "prefix": "U",
+      "limit": 10
+    },
+    {
+      "source": "OLD_B",
+      "prefix": "1",
+      "limit": 10
+    }
+  ]
+}
