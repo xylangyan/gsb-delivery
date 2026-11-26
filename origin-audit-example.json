@@ -1,0 +1,111 @@
+{
+  "case_id": "GSB1109-PYSONDB-demo",
+  "id_field": "id",
+  "origin_field": "$origin",
+  "initial": [
+    {
+      "$origin": "O0-front-header",
+      "id": 16,
+      "legacy": "front"
+    },
+    {
+      "$origin": "O1-first-17",
+      "id": 17,
+      "name": "same-literal",
+      "note": "x"
+    },
+    {
+      "$origin": "O2-second-17",
+      "id": 17,
+      "name": "same-literal",
+      "note": "x"
+    },
+    {
+      "$origin": "O3-original-18",
+      "id": 18,
+      "name": "resident-18",
+      "note": "y"
+    }
+  ],
+  "streams": {
+    "A": [
+      {
+        "id": "a1",
+        "op": "getById",
+        "pk": 17,
+        "result": {
+          "$origin": "O1-first-17",
+          "id": 17,
+          "name": "same-literal",
+          "note": "x"
+        }
+      },
+      {
+        "id": "a2",
+        "op": "deleteById",
+        "pk": 16
+      },
+      {
+        "id": "a3",
+        "op": "updateById",
+        "pk": 17,
+        "data": {
+          "id": 18
+        }
+      }
+    ],
+    "B": [
+      {
+        "id": "b1",
+        "op": "getByQuery",
+        "query": {
+          "id": 18
+        },
+        "result": [
+          {
+            "id": 18,
+            "name": "resident-18",
+            "note": "y"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "op": "updateById",
+        "pk": 18,
+        "data": {
+          "note": "supplement"
+        },
+        "tags": [
+          "supplement"
+        ]
+      },
+      {
+        "id": "b3",
+        "op": "updateByQuery",
+        "query": {
+          "name": "same-literal"
+        },
+        "data": {
+          "note": "field-fixed"
+        }
+      }
+    ]
+  },
+  "checkpoints": [
+    {
+      "id": "CP1",
+      "positions": {
+        "A": "a2",
+        "B": "b1"
+      }
+    },
+    {
+      "id": "CP2",
+      "positions": {
+        "A": "a3",
+        "B": "b3"
+      }
+    }
+  ]
+}
