@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Any, Literal, cast
 
 from .parser_schema import array_schema_config, object_schema_config, tuple_item_schema
+from .provenance_tracing import NOOP_TRACER, Tracer
 from .utils.constants import MISSING_VALUE, JSONReturnType, MissingValueType
 from .utils.pattern_properties import match_pattern_properties
 
@@ -205,12 +206,14 @@ class SchemaRepairer:
         schema: dict[str, Any] | bool,
         log: list[dict[str, str]] | None,
         schema_repair_mode: str = "standard",
+        tracer: Tracer | None = None,
     ) -> None:
         self.root_schema = schema
         self.log = log
         self.schema_repair_mode = normalize_schema_repair_mode(schema_repair_mode)
         self._validator_cache: dict[int, tuple[dict[str, Any], Any]] = {}
         self._root_validator: Any | None = None
+        self.tracer: Tracer = tracer if tracer is not None else NOOP_TRACER
 
     def _log(self, text: str, path: str) -> None:
         if self.log is not None:
@@ -335,7 +338,17 @@ class SchemaRepairer:
         Raises:
             ValueError: If the schema disallows the value or repair cannot satisfy it.
         """
-        schema = self.resolve_schema(schema)
+        resolved_schema = self.resolve_schema(schema)
+        self.tracer.enter_node(path, value, resolved_schema, self)
+        try:
+            output = self._repair_value_impl(value, resolved_schema, path)
+        except ValueError:
+            self.tracer.fail_node()
+            raise
+        self.tracer.exit_node(output)
+        return output
+
+    def _repair_value_impl(self, value: Any, schema: dict[str, Any] | bool, path: str) -> JSONReturnType:
         if schema is True:
             return normalize_missing_values(value)
         if schema is False:
@@ -444,10 +457,12 @@ class SchemaRepairer:
             repaired = json_repair_module.loads(value, skip_json_loads=True)
             if isinstance(repaired, expected_type):
                 self._log(salvage_log_message, path)
+                self.tracer.mark_origin(path, "repaired_string")
                 return repaired
             return value
         if isinstance(parsed, expected_type):
             self._log(unwrap_log_message, path)
+            self.tracer.mark_origin(path, "repaired_string")
             return parsed
         return value
 
@@ -467,7 +482,10 @@ class SchemaRepairer:
         salvage_mode = self.schema_repair_mode == "salvage"
         schema_config = array_schema_config(schema)
 
-        def repair_or_drop(raw_item: Any, item_schema: Any, item_path: str) -> tuple[bool, JSONReturnType]:
+        def repair_or_drop(
+            raw_item: Any, item_schema: Any, parser_order: int, output_index: int
+        ) -> tuple[bool, JSONReturnType]:
+            item_path = f"{path}[{output_index}]"
             try:
                 return True, self.repair_value(raw_item, item_schema, item_path)
             except SchemaDefinitionError:
@@ -476,31 +494,45 @@ class SchemaRepairer:
                 if not salvage_mode:
                     raise
                 self._log("Dropped invalid array item while salvaging", item_path)
+                self.tracer.mark_repair_drop(
+                    path, parser_order, output_index, "Dropped invalid array item while salvaging"
+                )
                 return False, None
 
         if schema_config.items_schema is not None:
             if isinstance(schema_config.items_schema, list):
                 repaired_items: list[JSONReturnType] = []
-                for idx, item in enumerate(items):
-                    item_schema, is_tail = tuple_item_schema(schema_config, idx)
-                    item_path = f"{path}[{idx}]"
+                output_index = 0
+                for parser_order, item in enumerate(items):
+                    item_schema, is_tail = tuple_item_schema(schema_config, parser_order)
                     if is_tail and not isinstance(item_schema, dict):
                         if item_schema is True or item_schema is None:
                             repaired_items.append(normalize_missing_values(item))
+                            output_index += 1
                         else:
-                            self._log("Dropped extra array item not covered by schema", item_path)
+                            self._log("Dropped extra array item not covered by schema", f"{path}[{parser_order}]")
+                            self.tracer.mark_repair_drop(
+                                path,
+                                parser_order,
+                                output_index,
+                                "Dropped extra array item not covered by schema",
+                            )
                         continue
-                    keep_item, repaired_value = repair_or_drop(item, item_schema, item_path)
+                    keep_item, repaired_value = repair_or_drop(item, item_schema, parser_order, output_index)
                     if keep_item:
                         repaired_items.append(repaired_value)
+                        output_index += 1
                 items = repaired_items
             else:
                 repaired_items = []
-                for idx, item in enumerate(items):
-                    item_path = f"{path}[{idx}]"
-                    keep_item, repaired_value = repair_or_drop(item, schema_config.items_schema, item_path)
+                output_index = 0
+                for parser_order, item in enumerate(items):
+                    keep_item, repaired_value = repair_or_drop(
+                        item, schema_config.items_schema, parser_order, output_index
+                    )
                     if keep_item:
                         repaired_items.append(repaired_value)
+                        output_index += 1
                 items = repaired_items
         min_items = schema.get("minItems")
         if min_items is not None and len(items) < min_items:
@@ -546,6 +578,7 @@ class SchemaRepairer:
                     name = provided_names[0]
                     normalized_value[alias] = normalized_value.pop(name)
                     self._log(f"Mapped field name to validation alias '{alias}'", f"{path}.{name}")
+                    self.tracer.map_alias(f"{path}.{alias}", f"{path}.{name}", name)
             value = normalized_value
 
         schema_config = object_schema_config(schema)
@@ -578,6 +611,7 @@ class SchemaRepairer:
             elif isinstance(prop_schema, dict) and "default" in prop_schema and key not in schema_config.required:
                 repaired[key] = self._copy_json_value(prop_schema["default"], key_path, "default")
                 self._log("Inserted default value for missing property", key_path)
+                self.tracer.mark_origin(key_path, "default", prop_schema, self)
 
         for key, raw_value in value.items():
             if key in schema_config.properties:
@@ -648,11 +682,14 @@ class SchemaRepairer:
             return False, ""
 
         if "default" in resolved_schema:
+            self.tracer.mark_origin(path, "default", schema, self)
             return True, self._copy_json_value(resolved_schema["default"], path, "default")
         if "const" in resolved_schema:
+            self.tracer.mark_origin(path, "const", schema, self)
             return True, self._copy_json_value(resolved_schema["const"], path, "const")
         enum_values = resolved_schema.get("enum")
         if enum_values:
+            self.tracer.mark_origin(path, "enum", schema, self)
             return True, self._copy_json_value(enum_values[0], path, "enum")
 
         expected_type = resolved_schema.get("type")
@@ -673,15 +710,18 @@ class SchemaRepairer:
         if "const" in schema:
             # Const/enum/default have priority over type inference.
             self._log("Filled missing value with const", path)
+            self.tracer.mark_origin(path, "const", schema, self)
             return self._copy_json_value(schema["const"], path, "const")
         if "enum" in schema:
             enum_values = schema["enum"]
             if not enum_values:
                 raise ValueError(f"Enum at {path} has no values.")
             self._log("Filled missing value with first enum value", path)
+            self.tracer.mark_origin(path, "enum", schema, self)
             return self._copy_json_value(enum_values[0], path, "enum")
         if "default" in schema:
             self._log("Filled missing value with default", path)
+            self.tracer.mark_origin(path, "default", schema, self)
             return self._copy_json_value(schema["default"], path, "default")
 
         expected_type = schema.get("type")
@@ -702,27 +742,33 @@ class SchemaRepairer:
 
         if expected_type == "string":
             self._log("Filled missing value with empty string", path)
+            self.tracer.mark_origin(path, "inferred", schema, self)
             return ""
         if expected_type in {"integer", "number"}:
             self._log("Filled missing value with 0", path)
+            self.tracer.mark_origin(path, "inferred", schema, self)
             return 0
         if expected_type == "boolean":
             self._log("Filled missing value with false", path)
+            self.tracer.mark_origin(path, "inferred", schema, self)
             return False
         if expected_type == "array":
             min_items = schema.get("minItems")
             if min_items:
                 raise ValueError(f"Array at {path} requires at least {min_items} items.")
             self._log("Filled missing value with empty array", path)
+            self.tracer.mark_origin(path, "inferred", schema, self)
             return []
         if expected_type == "object":
             min_properties = schema.get("minProperties")
             if min_properties:
                 raise ValueError(f"Object at {path} requires at least {min_properties} properties.")
             self._log("Filled missing value with empty object", path)
+            self.tracer.mark_origin(path, "inferred", schema, self)
             return {}
         if expected_type == "null":
             self._log("Filled missing value with null", path)
+            self.tracer.mark_origin(path, "inferred", schema, self)
             return None
 
         raise ValueError(f"Cannot infer missing value at {path}.")
@@ -733,6 +779,7 @@ class SchemaRepairer:
                 return value
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 self._log("Coerced number to string", path)
+                self.tracer.label(action="Coerced number to string")
                 return str(value)
             raise ValueError(f"Expected string at {path}.")
 
@@ -744,6 +791,7 @@ class SchemaRepairer:
             if isinstance(value, float):
                 if value.is_integer():
                     self._log("Coerced number to integer", path)
+                    self.tracer.label(action="Coerced number to integer")
                     return int(value)
                 raise ValueError(f"Expected integer at {path}.")
             if isinstance(value, str):
@@ -753,6 +801,7 @@ class SchemaRepairer:
                     int_value = None
                 if int_value is not None:
                     self._log("Coerced string to integer", path)
+                    self.tracer.label(action="Coerced string to integer")
                     return int_value
                 try:
                     num = float(value)
@@ -761,6 +810,7 @@ class SchemaRepairer:
                 if not num.is_integer():
                     raise ValueError(f"Expected integer at {path}.")
                 self._log("Coerced number to integer", path)
+                self.tracer.label(action="Coerced number to integer")
                 return int(num)
             raise ValueError(f"Expected integer at {path}.")
 
@@ -775,6 +825,7 @@ class SchemaRepairer:
                 except ValueError as exc:
                     raise ValueError(f"Expected number at {path}.") from exc
                 self._log("Coerced string to number", path)
+                self.tracer.label(action="Coerced string to number")
                 return float_value
             raise ValueError(f"Expected number at {path}.")
 
@@ -785,12 +836,15 @@ class SchemaRepairer:
                 lowered = value.lower()
                 if lowered in {"true", "yes", "y", "on", "1"}:
                     self._log("Coerced string to boolean", path)
+                    self.tracer.label(action="Coerced string to boolean")
                     return True
                 if lowered in {"false", "no", "n", "off", "0"}:
                     self._log("Coerced string to boolean", path)
+                    self.tracer.label(action="Coerced string to boolean")
                     return False
             if isinstance(value, (int, float)) and not isinstance(value, bool) and value in {0, 1}:
                 self._log("Coerced number to boolean", path)
+                self.tracer.label(action="Coerced number to boolean")
                 return bool(value)
             raise ValueError(f"Expected boolean at {path}.")
 

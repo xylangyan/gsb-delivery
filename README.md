@@ -343,6 +343,44 @@ repair_json(
 )
 ```
 
+### Provenance and evidence (opt-in)
+
+When receipts are repaired in batches, the same stored value may have been written by a supplier, coerced from a string, or filled in by a schema rule. The provenance readers return the repaired value together with a `ProvenanceRecord` that links every output key back to its evidence, without changing the behavior of `repair_json`, `loads`, `load`, or `from_file`.
+
+    from json_repair import loads_with_provenance, load_with_provenance
+
+    value, record = loads_with_provenance(raw, schema=schema, schema_repair_mode="salvage")
+
+    evidence = record.provenance_for("station")
+    evidence.origin            # "source", "default", "const", "enum", "inferred", or "repaired_string"
+    evidence.original_key      # key as written in the receipt (before alias/default renames)
+    evidence.original_value    # parsed value before coercion/defaulting
+    evidence.span              # character interval, or None for schema-supplied values
+    evidence.type_changed      # True when a coercion changed the parsed value's type
+    evidence.schema_ref        # the effective schema branch that produced the value
+    record.source_text_for("station")   # exact source substring behind one output key
+
+Each output key is resolved structurally, so a value that appears several times in the text (for example two `7` values, or a duplicated object key) always points at the occurrence that actually supplied the stored value rather than the first matching substring.
+
+For arrays, every surviving item keeps the position it had in the source even when salvage dropped invalid items, and removed items are listed with their original index:
+
+    record.provenance_for("items[1]").original_index  # index inside the source array
+    record.dropped_items                               # removed items with their source spans
+
+When salvage tries several sequential top-level fragments, the rejected candidates remain available with the schema error that discarded them:
+
+    for candidate in record.rejection_reasons():
+        candidate.fragment_index, candidate.span, candidate.value, candidate.reason
+
+`load_with_provenance(fd)` mirrors `load` and reads from the descriptor's current position, including the pattern where the file has already been advanced to the start of the body. The same evidence is produced whether the input is passed as a string or as a descriptor:
+
+    from io import StringIO
+
+    fd = StringIO(raw)
+    value, record = load_with_provenance(fd)
+
+Provenance collection is fully opt-in: the standard readers keep using a shared no-op tracer and are not instrumented, so their behavior and cost are unchanged. `from_file_with_provenance(path)` is the filename-based equivalent.
+
 ### Use json_repair with streaming
 
 Sometimes you are streaming some data and want to repair the JSON coming from it. Normally this won't work but you can pass `stream_stable` to `repair_json()` or `loads()` to make it work:

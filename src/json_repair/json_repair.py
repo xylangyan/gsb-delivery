@@ -29,8 +29,12 @@ from pathlib import Path
 from typing import Any, Literal, TextIO, overload
 
 from .json_parser import JSONParser
+from .provenance import ProvenanceRecord
+from .provenance_tracing import ProvenanceTracer
 from .schema_repair import SchemaRepairer, load_schema_model, normalize_schema_repair_mode, schema_from_input
 from .utils.constants import JSONReturnType
+
+_NO_SCALAR = object()
 
 
 def _try_schema_fast_path(
@@ -47,6 +51,35 @@ def _try_schema_fast_path(
     return False, value
 
 
+def _try_scalar_provenance(parser: JSONParser, json_str: str) -> Any:
+    """Decode a bare top-level scalar for provenance reads.
+
+    The repair grammar only treats scalars as container members, so a bare
+    top-level scalar normally relies on the stdlib fast path. Provenance must
+    bypass that fast path to collect evidence, so decode the scalar here and
+    record its source interval before handing it to schema repair.
+
+    Returns:
+        The decoded scalar (which may be ``None``), or ``_NO_SCALAR`` for
+        containers, invalid JSON, or a parser without provenance enabled.
+    """
+    if not parser.tracer.collects_provenance:
+        return _NO_SCALAR
+    try:
+        value, end_idx = json.JSONDecoder().raw_decode(json_str)
+    except json.JSONDecodeError:
+        return _NO_SCALAR
+    if isinstance(value, (dict, list)):
+        return _NO_SCALAR
+    parser.tracer.begin_fragment(0)
+    parser.tracer.mark_pending("$", 0)
+    parser.tracer.commit_span("$", value, end_idx)
+    parser.tracer.end_fragment(end_idx)
+    parser.tracer.select_fragment()
+    parser.index = end_idx
+    return value
+
+
 @overload
 def repair_json(
     json_str: str = "",
@@ -59,6 +92,7 @@ def repair_json(
     strict: bool = False,
     schema: Any | None = None,
     schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    provenance_tracer: ProvenanceTracer | None = None,
     **json_dumps_args: Any,
 ) -> str: ...
 
@@ -75,6 +109,7 @@ def repair_json(
     strict: bool = False,
     schema: Any | None = None,
     schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    provenance_tracer: ProvenanceTracer | None = None,
     **json_dumps_args: Any,
 ) -> JSONReturnType: ...
 
@@ -92,6 +127,7 @@ def repair_json(
     strict: bool = False,
     schema: Any | None = None,
     schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    provenance_tracer: ProvenanceTracer | None = None,
     **json_dumps_args: Any,
 ) -> tuple[JSONReturnType, list[dict[str, str]]]: ...
 
@@ -108,6 +144,7 @@ def repair_json(
     strict: bool = False,
     schema: Any | None = None,
     schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    provenance_tracer: ProvenanceTracer | None = None,
     **json_dumps_args: Any,
 ) -> str | JSONReturnType | tuple[JSONReturnType, list[dict[str, str]]]: ...
 
@@ -124,6 +161,7 @@ def repair_json(  # noqa: PLR0917
     strict: bool = False,
     schema: Any | None = None,
     schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    provenance_tracer: ProvenanceTracer | None = None,
     **json_dumps_args: Any,
 ) -> JSONReturnType | tuple[JSONReturnType, list[dict[str, str]]]:
     """
@@ -155,10 +193,19 @@ def repair_json(  # noqa: PLR0917
     if schema is not None and strict:
         raise ValueError("schema and strict cannot be used together.")
 
+    if provenance_tracer is not None:
+        # Evidence is collected while the parser walks the source, so the
+        # stdlib fast path must be bypassed even for valid JSON.
+        skip_json_loads = True
+
     # Repair requires random access; buffer streams that cannot be rewound.
-    if json_fd is not None and not json_fd.seekable():
+    # Provenance needs the whole text to materialize source spans, so buffer
+    # seekable descriptors too (reading from the descriptor's current position).
+    if json_fd is not None and (not json_fd.seekable() or provenance_tracer is not None):
         json_str = json_fd.read()
         json_fd = None
+    if provenance_tracer is not None:
+        provenance_tracer.attach_source_text(json_str)
 
     parser: JSONParser | None = None
     repair_log: list[dict[str, str]] = []
@@ -174,12 +221,18 @@ def repair_json(  # noqa: PLR0917
             json_fd_chunk_length=chunk_length,
             stream_stable=stream_stable,
             strict=strict,
+            provenance_tracer=provenance_tracer,
         )
         if logging:
             repair_log = parser.logger
     schema_obj = schema_from_input(schema) if schema is not None else None
     repairer = (
-        SchemaRepairer(schema_obj, repair_log if logging else None, schema_repair_mode=schema_repair_mode)
+        SchemaRepairer(
+            schema_obj,
+            repair_log if logging else None,
+            schema_repair_mode=schema_repair_mode,
+            tracer=provenance_tracer,
+        )
         if schema_obj is not None
         else None
     )
@@ -214,11 +267,19 @@ def repair_json(  # noqa: PLR0917
                 stream_stable=stream_stable,
                 strict=strict,
                 try_valid_json_suffix=try_valid_json_suffix,
+                provenance_tracer=provenance_tracer,
             )
             if logging:
                 parser.logger = repair_log
         try:
-            if repairer is not None and schema_obj is not None:
+            scalar = _try_scalar_provenance(parser, json_str)
+            if provenance_tracer is not None and scalar is not _NO_SCALAR:
+                if repairer is not None and schema_obj is not None:
+                    parsed_json = repairer.repair_value(scalar, schema_obj, "$")
+                    repairer.validate(parsed_json, schema_obj)
+                else:
+                    parsed_json = scalar
+            elif repairer is not None and schema_obj is not None:
                 # If schema-guided, we want to attempt repairs even on valid JSON that fails schema validation.
                 try:
                     parsed_json = parser.parse_with_schema(repairer, schema_obj)
@@ -350,6 +411,104 @@ def from_file(  # noqa: PLR0917
             schema=schema,
             schema_repair_mode=schema_repair_mode,
         )
+
+
+def loads_with_provenance(
+    json_str: str,
+    *,
+    schema: Any | None = None,
+    schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    stream_stable: bool = False,
+) -> tuple[JSONReturnType, ProvenanceRecord]:
+    """Repair a JSON string and collect evidence for every output value.
+
+    Same repair semantics as :func:`loads`, plus a :class:`ProvenanceRecord`
+    mapping each output key to its original key, parsed value, source interval,
+    origin (source, coercion, default, const, enum, inferred) and the effective
+    schema branch. Rejected salvage fragments are recorded with their reason.
+
+    Args:
+        json_str (str): The JSON string to load and repair.
+        schema (Any, optional): JSON Schema dict, boolean schema, or pydantic v2 model.
+        schema_repair_mode (Literal["standard", "salvage"], optional): Schema repair mode.
+        stream_stable (bool, optional): Keep partial streaming JSON stable.
+
+    Returns:
+        Tuple[JSONReturnType, ProvenanceRecord]: The repaired value and its evidence.
+
+    Raises:
+        ValueError: If the input cannot be repaired to satisfy the schema.
+    """
+    tracer = ProvenanceTracer()
+    parsed = repair_json(
+        json_str=json_str,
+        return_objects=True,
+        skip_json_loads=True,
+        stream_stable=stream_stable,
+        schema=schema,
+        schema_repair_mode=schema_repair_mode,
+        provenance_tracer=tracer,
+    )
+    return parsed, tracer.build_record(output=parsed)
+
+
+def load_with_provenance(
+    fd: TextIO,
+    *,
+    schema: Any | None = None,
+    schema_repair_mode: Literal["standard", "salvage"] = "standard",
+    chunk_length: int = 0,
+) -> tuple[JSONReturnType, ProvenanceRecord]:
+    """Repair JSON from a file descriptor and collect evidence for every output value.
+
+    Reading starts at the descriptor's current position, matching :func:`load`.
+
+    Args:
+        fd (TextIO): File descriptor for JSON input.
+        schema (Any, optional): JSON Schema dict, boolean schema, or pydantic v2 model.
+        schema_repair_mode (Literal["standard", "salvage"], optional): Schema repair mode.
+        chunk_length (int, optional): Kept for API symmetry; provenance buffers the descriptor once.
+
+    Returns:
+        Tuple[JSONReturnType, ProvenanceRecord]: The repaired value and its evidence.
+
+    Raises:
+        ValueError: If the input cannot be repaired to satisfy the schema.
+    """
+    tracer = ProvenanceTracer()
+    parsed = repair_json(
+        json_fd=fd,
+        chunk_length=chunk_length,
+        return_objects=True,
+        skip_json_loads=True,
+        schema=schema,
+        schema_repair_mode=schema_repair_mode,
+        provenance_tracer=tracer,
+    )
+    return parsed, tracer.build_record(output=parsed)
+
+
+def from_file_with_provenance(
+    filename: str | Path,
+    *,
+    schema: Any | None = None,
+    schema_repair_mode: Literal["standard", "salvage"] = "standard",
+) -> tuple[JSONReturnType, ProvenanceRecord]:
+    """Repair a JSON file and collect evidence for every output value.
+
+    Args:
+        filename (str | Path): The name of the file containing JSON data.
+        schema (Any, optional): JSON Schema dict, boolean schema, or pydantic v2 model.
+        schema_repair_mode (Literal["standard", "salvage"], optional): Schema repair mode.
+
+    Returns:
+        Tuple[JSONReturnType, ProvenanceRecord]: The repaired value and its evidence.
+
+    Raises:
+        ValueError: If the input cannot be repaired to satisfy the schema.
+    """
+    with Path(filename).open(encoding="utf-8") as fd:
+        return load_with_provenance(fd, schema=schema, schema_repair_mode=schema_repair_mode)
 
 
 def cli(inline_args: list[str] | None = None) -> int:

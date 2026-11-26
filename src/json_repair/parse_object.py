@@ -44,6 +44,7 @@ def _finalize_object(
         if isinstance(prop_schema, dict) and "default" in prop_schema:
             obj[key] = schema_repairer._copy_json_value(prop_schema["default"], f"{path}.{key}", "default")
             schema_repairer._log("Inserted default value for missing property", f"{path}.{key}")
+            schema_repairer.tracer.mark_origin(f"{path}.{key}", "default", prop_schema, schema_repairer)
     return obj
 
 
@@ -336,7 +337,7 @@ def _parse_object_value(
 
         if schema_repairer is not None:
             return self.parse_json(prop_schema, key_path)
-        return self.parse_json()
+        return self.parse_json(None, key_path)
     finally:
         self.context.reset()
 
@@ -457,6 +458,8 @@ def parse_object(
             self.index += 1
 
         key, rollback_index = _parse_object_key(self, obj)
+        key_start_index = rollback_index
+        key_end_index = self.index
         if ContextValues.ARRAY in self.context.context and key in obj:
             if self.strict:
                 self.log("Duplicate key found in strict mode while parsing object, raising an error")
@@ -510,6 +513,7 @@ def parse_object(
 
         if schema_repairer is None or not drop_property:
             obj[key] = value
+            self.tracer.record_member(path, key, key_start_index, key_end_index, key_path)
         else:
             schema_repairer._log("Dropped extra property not covered by schema", key_path)
 

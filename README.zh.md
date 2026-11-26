@@ -288,6 +288,52 @@ repair_json(
 )
 ```
 
+### 凭据与出处（可选）
+
+回执按批清洗时，同一个落库值可能来自供方填写、由字符串强制转换，或由 schema 规则补出。凭据读法在返回修复结果的同时返回一个 `ProvenanceRecord`，把每个结果键回溯到它的证据，且不会改变 `repair_json`、`loads`、`load`、`from_file` 的行为。
+
+```python
+from json_repair import loads_with_provenance, load_with_provenance
+
+value, record = loads_with_provenance(raw, schema=schema, schema_repair_mode="salvage")
+
+evidence = record.provenance_for("station")
+evidence.origin            # "source"、"default"、"const"、"enum"、"inferred" 或 "repaired_string"
+evidence.original_key      # 回执里原本的键名（别名/默认值改名之前）
+evidence.original_value    # 强制转换或补默认值之前解析出的值
+evidence.span              # 字符区间；schema 补出的值为 None
+evidence.type_changed      # 强制转换是否改变了解析值的类型
+evidence.schema_ref        # 实际生效的 schema 分支
+record.source_text_for("station")   # 某个结果键背后的确切原文片段
+```
+
+结果键按结构解析，因此正文里反复出现的值（例如两个 `7`，或对象里重复的键）始终指向真正提供落库值的那一处，而不是第一个匹配的同名字样。
+
+对于数组，即使 salvage 删除了坏项，每个保留项仍记录它在原数组中的位置，被删除的项也会连同原始索引一并列出：
+
+```python
+record.provenance_for("items[1]").original_index  # 原数组中的索引
+record.dropped_items                               # 被删除项及其原文区间
+```
+
+当 salvage 依次尝试多个顶层片段时，被舍弃的候选仍会保留，连同让它被换下的 schema 错误：
+
+```python
+for candidate in record.rejection_reasons():
+    candidate.fragment_index, candidate.span, candidate.value, candidate.reason
+```
+
+`load_with_provenance(fd)` 与 `load` 对应，从文件描述符的当前位置开始读取，包括先把文件读到正文开头再交给库的用法。字符串与文件描述符两种输入方式得到的证据一致：
+
+```python
+from io import StringIO
+
+fd = StringIO(raw)
+value, record = load_with_provenance(fd)
+```
+
+凭据收集完全可选：标准读法使用共享的空 tracer，不会被插桩，行为与开销均保持不变。`from_file_with_provenance(path)` 是对应的文件名入口。
+
 ### 流式处理
 需要在流式数据上修复 JSON 时，可传 `stream_stable=True`：
 ```python

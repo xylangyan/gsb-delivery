@@ -11,6 +11,7 @@ from .parse_number import parse_number as _parse_number
 from .parse_object import parse_object as _parse_object
 from .parse_string import parse_string as _parse_string
 from .parser_parenthesized import parenthesized_is_explicit_tuple, top_level_parenthesized_can_start_value
+from .provenance_tracing import NOOP_TRACER, ProvenanceTracer, Tracer
 from .utils.constants import STRING_DELIMITERS, JSONReturnType
 from .utils.json_context import ContextValues, JsonContext
 from .utils.object_comparer import ObjectComparer
@@ -60,9 +61,12 @@ class JSONParser:
         stream_stable: bool = False,
         strict: bool = False,
         try_valid_json_suffix: bool = False,
+        provenance_tracer: ProvenanceTracer | None = None,
     ) -> None:
         # The string to parse
         self.json_str: str | StringFileWrapper = json_str
+        # Provenance tracer: a shared no-op unless provenance collection was requested.
+        self.tracer: Tracer = provenance_tracer if provenance_tracer is not None else NOOP_TRACER
         # Alternatively, the file description with a json file in it
         if json_fd:
             # This is a trick we do to treat the file wrapper as an array
@@ -104,7 +108,11 @@ class JSONParser:
     def parse(
         self,
     ) -> JSONReturnType:
-        return self._parse_top_level(self.parse_json)
+        self.tracer.begin_fragment(self.index)
+        parsed = self._parse_top_level(self.parse_json)
+        self.tracer.end_fragment(self.index)
+        self.tracer.select_fragment()
+        return parsed
 
     def parse_with_schema(
         self,
@@ -119,7 +127,11 @@ class JSONParser:
         self.schema_repairer = repairer
         if repairer.schema_repair_mode == "salvage":
             return self._parse_top_level_salvage_with_schema(repairer, schema)
-        return self._parse_top_level(lambda: self.parse_json(schema, "$"))
+        self.tracer.begin_fragment(self.index)
+        parsed = self._parse_top_level(lambda: self.parse_json(schema, "$"))
+        self.tracer.end_fragment(self.index)
+        self.tracer.select_fragment()
+        return parsed
 
     def _parse_top_level_salvage_with_schema(
         self,
@@ -135,14 +147,21 @@ class JSONParser:
         while self.index < len(self.json_str):
             self.context.clear()
             self.deferred_contexts.clear()
+            fragment_start = self.index
+            self.tracer.begin_fragment(fragment_start)
             value = self.parse_json(schema, "$", finalize_schema=False, record_top_level_value=True)
+            self.tracer.end_fragment(self.index)
             if not self._last_parse_found_value:
                 break
+            # Select before repairing so repair frames can join the fragment's source spans.
+            self.tracer.select_fragment()
             try:
                 repaired = repairer.repair_value(value, schema, "$")
                 repairer.validate(repaired, schema)
             except ValueError as exc:
                 last_error = exc
+                self.tracer.discard_frames()
+                self.tracer.reject_fragment(str(exc), value)
                 if self.index >= len(self.json_str):
                     break
                 self.log("Skipped top-level fragment that did not match schema while salvaging")
@@ -308,11 +327,13 @@ class JSONParser:
 
         repairer, schema = self._resolve_schema_for_parse(schema)
         check_initial_quote = self.index == 0 and self.context.empty
+        self.tracer.mark_pending(path, self.index)
 
         while True:
             char = self.get_char_at()
             # None means that we are at the end of the string provided
             if char is None:
+                self.tracer.discard_pending(path)
                 return ""
             if (
                 self.try_valid_json_suffix
@@ -332,7 +353,7 @@ class JSONParser:
             # <object> starts with '{'
             if char == "{":
                 self.index += 1
-                value = self.parse_object(schema, path) if repairer else self.parse_object()
+                value = self.parse_object(schema, path) if repairer else self.parse_object(None, path)
                 return self._finalize_parsed_value(
                     value,
                     repairer=repairer,
@@ -344,7 +365,7 @@ class JSONParser:
             # <array> starts with '['
             if char == "[":
                 self.index += 1
-                value = self.parse_array(schema, path) if repairer else self.parse_array()
+                value = self.parse_array(schema, path) if repairer else self.parse_array(None, path)
                 return self._finalize_parsed_value(
                     value,
                     repairer=repairer,
@@ -358,7 +379,7 @@ class JSONParser:
                 # Keep top-level tuple detection conservative so inline prose like
                 # "note (clarification):" does not hijack later JSON blocks.
                 if not self.context.empty or self.top_level_parenthesized_can_start_value():
-                    value = self.parse_parenthesized(schema, path) if repairer else self.parse_parenthesized()
+                    value = self.parse_parenthesized(schema, path) if repairer else self.parse_parenthesized(None, path)
                     return self._finalize_parsed_value(
                         value,
                         repairer=repairer,
@@ -444,6 +465,9 @@ class JSONParser:
     ) -> JSONReturnType:
         if record_top_level_value:
             self._last_parse_found_value = True
+        # Record the tight source interval and the pre-repair value on every
+        # node; the repair layer joins it by path when it later coerces/defaults.
+        self.tracer.commit_span(path, value, self.index)
         if repairer is None or not finalize_schema:
             return value
         return repairer.repair_value(value, schema, path)

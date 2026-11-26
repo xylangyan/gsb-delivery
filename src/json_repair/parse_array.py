@@ -64,6 +64,8 @@ def parse_array(
 
             item_schema, drop_item = _resolve_array_item_schema(schema_config, idx)
             item_path = f"{path}[{idx}]"
+            self.tracer.mark_pending(item_path, self.index)
+            self.tracer.mark_pending_index(item_path, idx)
             active_schema_repairer = (
                 schema_repairer if schema_repairer is not None and not drop_item and not salvage_mode else None
             )
@@ -77,6 +79,7 @@ def parse_array(
                     if array_is_object_value and arr and all(not isinstance(item, (dict, list)) for item in arr):
                         self.log("Closed unclosed array before object member after scalar items")
                         closed_before_parent_member = True
+                        self.tracer.discard_pending(item_path)
                         break
                     if active_schema_repairer is not None:
                         # Schema-guided object parsing, then enforce schema on the parsed object.
@@ -85,28 +88,35 @@ def parse_array(
                     else:
                         # No schema (or dropping): still parse to keep the cursor in sync.
                         value = self.parse_object()
+                        self.tracer.commit_span(item_path, value, self.index)
                 else:
                     value = self.parse_string()
+                    self.tracer.commit_span(item_path, value, self.index)
                     if active_schema_repairer is not None:
                         # Apply schema constraints/coercions to scalar values when configured.
                         value = active_schema_repairer.repair_value(value, item_schema, item_path)
             else:
                 # Use schema-aware parsing to guide nested repairs when configured.
                 value = (
-                    self.parse_json(item_schema, item_path) if active_schema_repairer is not None else self.parse_json()
+                    self.parse_json(item_schema, item_path)
+                    if active_schema_repairer is not None
+                    else self.parse_json(None, item_path)
                 )
 
             if ObjectComparer.is_strictly_empty(value) and self.get_char_at() not in {closing_delimiter, ","}:
                 self.index += 1
+                self.tracer.retract(item_path)
             elif value == "..." and self.get_char_at(-1) == ".":
                 self.log(
                     "While parsing an array, found a stray '...'; ignoring it",
                 )
+                self.tracer.retract(item_path)
             elif not drop_item:
                 arr.append(value)
             elif schema_repairer is not None:
                 # Record drops for visibility when schema forbids extra tuple items.
                 schema_repairer._log("Dropped extra array item not covered by schema", item_path)
+                self.tracer.mark_dropped_item(path, idx, "Dropped extra array item not covered by schema")
 
             idx += 1
 
