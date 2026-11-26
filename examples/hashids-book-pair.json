@@ -1,0 +1,35 @@
+{
+  "books": [
+    {
+      "id": 0,
+      "name": "old",
+      "alphabet": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+      "salt": "",
+      "min_length": 4,
+      "fields": 1,
+      "ranges": [
+        {"min": [0], "max": [1000000]}
+      ],
+      "reviewed_ranges": [
+        {"min": [151], "max": [151]}
+      ],
+      "orders": [[151]]
+    },
+    {
+      "id": 1,
+      "name": "other",
+      "alphabet": "abcdeghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123467890",
+      "salt": "local-b",
+      "min_length": 4,
+      "fields": 1,
+      "ranges": [
+        {"min": [0], "max": [1000000]}
+      ],
+      "reviewed_ranges": [
+        {"min": [55263], "max": [55263]}
+      ],
+      "orders": [[55263]]
+    }
+  ],
+  "reviewed_codes": ["epQ6"]
+}
