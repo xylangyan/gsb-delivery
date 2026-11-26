@@ -220,12 +220,68 @@ Drain3 currently supports the following persistence modes:
 
 - **File** - The snapshot is saved to a file.
 
+- **Incremental file (lightweight checkpoints)** - A directory holding one full base snapshot plus an append-only
+  journal. Each checkpoint serializes only the clusters that actually changed and records the log position
+  (`watermark`) that has been fully processed, so saves grow with the amount of change instead of the size of the
+  template library. It can start from an existing full `File` snapshot, and historical checkpoints can be folded into a
+  fresh base snapshot by compaction so restarts never replay the whole history. See
+  [Incremental checkpoints](#incremental-checkpoints).
+
 - **Memory** - The snapshot is saved an in-memory object.
 
 - **None** - No persistence.
 
 Drain3 persistence modes can be easily extended to another medium / database by inheriting
 the [PersistenceHandler](drain3/persistence_handler.py) class.
+
+### Incremental checkpoints
+
+The classic file persistence rewrites the complete Drain state on every save. For a large, mostly-stable template
+library this is wasteful when a batch of new messages only touches a few clusters.
+[`IncrementalFilePersistence`](drain3/incremental_persistence.py) instead keeps
+
+- `base_snapshot.json` - a full Drain snapshot in the classic format (a snapshot produced by `FilePersistence` can be
+  copied here to bootstrap the lightweight mode),
+- `base_snapshot.meta` - the watermark (log position) covered by the base snapshot,
+- `journal.jsonl` - one JSON checkpoint per line, containing only the changed/created/evicted clusters and the
+  watermark of the processed log message,
+- `journal.pointer` - the durable byte length of the journal; a checkpoint only becomes visible after this pointer is
+  atomically updated, so a partially written checkpoint is ignored on restart.
+
+Because every checkpoint carries a watermark, the collector resumes reading the original log strictly after the
+position returned by `TemplateMiner.get_watermark()`. The watermark is any monotonic position meaningful to the
+collector (line number, byte offset, ...) and is passed explicitly:
+
+```python
+from drain3 import TemplateMiner
+from drain3.incremental_persistence import IncrementalFilePersistence
+
+template_miner = TemplateMiner(IncrementalFilePersistence("./checkpoints"), config)
+
+for line_number, log_line in enumerate(log_stream, start=1):
+    template_miner.add_log_message(log_line, watermark=line_number)
+
+# After a restart:
+template_miner = TemplateMiner(IncrementalFilePersistence("./checkpoints"), config)
+resume_after = template_miner.get_watermark()  # continue the log stream after this position
+```
+
+Long-running collectors fold old checkpoints into a fresh base snapshot. Staging and switching are separate
+crash-safe steps, so ingestion can continue while compaction is in flight; checkpoints newer than the compaction
+point are retained on top of the new base:
+
+```python
+template_miner.begin_checkpoint_compaction(watermark=line_number)
+# ... more add_log_message(..., watermark=...) calls are allowed here ...
+template_miner.commit_checkpoint_compaction(watermark=line_number)
+# or, when no messages are processed in between:
+# template_miner.compact_checkpoint(watermark=line_number)
+```
+
+All writes use a temp-file + fsync + atomic rename. If the process dies while a checkpoint is only partially
+written, the next restart restores the previous complete checkpoint and the message at the failed watermark is
+simply re-read. The learned clusters and `match()` results after any restart are identical to training the same
+inputs with the classic full-snapshot persistence.
 
 ## Training vs. Inference modes
 

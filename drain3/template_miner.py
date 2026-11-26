@@ -11,6 +11,7 @@ import jsonpickle  # type: ignore[import]
 from cachetools import LRUCache, cachedmethod
 
 from drain3.drain import Drain, DrainBase, LogCluster
+from drain3.incremental_persistence import IncrementalFilePersistence
 from drain3.masking import LogMasker
 from drain3.persistence_handler import PersistenceHandler
 from drain3.simple_profiler import SimpleProfiler, NullProfiler, Profiler
@@ -74,6 +75,17 @@ class TemplateMiner:
             LRUCache(self.config.parameter_extraction_cache_capacity)
         self.last_save_time = time.time()
 
+        # Incremental ("lightweight") checkpoint mode: only changed clusters are
+        # journaled instead of rewriting the whole Drain state on every save.
+        self.incremental_persistence = isinstance(persistence_handler, IncrementalFilePersistence)
+        self._watermark: Optional[int] = None
+        self._last_processed_watermark: Optional[int] = None
+        self._checkpoint_seq = 0
+        # Clusters whose in-memory state is newer than the last checkpoint.
+        # A "none" match still grows a cluster, so its size must be journaled
+        # by the next checkpoint even if that checkpoint is triggered elsewhere.
+        self._dirty_cluster_ids: set = set()
+
         if persistence_handler is not None:
             self.load_state()
 
@@ -83,10 +95,17 @@ class TemplateMiner:
         assert self.persistence_handler is not None
 
         state = self.persistence_handler.load_state()
-        if state is None:
-            logger.info("Saved state not found")
+        if state is not None:
+            self._load_snapshot(state)
+
+        if self.incremental_persistence:
+            self._replay_journal()
             return
 
+        if state is None:
+            logger.info("Saved state not found")
+
+    def _load_snapshot(self, state: bytes) -> None:
         if self.config.snapshot_compress_state:
             state = zlib.decompress(base64.b64decode(state))
 
@@ -109,6 +128,47 @@ class TemplateMiner:
         logger.info(f"Restored {len(loaded_drain.clusters)} clusters "
                     f"built from {loaded_drain.get_total_cluster_size()} messages")
 
+    def _replay_journal(self) -> None:
+        """Apply every durable incremental checkpoint on top of the base snapshot.
+
+        Replay mirrors what live training does to the Drain state:
+
+        * a newly created cluster is inserted into the prefix tree exactly as in
+          :meth:`Drain.add_log_message`;
+        * a template/size change only replaces the cluster object, because Drain
+          itself never moves an existing cluster in the tree;
+        * an LRU-evicted cluster is dropped from ``id_to_cluster`` but its
+          (now-stale) tree leaf entry is kept, matching the live engine.
+        """
+        assert isinstance(self.persistence_handler, IncrementalFilePersistence)
+
+        # The base snapshot may itself carry a watermark (e.g. right after a
+        # compaction folded the journal away).
+        self._watermark = self.persistence_handler.base_watermark
+        tree_cluster_ids = set(self.drain.id_to_cluster.keys())
+
+        for record in self.persistence_handler.journal_records:
+            for cluster_data in record["clusters"]:
+                cluster_id = cluster_data["cluster_id"]
+                cluster = LogCluster(cluster_data["log_template_tokens"], cluster_id)
+                cluster.size = cluster_data["size"]
+                is_new_cluster = cluster_id not in tree_cluster_ids
+                self.drain.id_to_cluster[cluster_id] = cluster
+                if is_new_cluster:
+                    self.drain.add_seq_to_prefix_tree(self.drain.root_node, cluster)
+                    tree_cluster_ids.add(cluster_id)
+                self.drain.clusters_counter = max(self.drain.clusters_counter, cluster_id)
+            for cluster_id in record.get("deleted_cluster_ids", []):
+                self.drain.id_to_cluster.pop(cluster_id, None)
+            self._checkpoint_seq = max(self._checkpoint_seq, record["seq"])
+            self._watermark = record["watermark"]
+
+        if self._checkpoint_seq:
+            logger.info(
+                "Replayed %d incremental checkpoint(s), watermark=%s, %d clusters",
+                self._checkpoint_seq, self._watermark, len(self.drain.clusters),
+            )
+
     def save_state(self, snapshot_reason: str) -> None:
         assert self.persistence_handler is not None
 
@@ -121,6 +181,110 @@ class TemplateMiner:
                     f"reason: {snapshot_reason}")
         self.persistence_handler.save_state(state)
 
+    def get_watermark(self) -> Optional[int]:
+        """Log position covered by the last durable checkpoint.
+
+        The collector should continue reading the original log strictly after
+        this position (e.g. line number / offset). ``None`` before any
+        checkpoint exists.
+        """
+        return self._watermark
+
+    def _encode_cluster(self, cluster: LogCluster) -> Mapping[str, Union[int, Sequence[str]]]:
+        return {
+            "cluster_id": cluster.cluster_id,
+            "log_template_tokens": list(cluster.log_template_tokens),
+            "size": cluster.size,
+        }
+
+    def save_incremental_checkpoint(self,
+                                    watermark: int,
+                                    changed_cluster_ids: Sequence[int],
+                                    deleted_cluster_ids: Sequence[int]) -> None:
+        """Persist only the clusters changed since the previous checkpoint.
+
+        The journal record's size is proportional to the actual changes rather
+        than to the size of the whole template library.  ``watermark`` records
+        how far the collector has fully processed the original log.
+        """
+        assert isinstance(self.persistence_handler, IncrementalFilePersistence)
+
+        clusters = []
+        for cluster_id in changed_cluster_ids:
+            cluster = self.drain.id_to_cluster.get(cluster_id)
+            if cluster is not None:
+                clusters.append(self._encode_cluster(cluster))
+
+        self._checkpoint_seq += 1
+        record = {
+            "seq": self._checkpoint_seq,
+            "watermark": watermark,
+            "clusters": clusters,
+            "deleted_cluster_ids": list(deleted_cluster_ids),
+        }
+        self.persistence_handler.append_checkpoint(record)
+        self._watermark = watermark
+        logger.info(
+            "Saved incremental checkpoint seq=%d watermark=%d (%d changed, %d deleted clusters)",
+            self._checkpoint_seq, watermark, len(clusters), len(deleted_cluster_ids),
+        )
+
+    def begin_checkpoint_compaction(self, watermark: int) -> None:
+        """Stage a full snapshot folding every checkpoint up to ``watermark``.
+
+        The staged snapshot is not live until :meth:`commit_checkpoint_compaction`
+        runs, so new messages can keep producing journal checkpoints meanwhile.
+        """
+        assert isinstance(self.persistence_handler, IncrementalFilePersistence)
+
+        state = jsonpickle.dumps(self.drain, keys=True).encode('utf-8')
+        if self.config.snapshot_compress_state:
+            state = base64.b64encode(zlib.compress(state))
+
+        logger.info(
+            "Staging checkpoint compaction at watermark=%d (%d clusters, %d checkpoint(s) to fold)",
+            watermark, len(self.drain.clusters), self._checkpoint_seq,
+        )
+        self.persistence_handler.begin_compaction(state, watermark)
+
+    def commit_checkpoint_compaction(self, watermark: int) -> None:
+        """Switch to the staged snapshot, rebasing newer checkpoints onto it.
+
+        Journal checkpoints with a watermark greater than the compaction point
+        (saved while compaction was in flight) are retained on top of the new
+        base, so a restart after the switch still resumes at the newest
+        checkpoint rather than replaying the whole history.
+        """
+        assert isinstance(self.persistence_handler, IncrementalFilePersistence)
+
+        retained_records = self.persistence_handler.commit_compaction(watermark)
+        self._checkpoint_seq = max((record["seq"] for record in retained_records), default=0)
+        self._watermark = retained_records[-1]["watermark"] if retained_records else watermark
+        # Flush changes processed after the staged snapshot that never triggered
+        # a checkpoint of their own (e.g. a "none" match while compaction was
+        # in flight), so the new base never hides an un-durable cluster state.
+        if self._dirty_cluster_ids and self._last_processed_watermark is not None:
+            self.save_incremental_checkpoint(
+                self._last_processed_watermark, sorted(self._dirty_cluster_ids), []
+            )
+            self._watermark = self._last_processed_watermark
+        self._dirty_cluster_ids.clear()
+        logger.info(
+            "Checkpoint compaction switched at watermark=%d, %d newer checkpoint(s) retained, "
+            "resume watermark=%s",
+            watermark, len(retained_records), self._watermark,
+        )
+
+    def compact_checkpoint(self, watermark: int) -> None:
+        """Fold all historical checkpoints into a fresh full snapshot.
+
+        Convenience wrapper around :meth:`begin_checkpoint_compaction` and
+        :meth:`commit_checkpoint_compaction`.  Afterwards checkpoints up to
+        ``watermark`` no longer have to be replayed on restart.
+        """
+        self.begin_checkpoint_compaction(watermark)
+        self.commit_checkpoint_compaction(watermark)
+
     def get_snapshot_reason(self, change_type: str, cluster_id: int) -> Optional[str]:
         if change_type != "none":
             return f"{change_type} ({cluster_id})"
@@ -131,8 +295,22 @@ class TemplateMiner:
 
         return None
 
-    def add_log_message(self, log_message: str) -> Mapping[str, Union[str, int]]:
+    def add_log_message(self, log_message: str, watermark: Optional[int] = None) -> Mapping[str, Union[str, int]]:
         self.profiler.start_section("total")
+
+        if self.incremental_persistence and watermark is None:
+            self.profiler.end_section("total")
+            raise ValueError(
+                "watermark (position of the processed log message) is required for "
+                "incremental checkpoints so the collector knows where to resume after a restart"
+            )
+
+        # LRU eviction only exists when the number of clusters is bounded; only
+        # pay for the id snapshot in that case, so incremental saves stay
+        # proportional to the actual changes.
+        before_cluster_ids: Optional[set] = None
+        if self.incremental_persistence and self.config.drain_max_clusters is not None:
+            before_cluster_ids = set(self.drain.id_to_cluster.keys())
 
         self.profiler.start_section("mask")
         masked_content = self.masker.mask(log_message)
@@ -149,11 +327,28 @@ class TemplateMiner:
             "cluster_count": len(self.drain.clusters)
         }
 
+        if self.incremental_persistence:
+            self._last_processed_watermark = watermark
+            # The touched cluster changed even when the template did not,
+            # because its size grew.
+            self._dirty_cluster_ids.add(cluster.cluster_id)
+
         if self.persistence_handler is not None:
             self.profiler.start_section("save_state")
             snapshot_reason = self.get_snapshot_reason(change_type, cluster.cluster_id)
             if snapshot_reason:
-                self.save_state(snapshot_reason)
+                if self.incremental_persistence:
+                    deleted_cluster_ids = []
+                    if before_cluster_ids is not None:
+                        deleted_cluster_ids = list(
+                            before_cluster_ids - set(self.drain.id_to_cluster.keys())
+                        )
+                    self.save_incremental_checkpoint(
+                        watermark, sorted(self._dirty_cluster_ids), deleted_cluster_ids
+                    )
+                    self._dirty_cluster_ids.clear()
+                else:
+                    self.save_state(snapshot_reason)
                 self.last_save_time = time.time()
             self.profiler.end_section()
 

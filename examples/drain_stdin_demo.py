@@ -11,6 +11,7 @@ from drain3.template_miner_config import TemplateMinerConfig
 # persistence_type = "NONE"
 # persistence_type = "REDIS"
 # persistence_type = "KAFKA"
+# persistence_type = "INCREMENTAL_FILE"
 persistence_type = "FILE"
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,11 @@ elif persistence_type == "FILE":
     from drain3.file_persistence import FilePersistence
 
     persistence = FilePersistence("drain3_state.bin")
+
+elif persistence_type == "INCREMENTAL_FILE":
+    from drain3.incremental_persistence import IncrementalFilePersistence
+
+    persistence = IncrementalFilePersistence("drain3_checkpoints")
 
 elif persistence_type == "REDIS":
     from drain3.redis_persistence import RedisPersistence
@@ -46,11 +52,16 @@ template_miner = TemplateMiner(persistence, config)
 print(f"Drain3 started with '{persistence_type}' persistence")
 print(f"{len(config.masking_instructions)} masking instructions are in use")
 print(f"Starting training mode. Reading from std-in ('q' to finish)")
+line_number = template_miner.get_watermark() or 0
 while True:
     log_line = input("> ")
     if log_line == 'q':
         break
-    result = template_miner.add_log_message(log_line)
+    if persistence_type == "INCREMENTAL_FILE":
+        line_number += 1
+        result = template_miner.add_log_message(log_line, watermark=line_number)
+    else:
+        result = template_miner.add_log_message(log_line)
     result_json = json.dumps(result)
     print(result_json)
     template = result["template_mined"]
