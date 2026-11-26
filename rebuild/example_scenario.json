@@ -1,0 +1,32 @@
+{
+  "seed": 20261127,
+  "locales": {"en_US": 5, "fr_FR": 3, "ja_JP": 2},
+  "cells": [
+    {"name": "A", "lo": 1, "hi": 4, "step": 1},
+    {"name": "B", "lo": 0, "hi": 6, "step": 2}
+  ],
+  "registry": [
+    [1, 0], [1, 2], [1, 4], [1, 6],
+    [2, 0], [2, 2], [2, 4], [2, 6],
+    [3, 0], [3, 2], [3, 4], [3, 6],
+    [4, 0], [4, 2], [4, 4], [4, 6]
+  ],
+  "prefetch": {"1": ["early_optional"]},
+  "rows": [
+    {"name": "lead_int", "method": "random_int", "args": [0, 3]},
+    {"name": "gated_optional", "method": "random_int", "args": [0, 99],
+     "optional": true,
+     "prob_rule": {"kind": "gated", "table": {"0": 0.29, "1": 0.07, "2": 0.81}, "default": 0.5}},
+    {"name": "early_optional", "method": "random_int", "args": [0, "cell:B"],
+     "optional": true,
+     "prob_rule": {"kind": "fixed", "prob": 0.29}},
+    {"name": "global_unique", "method": "random_int", "kwargs": {"min": 1, "max": 6}, "unique": true},
+    {"name": "locale_unique", "method": "random_int", "kwargs": {"min": 1, "max": 6}, "unique": true, "locale": "fr_FR"},
+    {"name": "global_unique_2", "method": "random_int", "kwargs": {"min": 1, "max": 6}, "unique": true},
+    {"name": "arg_cell_a", "method": "random_int", "args": [0, "cell:A"]}
+  ],
+  "tail": [
+    {"method": "random_int", "kwargs": {"min": 1, "max": 6}, "unique": true},
+    {"method": "random_int", "kwargs": {"min": 0, "max": 999}}
+  ]
+}
