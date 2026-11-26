@@ -1,0 +1,49 @@
+{
+  "schema_version": "offline-replay-contract/v1",
+  "name": "recorded-catalog-z24-plus",
+  "replay_base_url": "http://fixture.invalid/replay",
+  "max_concrete_cases": 512,
+  "input": {
+    "references": ["?", "leaf", ""],
+    "k": {
+      "alphabet": "abcdefghijklmnopqrstuvwxyz",
+      "min_length": 1,
+      "max_length": 24
+    },
+    "v": {
+      "alphabet": "abcdefghijklmnopqrstuvwxyz+",
+      "min_length": 2,
+      "max_length": 25,
+      "binding": {
+        "kind": "append_literal_to_k",
+        "suffix": "+"
+      }
+    }
+  },
+  "procedures": [
+    {
+      "id": "append",
+      "catalog_url": "http://catalog.invalid/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b",
+      "encoded": true,
+      "method": "extend_query",
+      "pairs": [
+        [
+          {"var": "k"},
+          {"var": "v"}
+        ]
+      ]
+    },
+    {
+      "id": "update",
+      "catalog_url": "http://catalog.invalid/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b",
+      "encoded": true,
+      "method": "update_query",
+      "pairs": [
+        [
+          {"var": "k"},
+          {"var": "v"}
+        ]
+      ]
+    }
+  ]
+}

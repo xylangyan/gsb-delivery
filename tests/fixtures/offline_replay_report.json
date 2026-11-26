@@ -1,0 +1,76 @@
+{
+  "schema_version": "offline-replay-contract/v1",
+  "name": "recorded-catalog-z24-plus",
+  "status": "divergent",
+  "replay_base_url": "http://fixture.invalid/replay",
+  "input_space": {
+    "references": [
+      "?",
+      "leaf",
+      ""
+    ],
+    "k": {
+      "alphabet": "abcdefghijklmnopqrstuvwxyz",
+      "min_length": 1,
+      "max_length": 24,
+      "count": 9470953200318703555071806597538774
+    },
+    "v": {
+      "alphabet": "+abcdefghijklmnopqrstuvwxyz",
+      "min_length": 2,
+      "max_length": 25,
+      "count": 631661664163871467162748761565740560,
+      "binding": {
+        "kind": "append_literal_to_k",
+        "suffix": "+"
+      }
+    },
+    "total_inputs": 28412859600956110665215419792616322
+  },
+  "coverage": {
+    "all_permitted_inputs_covered": true,
+    "method": "ordered_symbolic_search",
+    "total_inputs": 28412859600956110665215419792616322,
+    "concrete_cases_generated": 1,
+    "concrete_cases_compared": 1,
+    "hard_max_concrete_cases": 512,
+    "proof": "The first permitted key equal to an existing decoded query key causes update_query to overwrite/remove values while extend_query appends."
+  },
+  "first_divergence": {
+    "input": {
+      "r": "",
+      "k": "zzzzzzzzzzzzzzzzzzzzzzzz",
+      "v": "zzzzzzzzzzzzzzzzzzzzzzzz+"
+    },
+    "r_index": 2,
+    "order_index": 28412859600956110665215419792616321,
+    "first_different_step": "query_modification",
+    "outer_raw_path_qs": {
+      "append": "/replay?target=/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz%3Da%252Bb%26zzzzzzzzzzzzzzzzzzzzzzzz%3Da%2Bb%26zzzzzzzzzzzzzzzzzzzzzzzz%3Dzzzzzzzzzzzzzzzzzzzzzzzz%252B",
+      "update": "/replay?target=/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz%3Dzzzzzzzzzzzzzzzzzzzzzzzz%252B"
+    },
+    "outer_urls": {
+      "append": "http://fixture.invalid/replay?target=/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz%3Da%252Bb%26zzzzzzzzzzzzzzzzzzzzzzzz%3Da%2Bb%26zzzzzzzzzzzzzzzzzzzzzzzz%3Dzzzzzzzzzzzzzzzzzzzzzzzz%252B",
+      "update": "http://fixture.invalid/replay?target=/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz%3Dzzzzzzzzzzzzzzzzzzzzzzzz%252B"
+    },
+    "stage_raw_path_qs": {
+      "catalog": {
+        "append": "/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b",
+        "update": "/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b"
+      },
+      "join": {
+        "append": "/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b",
+        "update": "/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b"
+      },
+      "query_modification": {
+        "append": "/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=a%2Bb&zzzzzzzzzzzzzzzzzzzzzzzz=a+b&zzzzzzzzzzzzzzzzzzzzzzzz=zzzzzzzzzzzzzzzzzzzzzzzz%2B",
+        "update": "/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz=zzzzzzzzzzzzzzzzzzzzzzzz%2B"
+      },
+      "replay": {
+        "append": "/replay?target=/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz%3Da%252Bb%26zzzzzzzzzzzzzzzzzzzzzzzz%3Da%2Bb%26zzzzzzzzzzzzzzzzzzzzzzzz%3Dzzzzzzzzzzzzzzzzzzzzzzzz%252B",
+        "update": "/replay?target=/catalog/index?zzzzzzzzzzzzzzzzzzzzzzzz%3Dzzzzzzzzzzzzzzzzzzzzzzzz%252B"
+      }
+    },
+    "replayed_with_yarl": true
+  }
+}
