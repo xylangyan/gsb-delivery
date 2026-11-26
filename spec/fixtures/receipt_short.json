@@ -1,0 +1,33 @@
+{
+  "tag": "app",
+  "identifier_width": 4,
+  "messages": {
+    "A": {"id": "A", "payload": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+    "B": {"id": "B", "payload": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+    "C": {"id": "C", "payload": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+  },
+  "operations": [
+    {"kind": "connect", "connection": 1, "time": 0},
+    {"kind": "post", "number": "A", "time": 0},
+    {"kind": "post", "number": "B", "time": 0},
+    {"kind": "post", "number": "C", "time": 1}
+  ],
+  "fixture": {
+    "connect": [
+      {"when": {"connection": [1]}, "then": "fail"},
+      {"then": "complete"}
+    ],
+    "write": [
+      {"when": {"at_least": [1, ["A"]]}, "then": "complete"},
+      {"then": {"outcome": "partial", "bytes": "pending-1"}}
+    ]
+  },
+  "checkpoints": [{"name": "after_c", "number": "C"}],
+  "certificate": [
+    {
+      "checkpoint": "after_c",
+      "numbers": {"A": {"min": 1}, "C": {"min": 1}, "B": {"max": 1}},
+      "callback_cap": 250
+    }
+  ]
+}
