@@ -297,6 +297,58 @@ S3_BUCKET=S3_BUCKET
 SECRET_KEY=SECRET_KEY
 ```
 
+### Handover Rehearsal
+
+When a process must be restarted from an empty environment, only a handover-approved
+set of keys can be carried over. `Dotenv.rehearse` replays a manifest of `parse`,
+`load` and `overwrite` steps against alternative startup environments and finds the
+smallest inherited key roster that still reproduces every registered route.
+
+```ruby
+manifest = Dotenv::Handover::Manifest.load("handover.json")
+result = Dotenv.rehearse(manifest: manifest, environment: ENV.to_h)
+
+result.routes                    # every registered route, with its exact bytes
+result.verify                    # compare every route to the full start environment
+result.minimal_keys.keys         # => ["PIPELINE_FAST", "PIPELINE_MARKER"]
+Dotenv.minimal_keys(manifest: manifest, environment: ENV.to_h)
+```
+
+Rehearsal is side-effect free: each route runs in its own sandbox and the caller's
+real `ENV` is never read or written. Only plain variable substitution (`${VAR}`) is
+performed, so a manifest cannot execute shell commands against the host.
+
+A manifest names the startup environment, the `.env` documents, and a list of
+checkpoints. Each checkpoint uses `parse`, `load` or `overwrite`, names its files,
+and lists destinations evaluated from the fields that call returned, the current
+environment, or the exception it raised:
+
+```json
+{
+  "start_environment": {"PIPELINE_FAST": "1", "PIPELINE_MARKER": ""},
+  "required_keys": [],
+  "optional_keys": ["PIPELINE_FAST", "PIPELINE_MARKER"],
+  "files": {"check.env": "FAST=\"${PIPELINE_FAST}\"\n"},
+  "cases": [{"name": "complete", "environment": {"PIPELINE_FAST": "1", "PIPELINE_MARKER": ""}}],
+  "checkpoints": [
+    {"name": "check", "operation": "parse", "files": ["check.env"],
+     "destinations": [
+       {"to": "done", "when": {"field": "FAST", "op": "eq", "value": "1"}}
+     ]}
+  ]
+}
+```
+
+Every key named in `required_keys` is carried. Optional keys are added only when a
+route needs them; ties are broken by sorted key name, so a roster of a given size is
+the lexicographically smallest one. When no single roster can keep every declared
+case, `minimal_keys` returns `feasible? == false` and lists the first unreachable
+checkpoint for each affected case.
+
+```console
+$ dotenv-handover handover.json --verify --minimal
+```
+
 ## Frequently Answered Questions
 
 ### Can I use dotenv in production?

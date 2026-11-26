@@ -18,14 +18,14 @@ module Dotenv
           \}?           # closing brace
         /xi
 
-        def call(value, env)
+        def call(value, env, outer: ENV)
           value.gsub(VARIABLE) do |variable|
             match = $LAST_MATCH_INFO
 
             if match[1] == "\\"
               variable[1..]
             elsif match[3]
-              env[match[3]] || ENV[match[3]] || ""
+              env[match[3]] || outer[match[3]] || ""
             else
               variable
             end

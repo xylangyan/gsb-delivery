@@ -1,0 +1,166 @@
+{
+  "start_environment": {
+    "PIPELINE_FAST": "1",
+    "PIPELINE_CACHE": "1",
+    "PIPELINE_BATCH": "1",
+    "PIPELINE_MARKER": ""
+  },
+  "required_keys": [],
+  "optional_keys": [
+    "PIPELINE_FAST",
+    "PIPELINE_CACHE",
+    "PIPELINE_BATCH",
+    "PIPELINE_MARKER"
+  ],
+  "cases": [
+    {
+      "name": "complete",
+      "environment": {
+        "PIPELINE_FAST": "1",
+        "PIPELINE_CACHE": "1",
+        "PIPELINE_BATCH": "1",
+        "PIPELINE_MARKER": ""
+      },
+      "expected": [
+        {
+          "route": [
+            "check",
+            "west",
+            "normal"
+          ],
+          "expect": {
+            "BODY": "west\nstart"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing_marker",
+      "environment": {
+        "PIPELINE_FAST": "1",
+        "PIPELINE_CACHE": "1",
+        "PIPELINE_BATCH": "1"
+      },
+      "expected": [
+        {
+          "route": [
+            "check",
+            "west",
+            "fallback"
+          ],
+          "expect": {
+            "BODY": "west\nretry"
+          }
+        }
+      ]
+    }
+  ],
+  "files": {
+    "check.env": "FAST=\"${PIPELINE_FAST}\"\nCACHE=\"${PIPELINE_CACHE}\"\nBATCH=\"${PIPELINE_BATCH}\"\n",
+    "west.env": "PIPELINE_SITE=west\nDOTENV_LINEBREAK_MODE=legacy\n",
+    "marker.env": "export PIPELINE_MARKER\n",
+    "normal.env": "BODY=\"${PIPELINE_SITE}\\nstart\"\n",
+    "fallback.env": "BODY=\"${PIPELINE_SITE}\\nretry\"\n"
+  },
+  "entry": "check",
+  "checkpoints": [
+    {
+      "name": "check",
+      "operation": "parse",
+      "files": [
+        "check.env"
+      ],
+      "destinations": [
+        {
+          "to": "west",
+          "when": {
+            "any": [
+              {
+                "field": "FAST",
+                "op": "eq",
+                "value": "1"
+              },
+              {
+                "all": [
+                  {
+                    "field": "CACHE",
+                    "op": "eq",
+                    "value": "1"
+                  },
+                  {
+                    "field": "BATCH",
+                    "op": "eq",
+                    "value": "1"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "west",
+      "operation": "load",
+      "files": [
+        "west.env",
+        "marker.env"
+      ],
+      "destinations": [
+        {
+          "to": "normal",
+          "when": {
+            "error": false
+          }
+        },
+        {
+          "to": "fallback",
+          "when": {
+            "error": true
+          },
+          "fallback": true
+        }
+      ]
+    },
+    {
+      "name": "normal",
+      "operation": "parse",
+      "files": [
+        "normal.env"
+      ],
+      "capture": [
+        "BODY"
+      ],
+      "destinations": [
+        {
+          "to": "finish"
+        }
+      ],
+      "expect": {
+        "BODY": {
+          "bytes": "west\nstart"
+        }
+      }
+    },
+    {
+      "name": "fallback",
+      "operation": "parse",
+      "files": [
+        "fallback.env"
+      ],
+      "capture": [
+        "BODY"
+      ],
+      "destinations": [
+        {
+          "to": "finish"
+        }
+      ],
+      "expect": {
+        "BODY": {
+          "bytes": "west\nretry"
+        }
+      }
+    }
+  ]
+}

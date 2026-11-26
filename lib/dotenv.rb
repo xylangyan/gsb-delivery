@@ -3,6 +3,7 @@ require "dotenv/parser"
 require "dotenv/environment"
 require "dotenv/missing_keys"
 require "dotenv/diff"
+require "dotenv/handover"
 
 # Shim to load environment variables from `.env files into `ENV`.
 module Dotenv
@@ -129,6 +130,18 @@ module Dotenv
     ensure
       restore(diff.a, safe: true)
     end
+  end
+
+  # Rehearse a handover manifest in an isolated environment and report the
+  # smallest set of inherited keys that keeps every registered route.
+  #
+  # @see Dotenv::Handover.rehearse
+  def rehearse(**options)
+    Handover.rehearse(**options)
+  end
+
+  def minimal_keys(**options)
+    Handover.minimal_keys(**options)
   end
 
   def require_keys(*keys)

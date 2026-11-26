@@ -3,7 +3,14 @@ require "dotenv/substitutions/command" if RUBY_VERSION > "1.8.7"
 
 module Dotenv
   # Error raised when encountering a syntax error while parsing a .env file.
-  class FormatError < SyntaxError; end
+  class FormatError < SyntaxError
+    # The offending source line (stripped) when known.
+    attr_accessor :line
+    # One-based line number in the file when known.
+    attr_accessor :line_number
+    # The file the line came from when known.
+    attr_accessor :filename
+  end
 
   # Parses the `.env` file format into key/value pairs.
   # It allows for variable substitutions, command substitutions, and exporting of variables.
@@ -43,11 +50,13 @@ module Dotenv
       end
     end
 
-    def initialize(string, overwrite: false)
+    def initialize(string, overwrite: false, env: ENV, substitutions: nil)
       # Convert line breaks to same format
       @string = string.gsub(/\r\n?/, "\n")
       @hash = {}
       @overwrite = overwrite
+      @env = env
+      @substitutions = substitutions || self.class.substitutions
     end
 
     def call
@@ -56,11 +65,16 @@ module Dotenv
 
         if existing?(match[:key])
           # Use value from already defined variable
-          @hash[match[:key]] = ENV[match[:key]]
+          @hash[match[:key]] = @env[match[:key]]
         elsif match[:export] && !match[:value]
-          # Check for exported variable with no value
-          if !@hash.member?(match[:key])
-            raise FormatError, "Line #{match.to_s.inspect} has an unset variable"
+          # Check for exported variable with no value. A bare `export KEY`
+          # is valid when KEY was defined earlier in this file or is already
+          # present in the environment the file is being loaded into.
+          if !@hash.member?(match[:key]) && !@env.key?(match[:key])
+            error = FormatError.new("Line #{match.to_s.inspect} has an unset variable")
+            error.line = match.to_s.strip
+            error.line_number = @string[0...match.begin(0)].count("\n") + 1
+            raise error
           end
         else
           @hash[match[:key]] = parse_value(match[:value] || "")
@@ -74,7 +88,7 @@ module Dotenv
 
     # Determine if a variable is already defined and should not be overwritten.
     def existing?(key)
-      !@overwrite && key != "DOTENV_LINEBREAK_MODE" && ENV.key?(key)
+      !@overwrite && key != "DOTENV_LINEBREAK_MODE" && @env.key?(key)
     end
 
     def parse_value(value)
@@ -88,7 +102,7 @@ module Dotenv
       # Unescape characters and performs substitutions unless value is single quoted
       if maybe_quote != "'"
         value = unescape_characters(value)
-        self.class.substitutions.each { |proc| value = proc.call(value, @hash) }
+        @substitutions.each { |proc| value = proc.call(value, @hash, outer: @env) }
       end
 
       value
@@ -99,7 +113,7 @@ module Dotenv
     end
 
     def expand_newlines(value)
-      if (@hash["DOTENV_LINEBREAK_MODE"] || ENV["DOTENV_LINEBREAK_MODE"]) == "legacy"
+      if (@hash["DOTENV_LINEBREAK_MODE"] || @env["DOTENV_LINEBREAK_MODE"]) == "legacy"
         value.gsub('\n', "\n").gsub('\r', "\r")
       else
         value.gsub('\n', "\\\\\\n").gsub('\r', "\\\\\\r")

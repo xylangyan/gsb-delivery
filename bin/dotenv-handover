@@ -1,0 +1,6 @@
+#!/usr/bin/env ruby
+
+require "dotenv"
+require "dotenv/handover/cli"
+
+exit Dotenv::Handover::CLI.run(ARGV)
