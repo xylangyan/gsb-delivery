@@ -1,0 +1,26 @@
+{
+  "segments": [
+    {
+      "name": "A",
+      "wall_start": "2038-01-19T04:15:00",
+      "offset": "+02:00",
+      "digits": 7,
+      "tick_start": 2,
+      "step_ticks": 1,
+      "count": 100000000,
+      "line_start": 1,
+      "line_step": 2
+    },
+    {
+      "name": "B",
+      "wall_start": "2038-01-19T02:15:00",
+      "offset": "Z",
+      "digits": 7,
+      "tick_start": 2,
+      "step_ticks": 1,
+      "count": 100000000,
+      "line_start": 2,
+      "line_step": 2
+    }
+  ]
+}

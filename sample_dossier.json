@@ -1,0 +1,48 @@
+{
+  "segments": [
+    {
+      "name": "A",
+      "wall_start": "2038-01-19T04:15:00",
+      "offset": "+02:00",
+      "digits": 7,
+      "tick_start": 2,
+      "step_ticks": 1,
+      "count": 300,
+      "line_start": 1,
+      "line_step": 2
+    },
+    {
+      "name": "B",
+      "wall_start": "2038-01-19T02:15:00",
+      "offset": "Z",
+      "digits": 7,
+      "tick_start": 2,
+      "step_ticks": 1,
+      "count": 300,
+      "line_start": 2,
+      "line_step": 2
+    },
+    {
+      "name": "C",
+      "wall_start": "2038-01-19T04:15:00",
+      "offset": "+02:00",
+      "digits": 7,
+      "tick_start": 1000,
+      "step_ticks": 3,
+      "count": 120,
+      "line_start": 1000,
+      "line_step": 1
+    },
+    {
+      "name": "D",
+      "wall_start": "2038-01-19T02:15:00",
+      "offset": "Z",
+      "digits": 7,
+      "tick_start": 1001,
+      "step_ticks": 2,
+      "count": 90,
+      "line_start": 2000,
+      "line_step": 5
+    }
+  ]
+}
