@@ -5,6 +5,15 @@ module DBF
     class Foxpro < Base
       FPT_HEADER_SIZE = 512
 
+      def block_size # :nodoc:
+        @block_size ||= begin
+          data.rewind
+          header = data.read(FPT_HEADER_SIZE)
+          # A header shorter than 8 bytes cannot contain the block size field
+          header && header.bytesize >= 8 ? header.unpack1('x6n') : 0
+        end
+      end
+
       def build_memo(start_block) # :nodoc:
         data.seek offset(start_block)
         block = data.read(block_size)
@@ -31,15 +40,6 @@ module DBF
         length = remaining if length > remaining
         memo_string << data.read(length) if length.positive?
         memo_string
-      end
-
-      def block_size # :nodoc:
-        @block_size ||= begin
-          data.rewind
-          header = data.read(FPT_HEADER_SIZE)
-          # A header shorter than 8 bytes cannot contain the block size field
-          header && header.bytesize >= 8 ? header.unpack1('x6n') : 0
-        end
       end
     end
   end

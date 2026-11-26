@@ -35,9 +35,19 @@ module DBF
         @data.closed?
       end
 
+      # The block size this memo file is read with. dBase III/IV memos use a
+      # fixed 512-byte block; FoxPro stores the size in its file header.
+      def block_size
+        BLOCK_SIZE
+      end
+
+      # The per-memo read limit registered for this reader, or nil when memos
+      # are read in full.
+      attr_reader :max_size
+
       private
 
-      attr_reader :data, :max_size
+      attr_reader :data
 
       # Bounds a memo length by max_size, when one is set
       def limit(length) # :nodoc:
@@ -54,10 +64,6 @@ module DBF
 
       def block_content_size # :nodoc:
         @block_content_size ||= block_size - BLOCK_HEADER_SIZE
-      end
-
-      def block_size # :nodoc:
-        BLOCK_SIZE
       end
     end
   end

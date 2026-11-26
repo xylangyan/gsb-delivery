@@ -27,7 +27,27 @@ RSpec.describe DBF::CLI do
       status, out, = run('-h')
       expect(status).to eq 0
       expect(out).to include 'usage:'
-      %w[-h -v -s -a -r -c -j -J].each { |flag| expect(out).to include "#{flag} =" }
+      %w[-h -v -s -a -r -c -j -J -m].each { |flag| expect(out).to include "#{flag} =" }
+    end
+  end
+
+  describe '-m' do
+    it 'prints a shared memo plan for a dBase III and a FoxPro table' do
+      status, out, = run('-m', fixture('dbase_83.dbf'), fixture('dbase_f5.dbf'))
+      expect(status).to eq 0
+      plan = JSON.parse(out)
+      expect(plan['pool_bytes']).to be > 0
+      expect(plan['dbase']['block_size']).to eq 512
+      expect(plan['foxpro']['block_size']).to eq 64
+      expect(plan['conflicts']).to be_empty
+      expect(plan['verification']['dbase']['failed']).to eq 0
+      expect(plan['verification']['foxpro']['failed']).to eq 0
+    end
+
+    it 'reports the second filename is missing' do
+      status, _, err = run('-m', fixture('dbase_83.dbf'))
+      expect(status).to eq 1
+      expect(err).to include 'You must supply a filename'
     end
   end
 

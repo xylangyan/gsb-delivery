@@ -5,7 +5,7 @@ require 'optparse'
 module DBF
   class CLI
     USAGE = <<~HELP
-      usage: dbf [-h|-s|-a|-c|-r|-j|-J] filename
+      usage: dbf [-h|-s|-a|-c|-r|-j|-J|-m] filename
         -h = print this message
         -v = print the DBF gem version
         -s = print summary information
@@ -14,6 +14,8 @@ module DBF
         -c = export as CSV
         -j = export as a JSON array
         -J = export as JSON Lines (one record per line)
+        -m = plan a shared memo store read by both a dBase III and a FoxPro
+             table: dbf -m dbase.dbf fox.dbf
     HELP
 
     # Bytes a terminal interprets as control or escape sequences. A crafted
@@ -82,11 +84,12 @@ module DBF
       's' => :print_summary,
       'c' => :print_csv,
       'j' => :print_json,
-      'J' => :print_jsonl
+      'J' => :print_jsonl,
+      'm' => :print_shared_memo
     }.freeze
 
     def run
-      params = OptionParser.new.getopts(@argv, 'hsacrvjJ')
+      params = OptionParser.new.getopts(@argv, 'hsacrvjJm')
 
       if params['v']
         print_version
@@ -99,7 +102,7 @@ module DBF
         action = ACTIONS.find { |flag, _method| params[flag] }&.last
         send(action, filename) if action
       end
-      0
+      @status || 0
     rescue DBF::FileError => e
       @stderr.puts "#{e.class}: #{e.message}"
       1
@@ -117,7 +120,7 @@ module DBF
 
     def missing_filename
       @stderr.puts 'You must supply a filename on the command line'
-      1
+      @status = 1
     end
 
     # Always close the table when done: an open handle prevents deleting or
@@ -156,6 +159,17 @@ module DBF
 
     def print_csv(filename)
       with_table(filename) { |table| table.to_csv(interactive? ? TerminalFilter.new(@stdout) : @stdout) }
+    end
+
+    # dbf -m dbase.dbf fox.dbf: plan one shared memo store read by both.
+    def print_shared_memo(first)
+      second = @argv.shift
+      return missing_filename unless second
+
+      dbase = SharedMemo.scan(first, nil, name: File.basename(first, '.*'))
+      fox = SharedMemo.scan(second, nil, name: File.basename(second, '.*'))
+      plan = SharedMemo::Plan.new(dbase:, foxpro: fox)
+      @stdout.puts JSON.pretty_generate(plan.report)
     end
 
     # Streams a JSON array without materializing all records in memory.

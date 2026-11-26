@@ -6,6 +6,12 @@
 
 - Security (CWE-248): `DBF::Database::Foxpro.new` raises `DBF::FileNotFoundError` for a path containing a null byte instead of `ArgumentError`, as `Table.new` already did
 
+### Added
+
+- `DBF::SharedMemo`: plan one shared memo byte store that a dBase III reader and a FoxPro reader both read back with their own native code, under their own `.dbt` and `.fpt` names. `SharedMemo.scan` collects every physical record's memo, including deleted ones. `SharedMemo::Plan` packs the FoxPro memos into the aligned 64-byte runs a dBase III memo leaves after its `0x1A` terminator, verifies every memo through the real `Memo::Dbase3` and `Memo::Foxpro` classes, and reports the old -> new block pairs, per-block provenance, and any conflicting records. `allowed_dbase:` / `allowed_foxpro:` take the approved block ranges and report a memo that would have to move outside them. Plans are segment lists read through a lazy IO, so a large volume is checked without writing one image per candidate block set
+- `dbf -m dbase.dbf fox.dbf` prints that plan as JSON
+- `Memo::Base#block_size` and `#max_size` are public so a plan can read with the registered block size and per-memo limit
+
 ## 5.6.0
 
 ### Fixed

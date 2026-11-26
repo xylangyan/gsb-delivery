@@ -307,15 +307,17 @@ table.name = 'my_table_name'
 A small command-line utility called dbf is installed with the gem.
 
     $ dbf -h
-    usage: dbf [-h|-s|-a|-c|-r|-j|-J] filename
+    usage: dbf [-h|-s|-a|-c|-r|-j|-J|-m] filename
       -h = print this message
       -v = print the DBF gem version
       -s = print summary information
       -a = create an ActiveRecord::Schema
       -r = create a Sequel migration
       -c = export as CSV
-      -j = export as a JSON array
+      -j = export as JSON array
       -J = export as JSON Lines (one record per line)
+      -m = plan a shared memo store read by both a dBase III and a FoxPro
+           table: dbf -m dbase.dbf fox.dbf
 
 Create an executable ActiveRecord schema:
 
@@ -337,6 +339,51 @@ Dump all records as JSON or JSON Lines:
 JSON Lines output is streamed record by record, so it works well for very
 large files and pipelines (for example `dbf -J books.dbf | jq` or importing
 into DuckDB).
+
+## Sharing one memo store between dBase III and FoxPro
+
+A dBase III memo starts on a 512-byte block boundary, runs to a `0x1A`
+terminator, and drops NUL bytes. A FoxPro memo starts on the block size in its
+file header (64 bytes in practice), carries an 8-byte type/length header, and
+returns exactly the declared length. Because 512-byte blocks contain eight
+64-byte FoxPro blocks, the room a dBase memo leaves after its terminator can
+hold FoxPro memos without changing the dBase readback. One archive file can
+therefore be handed to each reader under the name that reader expects
+(`.dbt` for dBase III, `.fpt` for FoxPro).
+
+```ruby
+dbase = DBF::SharedMemo.scan('orders.dbf')          # memo found alongside
+fox   = DBF::SharedMemo.scan('notes.dbf')
+plan  = DBF::SharedMemo::Plan.new(dbase:, foxpro: fox)
+
+plan.conflicts.empty?        # true when every memo reads back identically
+plan.size                    # bytes in the shared store, packed in segment order
+plan.adjustments[:dbase]     # {pairs: old block => new block, changed:, unchanged:}
+plan.provenance(:foxpro, 8)  # original byte ranges and value read at block 8
+plan.write_to('archive.memo')
+plan.rewrite_dbf(:dbase, 'orders.dbf', 'orders-shared.dbf')
+```
+
+`scan` visits every physical record, so records flagged deleted are checked
+as well as those a normal browse would show. A memo with no pointer and an
+empty memo are kept distinct: FoxPro reads `""` only from a length-one header
+that ends the file, so the empty memo is placed last.
+
+When only some memo blocks may move, pass the approved ranges from the handover
+sheet; everything else is pinned at its current block and an impossible move is
+reported against the records that point at it:
+
+```ruby
+plan = DBF::SharedMemo::Plan.new(dbase:, foxpro: fox,
+                                 allowed_dbase: [1..4, 78..90],
+                                 allowed_foxpro: [8..40])
+plan.conflicts # [{side: :foxpro, record: 3, field: "OBSE", old_block: 8, ...}]
+```
+
+The plan is a list of segments read through a lazy IO, never a full image, so
+a large volume is described and verified without writing a copy for each
+candidate block set. `plan.verification` reports how many memos each side's
+native reader checked and how many differed.
 
 ## Reading a Visual Foxpro database (v8, v9)
 
