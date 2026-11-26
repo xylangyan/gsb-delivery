@@ -543,3 +543,103 @@ async def test_groupby(iterable, key, view):
         assert await view(a.groupby(asyncify(iterable), key=akey)) == await view(
             itertools.groupby(iterable, key=key)
         )
+
+
+class CloseTrackingSource:
+    """Async iterator that records pulls and whether it was closed"""
+
+    def __init__(self, items):
+        self.items = list(items)
+        self.index = 0
+        self.pulls = 0
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        assert not self.closed, "pulled from a closed source"
+        self.pulls += 1
+        if self.index >= len(self.items):
+            raise StopAsyncIteration
+        item = self.items[self.index]
+        self.index += 1
+        return item
+
+    async def aclose(self):
+        self.closed = True
+
+
+@sync
+async def test_groupby_stale_group_after_next():
+    """A saved group ends once groupby advances to the next group"""
+    source = asyncify(["a1", "a2", "b1", "b2"])
+    groups = a.groupby(source, key=lambda item: item[0])
+    key, first = await a.anext(groups)
+    assert key == "a"
+    assert await a.anext(first) == "a1"
+    # advancing the groupby scans the remaining "a" values and the first "b"
+    key, second = await a.anext(groups)
+    assert key == "b"
+    assert await a.anext(second) == "b1"
+    # the earlier group handle must no longer provide values
+    assert await a.anext(first, "closed") == "closed"
+    assert await a.list(second) == ["b2"]
+
+
+@sync
+async def test_groupby_close_unstarted():
+    """Closing a groupby before its first group is yielded is safe"""
+    groups = a.groupby(asyncify([1, 1, 2]))
+    await groups.aclose()
+    assert await a.anext(groups, "closed") == "closed"
+
+
+@sync
+async def test_tee_closed_peer_is_inert():
+    """A closed tee peer no longer provides items or pulls from the source"""
+    source = CloseTrackingSource([1, 2, 3])
+    left, right = a.tee(source)
+    assert await a.anext(left) == 1
+    await left.aclose()
+    assert await a.anext(left, "closed") == "closed"
+    # the sibling still sees all items; the buffer is shared
+    assert await a.anext(right) == 1
+    assert await a.list(right) == [2, 3]
+
+
+@sync
+async def test_tee_closed_by_parent_is_inert():
+    """Closing the tee closes its peers, which then stop without pulling"""
+    source = CloseTrackingSource([1, 2, 3])
+    async with a.tee(source, n=2) as (left, right):
+        assert await a.anext(left) == 1
+    assert source.closed
+    assert await a.anext(left, "closed") == "closed"
+    assert await a.anext(right, "closed") == "closed"
+
+
+@sync
+async def test_tee_derived_peer_shares_lock():
+    """Tee children derived from a peer use the parent's lock"""
+    items = list(range(8))
+
+    async def iter_values():
+        for item in items:
+            await Switch(3)
+            yield item
+
+    async def read_peer(peer, results, label):
+        results[label] = [item async for item in peer]
+
+    results = {}
+    left, right = a.tee(iter_values(), n=2, lock=Lock())
+    first, second = a.tee(left)
+    await Schedule(
+        read_peer(left, results, "left"),
+        read_peer(first, results, "first"),
+        read_peer(second, results, "second"),
+    )
+    await Switch()
+    results["right"] = [item async for item in right]
+    assert all(result == items for result in results.values())
