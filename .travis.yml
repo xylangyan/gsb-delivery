@@ -1,0 +1,99 @@
+# Default settings and matrix for amd64 jobs (except Python 3.7)
+os: linux
+dist: focal
+arch: amd64
+language: python
+cache:
+  pip: true
+  directories:
+    - .tox
+python:
+  - "3.9"
+  - "3.10"
+  # - "3.11"  # skip this one and add it separately to include docs build
+  - "3.12"
+  - "3.13"
+install: pip install tox-travis
+script: tox
+
+# Adjustments for specific platforms
+jobs:
+  include:
+    # Use this job to test the docs build
+    - name: amd64 / Python 3.11 / docs
+      arch: amd64
+      python: "3.11"
+      script: tox -e "py311-numpy{1.23,1.24,1.25,1.26,2.0,2.1,2.2},docs"
+
+    # ARM
+    - arch: arm64
+      python: "3.9"
+    - arch: arm64
+      python: "3.10"
+    - arch: arm64
+      python: "3.11"
+    - arch: arm64
+      dist: jammy
+      python: "3.12"
+    - arch: arm64
+      dist: jammy
+      python: "3.13"
+
+    # PPC
+    # Just build one numpy version on each ppc64 instance to avoid timeouts
+    - arch: ppc64le
+      python: "3.9"
+      script: tox -e "py39-numpy1.22"
+    - arch: ppc64le
+      python: "3.10"
+      script: tox -e "py310-numpy1.26"
+    - arch: ppc64le
+      python: "3.11"
+      script: tox -e "py311-numpy2.0"
+
+    # s390x build image has a pip cache permissions problem
+    # List all s390x jobs explicitly with adjusted install scripts
+    - arch: s390x
+      python: "3.9"
+      install:
+        - sudo chown -Rv $(id -u):$(id -g) ~/.cache/pip/wheels || true
+        - pip install tox-travis
+      # Cut down list of numpy versions so build doesn't time out
+      script: tox -e "py39-numpy{1.19,1.22,1.26}"
+    - arch: s390x
+      python: "3.10"
+      install:
+        - sudo chown -Rv $(id -u):$(id -g) ~/.cache/pip/wheels || true
+        - pip install tox-travis
+      # Exclude numpy v2.2 that doesn't build properly
+      script: tox -e "py310-numpy{1.21,1.22,1.23,1.24,1.25,1.26,2.0,2.1}"
+    - arch: s390x
+      python: "3.11"
+      install:
+        - sudo chown -Rv $(id -u):$(id -g) ~/.cache/pip/wheels || true
+        - pip install tox-travis
+      # Exclude numpy v2.2 that doesn't build properly
+      script: tox -e "py311-numpy{1.23,1.24,1.25,1.26,2.0,2.1}"
+
+    # FreeBSD build
+    - name: FreeBSD / Python 3.8
+      os: freebsd
+      language: python
+
+    # Mac build
+    - name: osx / Python 2.7 and 3.7
+      os: osx
+      language: generic
+      install: pip install tox
+      script: tox --skip-missing-interpreters
+
+    # Windows build
+    - name: Windows / Python 3.13
+      os: windows
+      language: shell
+      before_install:
+        - choco install python313
+        - python -m pip install --upgrade pip
+      env: PATH=/c/Python313:/c/Python313/Scripts:$PATH
+      install: pip install tox
+      script: tox --skip-missing-interpreters

@@ -1,0 +1,27 @@
+# Compiled python modules
+*.py[co]
+
+# Distribution artifacts
+/build/
+/dist/
+*.egg-info
+
+# Sphinx output
+/docs/_build
+
+# Test artifacts
+/.tox/
+.coverage*
+
+# IDE files
+.project
+.pydevproject
+.settings/
+.idea/
+.vscode/
+
+# Pyenv version file
+.python-version
+
+# Other
+dev-notes.rst
