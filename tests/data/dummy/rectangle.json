@@ -1,0 +1,79 @@
+{
+    "CityObjects":
+    {
+        "id-1":
+        {
+            "geometry":
+            [
+                {
+                    "boundaries":
+                    [
+                        [
+                            [
+                                0,
+                                1,
+                                2,
+                                3
+                            ]
+                        ]
+                    ],
+                    "type": "MultiSurface",
+                    "lod": "1.0"
+                }
+            ],
+            "type": "Building"
+        }
+    },
+    "version": "1.1",
+    "type": "CityJSON",
+    "vertices":
+    [
+        [
+            0,
+            0,
+            0
+        ],
+        [
+            0,
+            1000,
+            0
+        ],
+        [
+            1000,
+            1000,
+            0
+        ],
+        [
+            1000,
+            0,
+            0
+        ]
+    ],
+    "metadata":
+    {
+        "geographicalExtent":
+        [
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0
+        ]
+    },
+    "transform":
+    {
+        "scale":
+        [
+            0.001,
+            0.001,
+            0.001
+        ],
+        "translate":
+        [
+            0.0,
+            0.0,
+            0.0
+        ]
+    }
+}
