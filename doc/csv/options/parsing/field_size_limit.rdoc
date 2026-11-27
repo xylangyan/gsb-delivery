@@ -1,0 +1,33 @@
+====== Option +field_size_limit+
+
+Specifies the \Integer field size limit.
+This is the maximum field size + 1 allowed.
+
+Deprecated since 3.2.3. Use {max_field_size}[#class-CSV-label-Option+max_field_size] instead.
+<tt>field_size_limit: n</tt> is the same as <tt>max_field_size: n - 1</tt>.
+
+Default value:
+  CSV::DEFAULT_OPTIONS.fetch(:field_size_limit) # => nil
+
+For the examples in this section:
+  str = <<~EOT
+    "a","b"
+    "
+    2345
+    ",""
+  EOT
+  str # => "\"a\",\"b\"\n\"\n2345\n\",\"\"\n"
+
+Using the default +nil+:
+  ary = CSV.parse(str)
+  ary # => [["a", "b"], ["\n2345\n", ""]]
+
+Using <tt>7</tt>:
+  ary = CSV.parse(str, field_size_limit: 7)
+  ary # => [["a", "b"], ["\n2345\n", ""]]
+
+---
+
+Raises an exception if a field is too long:
+  # Raises CSV::MalformedCSVError (Field size exceeded: 6 > 5 in line 2.)
+  CSV.parse(str, field_size_limit: 6)
