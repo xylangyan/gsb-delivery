@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 20
+    groups:
+      python-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      python-dependencies-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      gha-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      gha-updates-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
