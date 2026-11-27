@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arxiv"
+dynamic = ["version"]
+description = "Python wrapper for the arXiv API"
+readme = "README.md"
+license = "MIT"
+authors = [
+    {name = "Lukas Schwab", email = "lukas.schwab@gmail.com"}
+]
+keywords = ["arxiv", "api", "wrapper", "academic", "journals", "papers"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "lxml>=6.1.0,<7.0",
+    "requests>=2.32,<2.35",
+]
+
+[project.urls]
+Homepage = "https://github.com/lukasschwab/arxiv.py"
+Repository = "https://github.com/lukasschwab/arxiv.py"
+Documentation = "https://lukasschwab.me/arxiv.py/"
+Issues = "https://github.com/lukasschwab/arxiv.py/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=6.2.2",
+    "ruff>=0.1.2",
+    "ty==0.0.92",
+    "types-requests",
+    "pdoc==14.5.1",
+    "pip-audit>=2.6.0",
+    # Mirror build-system.requires so the backend and its dependencies are audited too.
+    "hatchling",
+    "hatch-vcs",
+]
+
+# Modern build configuration with hatch-vcs
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+local_scheme = "dirty-tag"
+
+[tool.hatch.build.targets.wheel]
+packages = ["arxiv"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+ignore = ["E501", "W191"]
+select = [
+    "ANN", "E", "F", "W",
+]
+fixable = [
+    "A", "B", "C", "D", "E", "F", "G", "I", "N", "Q", "S", "T", "W", 
+    "ANN", "ARG", "BLE", "COM", "DJ", "DTZ", "EM", "ERA", "EXE", "FBT", 
+    "ICN", "INP", "ISC", "NPY", "PD", "PGH", "PIE", "PL", "PT", "PTH", 
+    "PYI", "RET", "RSE", "RUF", "SIM", "SLF", "TCH", "TID", "TRY", "UP", "YTT"
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.pytest.ini_options]
+addopts = "--verbose"
+log_cli = true
+log_cli_level = "DEBUG"
+
+[tool.ty.src]
+include = ["arxiv"]
+
+[tool.ty.rules]
+dynamic-function-decorator-return = "error"
+redundant-cast = "error"
+redundant-condition = "error"
+unsound-return-statement = "error"
+unused-ignore-comment = "error"
+unused-type-ignore-comment = "error"

@@ -1,0 +1,167 @@
+#!/bin/bash
+set -e
+
+# Intelligent release script for arxiv.py
+# Automatically determines next version based on PyPI and user choice
+
+DRY_RUN="$1"
+
+echo "🚀 Starting release process"
+
+# Ensure we have uv
+if ! command -v uv &> /dev/null; then
+    echo "❌ uv is required."
+    exit 1
+fi
+
+# Allow release script edits while requiring all package files to be clean.
+if [ -n "$(git status --porcelain -- . ':(top,exclude)release.sh')" ]; then
+    echo "❌ Working directory is not clean (excluding release.sh). Please commit or stash changes."
+    exit 1
+fi
+
+echo "✅ Working directory is clean (excluding release.sh)"
+
+# Get current version from PyPI
+echo "📡 Fetching current version from PyPI..."
+CURRENT_VERSION=$(curl -s https://pypi.org/pypi/arxiv/json | jq -r '.info.version' 2>/dev/null)
+
+if [ "$CURRENT_VERSION" = "0.0.0" ]; then
+    echo "⚠️  Could not fetch version from PyPI, using local git tags"
+    CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "2.3.2")
+fi
+
+echo "📦 Current version on PyPI: $CURRENT_VERSION"
+
+# Parse current version
+if [[ $CURRENT_VERSION =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+    MAJOR=${BASH_REMATCH[1]}
+    MINOR=${BASH_REMATCH[2]}
+    PATCH=${BASH_REMATCH[3]}
+else
+    echo "❌ Could not parse current version: $CURRENT_VERSION"
+    exit 1
+fi
+
+# Calculate next versions
+NEXT_MAJOR="$((MAJOR + 1)).0.0"
+NEXT_MINOR="$MAJOR.$((MINOR + 1)).0"
+NEXT_PATCH="$MAJOR.$MINOR.$((PATCH + 1))"
+
+echo ""
+echo "📋 Version options:"
+echo "  1) Patch:  $CURRENT_VERSION → $NEXT_PATCH (bug fixes)"
+echo "  2) Minor:  $CURRENT_VERSION → $NEXT_MINOR (new features, backward compatible)"
+echo "  3) Major:  $CURRENT_VERSION → $NEXT_MAJOR (breaking changes)"
+echo ""
+
+# Get user choice
+if [ "$DRY_RUN" = "--dry-run" ]; then
+    VERSION="$NEXT_MINOR"  # Default for dry run
+    echo "🔍 DRY RUN: Auto-selecting minor version $VERSION"
+else
+    read -p "Select version type [1/2/3]: " choice
+    case $choice in
+        1) VERSION="$NEXT_PATCH" ;;
+        2) VERSION="$NEXT_MINOR" ;;
+        3) VERSION="$NEXT_MAJOR" ;;
+        *) echo "❌ Invalid choice. Exiting."; exit 1 ;;
+    esac
+fi
+
+echo "🎯 Selected version: $VERSION"
+echo ""
+
+# A failed upload may leave the release tag in place. Only reuse it if
+# rebuilding this checkout will release the same commit.
+TAG="$VERSION"
+TAG_EXISTS=false
+if git show-ref --verify --quiet "refs/tags/$TAG"; then
+    if [ "$(git rev-parse "refs/tags/$TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+        echo "❌ Tag $TAG already exists at a different commit."
+        echo "   Check out $TAG to retry that release, or select a different version."
+        exit 1
+    fi
+    TAG_EXISTS=true
+    echo "♻️  Reusing existing tag $TAG at HEAD"
+fi
+
+# Run tests
+echo "🧪 Running tests..."
+make check
+echo "✅ Tests passed"
+
+# Clean previous builds
+echo "🧹 Cleaning previous builds..."
+make clean
+
+# Create and push tag
+if [ "$DRY_RUN" = "--dry-run" ]; then
+    if [ "$TAG_EXISTS" = false ]; then
+        echo "🔍 DRY RUN: Would create tag $TAG"
+    fi
+    echo "🔍 DRY RUN: Would push tag to origin"
+else
+    if [ "$TAG_EXISTS" = false ]; then
+        echo "🏷️  Creating tag $TAG..."
+        git tag -a "$TAG" -m "Release $VERSION"
+    fi
+    git push origin "$TAG"
+    echo "✅ Tag $TAG is available on origin"
+fi
+
+# Build distributions
+echo "📦 Building distributions..."
+# hatch-vcs still sees allowed release.sh edits as a dirty checkout.
+# The release tag and package files were checked above, so use its version.
+SETUPTOOLS_SCM_PRETEND_VERSION="$VERSION" uv build
+echo "✅ Build completed"
+
+# Show what was built
+echo "📋 Built distributions:"
+ls -la dist/
+
+# Upload to PyPI
+if [ "$DRY_RUN" = "--dry-run" ]; then
+    echo "🔍 DRY RUN: Would upload to PyPI:"
+    echo "   UV_PUBLISH_TOKEN=pypi-... uv publish dist/*"
+    echo ""
+    echo "🔍 To actually release, run: ./release.sh"
+else
+    echo "📤 Uploading to PyPI..."
+    echo "💡 You will be prompted for a PyPI API token unless UV_PUBLISH_TOKEN is set"
+    echo "💡 Or set: export UV_PUBLISH_TOKEN=pypi-..."
+    
+    read -r -p "Continue with PyPI upload? [y/N] " REPLY
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        PYPI_TOKEN="${UV_PUBLISH_TOKEN:-}"
+        if [ -z "$PYPI_TOKEN" ]; then
+            if ! read -r -s -p "Enter PyPI API token (pypi-...): " PYPI_TOKEN; then
+                echo
+                echo "❌ Could not read a PyPI API token."
+                exit 1
+            fi
+            echo
+        fi
+        if [[ $PYPI_TOKEN != pypi-?* ]]; then
+            echo "❌ A PyPI API token starting with pypi- is required."
+            exit 1
+        fi
+        UV_PUBLISH_TOKEN="$PYPI_TOKEN" uv publish dist/*
+        echo "✅ Successfully released $VERSION to PyPI!"
+        echo ""
+        echo "🎉 Release $VERSION completed successfully!"
+        echo "📍 Check: https://pypi.org/project/arxiv/$VERSION/"
+    else
+        echo "❌ Upload cancelled. You can upload manually later with:"
+        echo "   UV_PUBLISH_TOKEN=pypi-... uv publish dist/*"
+    fi
+fi
+
+echo ""
+echo "📝 Release summary:"
+echo "   Version: $VERSION"
+echo "   Previous: $CURRENT_VERSION"
+echo "   Tag: $TAG" 
+echo "   Files in dist/: $(ls -1 dist/ | wc -l)"
+echo "   Git commit: $(git rev-parse --short HEAD)"
