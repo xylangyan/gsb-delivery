@@ -1,0 +1,11 @@
+.vscode/
+.eggs/
+build/
+deps/
+dist/
+docs/_build/
+pyorc.egg-info/
+.pytest_cache/
+__pycache__/
+tests/__pycache__
+.mypy_cache/

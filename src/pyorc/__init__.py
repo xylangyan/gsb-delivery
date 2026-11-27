@@ -1,0 +1,91 @@
+import os
+import sys
+from typing import NamedTuple
+
+if sys.platform.startswith("win32") and "TZDIR" not in os.environ:
+    # Windows does not come with a standard IANA time zone database,
+    # but the ORC lib requires it. Set the TZDIR environment variable
+    # to the tzdata module's data directory.
+    import tzdata
+
+    os.environ["TZDIR"] = os.path.join(os.path.dirname(tzdata.__file__), "zoneinfo")
+
+from pyorc._pyorc import _orc_version, _protobuf_version
+
+from .enums import *
+from .errors import *
+from .predicates import PredicateColumn
+from .reader import Column, Reader, Stripe
+from .typedescription import *
+from .writer import Writer
+
+__version__ = "0.12.0"
+
+orc_version = _orc_version()
+protobuf_version = _protobuf_version()
+
+ORCVersionInfo = NamedTuple(
+    "ORCVersionInfo",
+    [("major", int), ("minor", int), ("patch", int), ("releaselevel", str)],
+)
+
+ProtobufVersionInfo = NamedTuple(
+    "ProtobufVersionInfo",
+    [("major", int), ("minor", int), ("micro", int)],
+)
+
+
+def __extract_version_info() -> ORCVersionInfo:
+    parts = _orc_version().split("-")
+    ver = parts[0]
+    rel_level = parts[1] if len(parts) > 1 else ""
+    major, minor, patch = map(int, ver.split("."))
+    return ORCVersionInfo(major, minor, patch, rel_level)
+
+
+orc_version_info = __extract_version_info()
+
+protobuf_version_info = ProtobufVersionInfo(*map(int, protobuf_version.split(".")))
+
+__all__ = [
+    "Column",
+    "PredicateColumn",
+    "Reader",
+    "Stripe",
+    "Writer",
+    # Enums
+    "CompressionKind",
+    "CompressionStrategy",
+    "TypeKind",
+    "StructRepr",
+    "WriterVersion",
+    # Errors
+    "ORCError",
+    "ParseError",
+    # Type descriptions
+    "TypeDescription",
+    "Boolean",
+    "TinyInt",
+    "SmallInt",
+    "Int",
+    "BigInt",
+    "Float",
+    "Double",
+    "String",
+    "Binary",
+    "Timestamp",
+    "TimestampInstant",
+    "Date",
+    "Char",
+    "VarChar",
+    "Decimal",
+    "Union",
+    "Array",
+    "Map",
+    "Struct",
+    # Version info
+    "orc_version",
+    "orc_version_info",
+    "protobuf_version",
+    "protobuf_version_info",
+]
