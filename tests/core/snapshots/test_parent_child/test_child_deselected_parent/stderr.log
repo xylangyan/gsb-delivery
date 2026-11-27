@@ -1,0 +1,4 @@
+INFO my-tap.parent Beginning sync of 'parent' in full_table mode
+INFO my-tap.child Beginning sync of 'child' in full_table mode with context keys: ('pid',)
+INFO my-tap.child Beginning sync of 'child' in full_table mode with context keys: ('pid',)
+INFO my-tap.child Beginning sync of 'child' in full_table mode with context keys: ('pid',)

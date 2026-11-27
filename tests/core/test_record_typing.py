@@ -1,0 +1,225 @@
+"""Typing tests."""
+
+from __future__ import annotations
+
+import logging
+import typing as t
+from datetime import datetime
+from functools import partial
+
+import pytest
+
+from singer_sdk.helpers._compat import datetime_fromisoformat as parse
+from singer_sdk.helpers._typing import (
+    conform_record_data_types,
+    get_datelike_property_type,
+    handle_invalid_timestamp_in_record,
+    to_json_compatible,
+)
+from singer_sdk.helpers.conform import DatetimeErrorTreatmentEnum, TypeConformanceLevel
+
+
+@pytest.mark.parametrize(
+    "record,schema,expected_row,ignore_props_message",
+    [
+        (
+            {"updatedAt": parse("2021-08-25T20:05:28.000000+00:00")},
+            {"properties": {"updatedAt": True}},
+            {"updatedAt": "2021-08-25T20:05:28.000000+00:00"},
+            None,
+        ),
+        (
+            {"updatedAt": parse("2021-08-25T20:05:28.000000Z")},
+            {"properties": {"updatedAt": True}},
+            {"updatedAt": "2021-08-25T20:05:28.000000+00:00"},
+            None,
+        ),
+        (
+            {"updatedAt": parse("2021-08-25T20:05:28.000000")},
+            {"properties": {"updatedAt": True}},
+            {"updatedAt": "2021-08-25T20:05:28.000000+00:00"},
+            None,
+        ),
+        (
+            {"present": 1, "absent": "2"},
+            {"properties": {"present": {"type": "integer"}}},
+            {"present": 1},
+            (
+                "Properties ('absent',) were present in the 'test-stream' stream but "
+                "not found in catalog schema. Ignoring."
+            ),
+        ),
+    ],
+    ids=[
+        "datetime with offset",
+        "datetime with timezone",
+        "datetime without timezone",
+        "ignored_props_message",
+    ],
+)
+def test_conform_record_data_types(
+    record: dict[str, t.Any],
+    schema: dict,
+    expected_row: dict,
+    ignore_props_message: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    stream_name = "test-stream"
+    logger = logging.getLogger("test-logger")
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        actual = conform_record_data_types(
+            stream_name,
+            record,
+            schema,
+            TypeConformanceLevel.RECURSIVE,
+            logger,
+        )
+        if ignore_props_message:
+            assert ignore_props_message in caplog.text
+        else:
+            assert not caplog.text
+
+    assert actual == expected_row
+
+
+@pytest.mark.parametrize(
+    "datetime_val,expected",
+    [
+        (parse("2021-08-25T20:05:28.000000+00:00"), "2021-08-25T20:05:28.000000+00:00"),
+        (parse("2021-08-25T20:05:28.000000+07:00"), "2021-08-25T20:05:28.000000+07:00"),
+        (
+            datetime.strptime(  # noqa: DTZ007
+                "2021-08-25T20:05:28.000000",
+                "%Y-%m-%dT%H:%M:%S.%f",
+            ),
+            "2021-08-25T20:05:28.000000+00:00",
+        ),
+        (
+            datetime.strptime(
+                "2021-08-25T20:05:28.000000-03:00",
+                "%Y-%m-%dT%H:%M:%S.%f%z",
+            ),
+            "2021-08-25T20:05:28.000000-03:00",
+        ),
+        ("2021-08-25T20:05:28.000000", "2021-08-25T20:05:28.000000"),
+        ("2021-08-25T20:05:28.000000Z", "2021-08-25T20:05:28.000000Z"),
+    ],
+)
+def test_to_json_compatible(datetime_val, expected):
+    actual = to_json_compatible(datetime_val)
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize(
+    "schema,expected",
+    [
+        ({"type": ["null", "string"]}, None),
+        ({"type": "string", "format": "date-time"}, "date-time"),
+        ({"type": "string", "format": "date"}, "date"),
+        ({"type": "string", "format": "time"}, "time"),
+        (
+            {"anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+            "date-time",
+        ),
+        ({"anyOf": [{"type": "string", "maxLength": 5}]}, None),
+        (
+            {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {"type": "string", "format": "date-time"},
+                    },
+                    {"type": "null"},
+                ],
+            },
+            None,
+        ),
+    ],
+)
+def test_get_datelike_property_type(schema, expected):
+    actual = get_datelike_property_type(schema)
+    assert actual == expected
+
+
+def test_handle_invalid_timestamp_in_record(
+    caplog: pytest.LogCaptureFixture,
+    subtests: pytest.Subtests,
+):
+    value = "2021-08-25T20:05:28.000000+00:00"
+    record = {"created_at": value}
+    key_breadcrumb = ["created_at"]
+    datelike_typename = "datetime"
+    value_err = ValueError("invalid timestamp")
+    type_err = TypeError("can not convert to timestamp")
+    logger = logging.getLogger("test-logger")
+
+    handle_val = partial(
+        handle_invalid_timestamp_in_record,
+        record=record,
+        key_breadcrumb=key_breadcrumb,
+        invalid_value=value,
+        datelike_typename=datelike_typename,
+        logger=logger,
+    )
+
+    with (
+        subtests.test("default treatment"),
+        pytest.raises(ValueError, match=r"Could not parse value.*"),
+    ):
+        handle_val(treatment=None, ex=value_err)
+
+    with (
+        subtests.test("error"),
+        pytest.raises(ValueError, match=r"Could not parse value.*") as exc_info,
+    ):
+        handle_val(treatment=DatetimeErrorTreatmentEnum.ERROR, ex=value_err)
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert str(exc_info.value.__cause__) == "invalid timestamp"
+
+    with (
+        subtests.test("error"),
+        pytest.raises(ValueError, match=r"Could not parse value.*") as exc_info,
+    ):
+        handle_val(treatment=DatetimeErrorTreatmentEnum.ERROR, ex=type_err)
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+    assert str(exc_info.value.__cause__) == "can not convert to timestamp"
+
+    with (
+        subtests.test("max (datetime)"),
+        caplog.at_level(logging.INFO, logger=logger.name),
+    ):
+        assert isinstance(
+            handle_val(treatment=DatetimeErrorTreatmentEnum.MAX, ex=value_err),
+            str,
+        )
+
+    with (
+        subtests.test("max (time)"),
+        caplog.at_level(logging.INFO, logger=logger.name),
+    ):
+        assert isinstance(
+            handle_val(
+                treatment=DatetimeErrorTreatmentEnum.MAX,
+                datelike_typename="time",
+                ex=value_err,
+            ),
+            str,
+        )
+        assert "Replacing with MAX value." in caplog.text
+
+    with (
+        subtests.test("null"),
+        caplog.at_level(logging.INFO, logger=logger.name),
+    ):
+        assert (
+            handle_val(
+                treatment=DatetimeErrorTreatmentEnum.NULL,
+                ex=value_err,
+            )
+            is None
+        )
+        assert "Replacing with NULL." in caplog.text

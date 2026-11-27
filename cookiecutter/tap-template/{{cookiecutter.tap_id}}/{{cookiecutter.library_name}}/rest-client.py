@@ -1,0 +1,202 @@
+"""REST client handling, including {{ cookiecutter.source_name }}Stream base class."""
+
+from __future__ import annotations
+
+import sys
+{% if cookiecutter.auth_method in ("OAuth2", "JWT") -%}
+from functools import cached_property
+{% endif -%}
+from typing import TYPE_CHECKING, Any
+
+{% if cookiecutter.auth_method  == "API Key" -%}
+from singer_sdk import SchemaDirectory, StreamSchema
+from singer_sdk.authenticators import APIKeyAuthenticator
+from singer_sdk.streams import {{ cookiecutter.stream_type }}Stream
+
+from {{ cookiecutter.library_name }} import schemas
+
+{% elif cookiecutter.auth_method  == "Bearer Token" -%}
+from singer_sdk import SchemaDirectory, StreamSchema
+from singer_sdk.authenticators import BearerTokenAuthenticator
+from singer_sdk.streams import {{ cookiecutter.stream_type }}Stream
+
+from {{ cookiecutter.library_name }} import schemas
+
+{% elif cookiecutter.auth_method == "Basic Auth" -%}
+from requests.auth import HTTPBasicAuth
+from singer_sdk import SchemaDirectory, StreamSchema
+from singer_sdk.streams import {{ cookiecutter.stream_type }}Stream
+
+from {{ cookiecutter.library_name }} import schemas
+
+{% elif cookiecutter.auth_method == "Custom or N/A" -%}
+from singer_sdk import SchemaDirectory, StreamSchema
+from singer_sdk.streams import {{ cookiecutter.stream_type }}Stream
+
+from {{ cookiecutter.library_name }} import schemas
+
+{% elif cookiecutter.auth_method in ("OAuth2", "JWT") -%}
+from singer_sdk import SchemaDirectory, StreamSchema
+from singer_sdk.streams import {{ cookiecutter.stream_type }}Stream
+
+from {{ cookiecutter.library_name }} import schemas
+from {{ cookiecutter.library_name }}.auth import {{ cookiecutter.source_name }}Authenticator
+
+{% endif -%}
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+if TYPE_CHECKING:
+    {%- if cookiecutter.auth_method in ("OAuth2", "JWT") %}
+    from singer_sdk.helpers.types import Auth, Context
+    {%- else %}
+    from singer_sdk.helpers.types import Context
+    {%- endif %}
+    from singer_sdk.pagination import BaseAPIPaginator
+    from singer_sdk.streams.rest import HTTPRequest, PageContext
+
+
+# TODO: Delete this is if not using json files for schema definition
+SCHEMAS_DIR = SchemaDirectory(schemas)
+
+
+class {{ cookiecutter.source_name }}Stream({{ cookiecutter.stream_type }}Stream):
+    """{{ cookiecutter.source_name }} stream class."""
+
+    # JSONPath expression that selects the records in the API response. "$[*]"
+    # matches every item of a top-level array. If the records are wrapped in an
+    # envelope, like `{"data": [{"id": 1}, {"id": 2}]}`, use "$.data[*]" instead. If
+    # the response is a single object, use "$". Update this value if necessary or
+    # override `parse_response`.
+    records_jsonpath = "$[*]"
+
+    # Update this value if necessary or override `get_new_paginator`.
+    next_page_token_jsonpath = "$.next_page"  # ruff:ignore[hardcoded-password-string]
+
+    schema = StreamSchema(SCHEMAS_DIR)
+
+    @override
+    @property
+    def url_base(self) -> str:
+        """The API URL root, configurable via tap settings."""
+        # TODO: hardcode a value here, or retrieve it from self.config
+        return "https://api.mysample.com"
+
+{%- if cookiecutter.auth_method in ("OAuth2", "JWT") %}
+
+    @override
+    @cached_property
+    def authenticator(self) -> Auth:
+        """An authenticator object."""
+        return {{ cookiecutter.source_name }}Authenticator(
+            client_id=self.config["client_id"],
+            client_secret=self.config["client_secret"],
+            auth_endpoint="TODO: OAuth Endpoint URL",
+            oauth_scopes="TODO: OAuth Scopes",
+        )
+
+{%- elif cookiecutter.auth_method == "API Key" %}
+
+    @override
+    @property
+    def authenticator(self) -> APIKeyAuthenticator:
+        """An authenticator object."""
+        return APIKeyAuthenticator(
+            key="x-api-key",
+            value=self.config["auth_token"],
+            location="header",
+        )
+
+{%- elif cookiecutter.auth_method == "Bearer Token" %}
+
+    @override
+    @property
+    def authenticator(self) -> BearerTokenAuthenticator:
+        """An authenticator object."""
+        return BearerTokenAuthenticator(token=self.config["auth_token"])
+
+{%- elif cookiecutter.auth_method == "Basic Auth" %}
+
+    @override
+    @property
+    def authenticator(self) -> HTTPBasicAuth:
+        """An authenticator object."""
+        return HTTPBasicAuth(
+            username=self.config["username"],
+            password=self.config["password"],
+        )
+
+{%- endif %}
+
+    @property
+    @override
+    def http_headers(self) -> dict:
+        """A dictionary of HTTP headers."""
+{%- if cookiecutter.auth_method not in ("OAuth2", "JWT") %}
+        # If not using an authenticator, you may also provide inline auth headers:
+        # headers["Private-Token"] = self.config.get("auth_token")
+{%- endif %}
+        return {}
+
+    @override
+    def get_new_paginator(self) -> BaseAPIPaginator | None:
+        """Create a new pagination helper instance.
+
+        If the source API can make use of the `next_page_token_jsonpath`
+        attribute, or it contains a `X-Next-Page` header in the response
+        then you can remove this method.
+
+        If you need custom pagination that uses page numbers, "next" links, or
+        other approaches, please read the guide: https://sdk.meltano.com/en/v0.25.0/guides/pagination-classes.html.
+
+        Returns:
+            A pagination helper instance, or ``None`` to indicate pagination
+            is not supported.
+        """
+        return super().get_new_paginator()
+
+    @override
+    def get_http_request(self, *, page: PageContext[Any]) -> HTTPRequest:
+        """Return a request object for this stream.
+
+        Args:
+            page: An object containing the stream partition or context dictionary,
+                and the next page token if applicable.
+
+        Returns:
+            An HTTP request for this stream.
+        """
+        request = super().get_http_request(page=page)
+        request.params["page"] = page.next_page_token
+
+        if self.replication_key:
+            request.params["sort"] = "asc"
+            request.params["order_by"] = self.replication_key
+
+        # Optionally, add the payload for a POST request
+        # request.data = ...
+        return request
+
+    @override
+    def post_process(
+        self,
+        row: dict,
+        context: Context | None = None,
+    ) -> dict | None:
+        """As needed, append or transform raw data to match expected structure.
+
+        Note: As of SDK v0.47.0, this method is automatically executed for all stream types.
+        You should not need to call this method directly in custom `get_records` implementations.
+
+        Args:
+            row: An individual record from the stream.
+            context: The stream context.
+
+        Returns:
+            The updated record dictionary, or ``None`` to skip the record.
+        """
+        # TODO: Delete this method if not needed.
+        return row

@@ -1,0 +1,2579 @@
+{
+  "created_at": "2026-09-24T21:33:30.160937+00:00",
+  "elapsed": 1.304356,
+  "encoding": "utf-8",
+  "headers": {
+    "CF-Cache-Status": "BYPASS",
+    "CF-Ray": "a404e860c974dc07-QRO",
+    "Cache-Control": "max-age=0, private, must-revalidate",
+    "Connection": "keep-alive",
+    "Content-Encoding": "gzip",
+    "Content-Type": "application/json",
+    "Date": "Thu, 24 Sep 2026 21:33:30 GMT",
+    "ETag": "W/\"7d56f82083dc8fc63a1c6b766dddc61f\"",
+    "Link": "<https://gitlab.com/api/v4/groups/2524164/epics/81/issues?epic_iid=81&id=2524164&page=4&per_page=20>; rel=\"prev\", <https://gitlab.com/api/v4/groups/2524164/epics/81/issues?epic_iid=81&id=2524164&page=6&per_page=20>; rel=\"next\", <https://gitlab.com/api/v4/groups/2524164/epics/81/issues?epic_iid=81&id=2524164&page=1&per_page=20>; rel=\"first\", <https://gitlab.com/api/v4/groups/2524164/epics/81/issues?epic_iid=81&id=2524164&page=7&per_page=20>; rel=\"last\"",
+    "Server": "cloudflare",
+    "Strict-Transport-Security": "max-age=31536000",
+    "Transfer-Encoding": "chunked",
+    "Vary": "Origin",
+    "content-security-policy": "default-src 'none'",
+    "gitlab-lb": "haproxy-main-40-lb-gprd",
+    "gitlab-sv": "api-gke-us-east1-b",
+    "nel": "{\"max_age\": 0}",
+    "ratelimit-limit": "2000",
+    "ratelimit-name": "throttle_authenticated_api",
+    "ratelimit-observed": "61",
+    "ratelimit-remaining": "1939",
+    "ratelimit-reset": "1790285640",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gitlab-meta": "{\"correlation_id\":\"a404e860c974dc07-QRO\",\"version\":\"1\"}",
+    "x-next-page": "6",
+    "x-page": "5",
+    "x-per-page": "20",
+    "x-prev-page": "4",
+    "x-request-id": "a404e860c974dc07-QRO",
+    "x-runtime": "1.013433",
+    "x-total": "136",
+    "x-total-pages": "7"
+  },
+  "reason": "OK",
+  "request": {
+    "headers": {
+      "Accept": "*/*",
+      "Accept-Encoding": "gzip, deflate, zstd",
+      "Connection": "keep-alive",
+      "Private-Token": "REDACTED",
+      "User-Agent": "REDACTED"
+    },
+    "method": "GET",
+    "url": "https://gitlab.com/api/v4/groups/2524164/epics/81/issues?page=5"
+  },
+  "status_code": 200,
+  "url": "https://gitlab.com/api/v4/groups/2524164/epics/81/issues?page=5",
+  "_decoded_content": [
+    {
+      "id": 70440647,
+      "iid": 2331,
+      "project_id": 7603319,
+      "title": "Fix broken links in docs found by check-md",
+      "description": "See https://gitlab.com/meltano/meltano/-/issues/2304",
+      "state": "closed",
+      "created_at": "2020-08-28T23:36:01.954Z",
+      "updated_at": "2020-09-01T14:21:59.610Z",
+      "closed_at": "2020-09-01T14:21:59.535Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review",
+        "kind::Bug"
+      ],
+      "milestone": {
+        "id": 1391218,
+        "iid": 121,
+        "group_id": 2524164,
+        "title": "Fri: Aug 28, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-07-31T20:16:21.353Z",
+        "updated_at": "2020-08-28T23:40:09.944Z",
+        "due_date": "2020-08-29",
+        "start_date": "2020-08-22",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/121"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2331",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2331",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2331/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2331/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2331",
+        "relative": "#2331",
+        "full": "meltano/meltano#2331"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 215125,
+      "relative_position": -2147480706
+    },
+    {
+      "id": 70438227,
+      "iid": 2330,
+      "project_id": 7603319,
+      "title": "Algolia search index is outdated",
+      "description": "",
+      "state": "closed",
+      "created_at": "2020-08-28T21:52:38.161Z",
+      "updated_at": "2020-09-01T14:21:49.069Z",
+      "closed_at": "2020-09-01T14:21:49.030Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing",
+        "kind::Bug"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2330",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2330",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2330/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2330/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2330",
+        "relative": "#2330",
+        "full": "meltano/meltano#2330"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 215064,
+      "relative_position": -2147477762
+    },
+    {
+      "id": 70438035,
+      "iid": 2329,
+      "project_id": 7603319,
+      "title": "Drop \"Meltano\" from concept doc names",
+      "description": "- \"The Meltano Project\" -> \"Projects\"\n- \"Meltano Plugins\" -> \"Plugins\"",
+      "state": "closed",
+      "created_at": "2020-08-28T21:38:25.433Z",
+      "updated_at": "2020-08-28T22:05:24.922Z",
+      "closed_at": "2020-08-28T22:05:24.806Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1391218,
+        "iid": 121,
+        "group_id": 2524164,
+        "title": "Fri: Aug 28, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-07-31T20:16:21.353Z",
+        "updated_at": "2020-08-28T23:40:09.944Z",
+        "due_date": "2020-08-29",
+        "start_date": "2020-08-22",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/121"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2329",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2329",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2329/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2329/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2329",
+        "relative": "#2329",
+        "full": "meltano/meltano#2329"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 215058,
+      "relative_position": -2147471875
+    },
+    {
+      "id": 69769163,
+      "iid": 2238,
+      "project_id": 7603319,
+      "title": "Add Roadmap to Introduction doc",
+      "description": "With links to milestone / issue boards and \"Accepting Merge Requests\"?",
+      "state": "closed",
+      "created_at": "2020-08-12T15:59:50.662Z",
+      "updated_at": "2020-08-28T23:28:15.740Z",
+      "closed_at": "2020-08-28T23:28:15.692Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1391218,
+        "iid": 121,
+        "group_id": 2524164,
+        "title": "Fri: Aug 28, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-07-31T20:16:21.353Z",
+        "updated_at": "2020-08-28T23:40:09.944Z",
+        "due_date": "2020-08-29",
+        "start_date": "2020-08-22",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/121"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2238",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2238",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2238/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2238/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2238",
+        "relative": "#2238",
+        "full": "meltano/meltano#2238"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214678,
+      "relative_position": -2147460100
+    },
+    {
+      "id": 70430039,
+      "iid": 2323,
+      "project_id": 7603319,
+      "title": "Add \"Contributing\" section to Introduction doc",
+      "description": "Let's make it abundantly clear that we welcome contributions to Meltano itself, the docs, known plugins, and specific taps and targets.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:18:38.853Z",
+      "updated_at": "2020-08-28T23:28:15.558Z",
+      "closed_at": "2020-08-28T23:28:15.481Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1391218,
+        "iid": 121,
+        "group_id": 2524164,
+        "title": "Fri: Aug 28, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-07-31T20:16:21.353Z",
+        "updated_at": "2020-08-28T23:40:09.944Z",
+        "due_date": "2020-08-29",
+        "start_date": "2020-08-22",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/121"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2323",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2323",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2323/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2323/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2323",
+        "relative": "#2323",
+        "full": "meltano/meltano#2323"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214657,
+      "relative_position": -2147459844
+    },
+    {
+      "id": 69769208,
+      "iid": 2241,
+      "project_id": 7603319,
+      "title": "Add \"Plugins\" section to \"Your Meltano project\" doc with link to \"Plugins\" doc",
+      "description": "",
+      "state": "closed",
+      "created_at": "2020-08-12T16:02:01.004Z",
+      "updated_at": "2020-09-01T23:32:52.791Z",
+      "closed_at": "2020-09-01T23:32:52.752Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2241",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2241",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2241/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2241/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2241",
+        "relative": "#2241",
+        "full": "meltano/meltano#2241"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 198483,
+      "relative_position": -2147459587
+    },
+    {
+      "id": 69769216,
+      "iid": 2242,
+      "project_id": 7603319,
+      "title": "Add \"Schedules\" section to \"Your Meltano project\" doc with link to \"Orchestration\" doc",
+      "description": "",
+      "state": "closed",
+      "created_at": "2020-08-12T16:02:11.091Z",
+      "updated_at": "2020-09-01T23:32:52.640Z",
+      "closed_at": "2020-09-01T23:32:52.601Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2242",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2242",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2242/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2242/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2242",
+        "relative": "#2242",
+        "full": "meltano/meltano#2242"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 198484,
+      "relative_position": -2147459331
+    },
+    {
+      "id": 70429932,
+      "iid": 2319,
+      "project_id": 7603319,
+      "title": "Add \"meltano.yml\" section to The Meltano Project doc",
+      "description": "Document what `meltano.yml` is used for and that it can be added manually.\n\nLater, we can reference the JSON Schema (https://gitlab.com/meltano/meltano/-/issues/2211) and the Reference doc (https://gitlab.com/meltano/meltano/-/issues/2178).",
+      "state": "closed",
+      "created_at": "2020-08-28T16:14:47.724Z",
+      "updated_at": "2020-09-01T23:32:49.459Z",
+      "closed_at": "2020-09-01T23:32:49.397Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2319",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2319",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2319/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2319/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2319",
+        "relative": "#2319",
+        "full": "meltano/meltano#2319"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214652,
+      "relative_position": -2147459203
+    },
+    {
+      "id": 70429979,
+      "iid": 2321,
+      "project_id": 7603319,
+      "title": "Add \".env\" section to The Meltano Project doc",
+      "description": "Let's document what this file is used for, and link to https://12factor.net/config and/or https://github.com/theskumar/python-dotenv#usages.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:16:47.055Z",
+      "updated_at": "2020-09-01T23:32:49.116Z",
+      "closed_at": "2020-09-01T23:32:49.076Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2321",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2321",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2321/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2321/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2321",
+        "relative": "#2321",
+        "full": "meltano/meltano#2321"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214655,
+      "relative_position": -2147459171
+    },
+    {
+      "id": 70430010,
+      "iid": 2322,
+      "project_id": 7603319,
+      "title": "Add \".meltano directory\" section to The Meltano Project doc",
+      "description": "Let's document what this directory is used for, paths users may want to know for debugging purposes, and the fact that it's environment-specific.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:18:05.041Z",
+      "updated_at": "2020-09-01T23:32:48.945Z",
+      "closed_at": "2020-09-01T23:32:48.903Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2322",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2322",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2322/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2322/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2322",
+        "relative": "#2322",
+        "full": "meltano/meltano#2322"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214656,
+      "relative_position": -2147459139
+    },
+    {
+      "id": 70429957,
+      "iid": 2320,
+      "project_id": 7603319,
+      "title": "Add \"System database\" section to The Meltano Project doc",
+      "description": "We need a better place to link to than https://meltano.com/docs/settings.html#database-uri or https://meltano.com/docs/production.html#storing-metadata.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:15:44.780Z",
+      "updated_at": "2020-09-01T23:32:49.418Z",
+      "closed_at": "2020-09-01T23:32:49.239Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1399397,
+        "iid": 122,
+        "group_id": 2524164,
+        "title": "Fri: Sep 4, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-07T17:04:48.448Z",
+        "updated_at": "2020-09-04T23:45:35.062Z",
+        "due_date": "2020-09-05",
+        "start_date": "2020-08-29",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/122"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2320",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2320",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2320/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2320/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2320",
+        "relative": "#2320",
+        "full": "meltano/meltano#2320"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214654,
+      "relative_position": -2147459131
+    },
+    {
+      "id": 70430138,
+      "iid": 2325,
+      "project_id": 7603319,
+      "title": "Mention Meltano UI on homepage and in new doc",
+      "description": "The CLI will remain the primary interface, but the UI continues to improve in terms of project, plugin, and pipeline management (https://gitlab.com/groups/meltano/-/epics/78).",
+      "state": "closed",
+      "created_at": "2020-08-28T16:21:45.733Z",
+      "updated_at": "2020-09-25T14:46:23.008Z",
+      "closed_at": "2020-09-25T14:46:22.928Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1607483,
+        "iid": 125,
+        "group_id": 2524164,
+        "title": "Fri: Sep 25, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-28T16:57:04.622Z",
+        "updated_at": "2020-09-25T23:09:57.941Z",
+        "due_date": "2020-09-26",
+        "start_date": "2020-09-19",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/125"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2325",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2325",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2325/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2325/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2325",
+        "relative": "#2325",
+        "full": "meltano/meltano#2325"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214673,
+      "relative_position": -2147385346
+    },
+    {
+      "id": 69769377,
+      "iid": 2249,
+      "project_id": 7603319,
+      "title": "Add \"Meltano UI\" section to \"Plugin management\" doc",
+      "description": "",
+      "state": "closed",
+      "created_at": "2020-08-12T16:08:01.679Z",
+      "updated_at": "2020-09-25T14:46:22.648Z",
+      "closed_at": "2020-09-25T14:46:22.559Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1607483,
+        "iid": 125,
+        "group_id": 2524164,
+        "title": "Fri: Sep 25, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-28T16:57:04.622Z",
+        "updated_at": "2020-09-25T23:09:57.941Z",
+        "due_date": "2020-09-26",
+        "start_date": "2020-09-19",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/125"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2249",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2249",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2249/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2249/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2249",
+        "relative": "#2249",
+        "full": "meltano/meltano#2249"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 198499,
+      "relative_position": -2144264214
+    },
+    {
+      "id": 69769518,
+      "iid": 2254,
+      "project_id": 7603319,
+      "title": "Add \"Meltano UI\" section to \"Configuration\" doc",
+      "description": "",
+      "state": "closed",
+      "created_at": "2020-08-12T16:10:13.217Z",
+      "updated_at": "2020-09-25T14:50:02.671Z",
+      "closed_at": "2020-09-25T14:50:02.616Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1607483,
+        "iid": 125,
+        "group_id": 2524164,
+        "title": "Fri: Sep 25, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-28T16:57:04.622Z",
+        "updated_at": "2020-09-25T23:09:57.941Z",
+        "due_date": "2020-09-26",
+        "start_date": "2020-09-19",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/125"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2254",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2254",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2254/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2254/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2254",
+        "relative": "#2254",
+        "full": "meltano/meltano#2254"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 198508,
+      "relative_position": -2142703648
+    },
+    {
+      "id": 69769628,
+      "iid": 2262,
+      "project_id": 7603319,
+      "title": "Add \"Meltano UI\" section to \"Orchestration\" doc",
+      "description": "",
+      "state": "closed",
+      "created_at": "2020-08-12T16:13:10.077Z",
+      "updated_at": "2020-09-25T14:49:54.667Z",
+      "closed_at": "2020-09-25T14:49:54.530Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1607483,
+        "iid": 125,
+        "group_id": 2524164,
+        "title": "Fri: Sep 25, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-28T16:57:04.622Z",
+        "updated_at": "2020-09-25T23:09:57.941Z",
+        "due_date": "2020-09-26",
+        "start_date": "2020-09-19",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/125"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2262",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2262",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2262/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2262/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2262",
+        "relative": "#2262",
+        "full": "meltano/meltano#2262"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 198521,
+      "relative_position": -2141923365
+    },
+    {
+      "id": 70429853,
+      "iid": 2316,
+      "project_id": 7603319,
+      "title": "Add \"Known and custom plugins\" section to Plugins doc",
+      "description": "We need a better place to link \"known to Meltano\" to than https://meltano.com/docs/contributor-guide.html#known-plugins.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:12:24.455Z",
+      "updated_at": "2020-10-06T00:49:19.466Z",
+      "closed_at": "2020-09-29T23:52:34.796Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1616731,
+        "iid": 126,
+        "group_id": 2524164,
+        "title": "Fri: Oct 2, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-09-04T23:46:01.277Z",
+        "updated_at": "2020-10-05T18:17:02.391Z",
+        "due_date": "2020-10-03",
+        "start_date": "2020-09-26",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/126"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2316",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2316",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2316/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2316/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2316",
+        "relative": "#2316",
+        "full": "meltano/meltano#2316"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214649,
+      "relative_position": -2141143081
+    },
+    {
+      "id": 70429829,
+      "iid": 2314,
+      "project_id": 7603319,
+      "title": "Add \"Setting Singer stream metadata\" section to Data Integration (EL) doc",
+      "description": "Guide for https://meltano.com/docs/plugins.html#metadata-extra, like we have https://meltano.com/docs/integration.html#selecting-entities-and-attributes-for-extraction for https://meltano.com/docs/plugins.html#select-extra.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:11:51.344Z",
+      "updated_at": "2020-09-17T18:32:12.470Z",
+      "closed_at": "2020-09-17T18:32:12.425Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1471314,
+        "iid": 124,
+        "group_id": 2524164,
+        "title": "Fri: Sep 18, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-21T23:25:19.372Z",
+        "updated_at": "2020-09-18T23:10:58.954Z",
+        "due_date": "2020-09-19",
+        "start_date": "2020-09-12",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/124"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2314",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2314",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2314/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2314/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2314",
+        "relative": "#2314",
+        "full": "meltano/meltano#2314"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214647,
+      "relative_position": -2139582515
+    },
+    {
+      "id": 70429833,
+      "iid": 2315,
+      "project_id": 7603319,
+      "title": "Add \"Overriding Singer stream schema\" section to Data Integration (EL) doc",
+      "description": "Guide for https://meltano.com/docs/plugins.html#schema-extra, like we have https://meltano.com/docs/integration.html#selecting-entities-and-attributes-for-extraction for https://meltano.com/docs/plugins.html#select-extra.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:11:56.236Z",
+      "updated_at": "2020-09-17T18:32:12.197Z",
+      "closed_at": "2020-09-17T18:32:12.119Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1471314,
+        "iid": 124,
+        "group_id": 2524164,
+        "title": "Fri: Sep 18, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-21T23:25:19.372Z",
+        "updated_at": "2020-09-18T23:10:58.954Z",
+        "due_date": "2020-09-19",
+        "start_date": "2020-09-12",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/124"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2315",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2315",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2315/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2315/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2315",
+        "relative": "#2315",
+        "full": "meltano/meltano#2315"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214648,
+      "relative_position": -2138021949
+    },
+    {
+      "id": 70429792,
+      "iid": 2313,
+      "project_id": 7603319,
+      "title": "Add \"Environment variables\" section to Configuration doc",
+      "description": "We should document:\n- How to use environment variables to configure plugins\n- How settings are exposed to invoked plugins using environment variables\n- How to use environment variable expansion in `meltano.yml` `config` values",
+      "state": "closed",
+      "created_at": "2020-08-28T16:10:59.336Z",
+      "updated_at": "2020-09-15T15:04:58.469Z",
+      "closed_at": "2020-09-15T15:04:58.411Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Review"
+      ],
+      "milestone": {
+        "id": 1471314,
+        "iid": 124,
+        "group_id": 2524164,
+        "title": "Fri: Sep 18, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-08-21T23:25:19.372Z",
+        "updated_at": "2020-09-18T23:10:58.954Z",
+        "due_date": "2020-09-19",
+        "start_date": "2020-09-12",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/124"
+      },
+      "assignees": [],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": null,
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2313",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2313",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2313/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2313/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2313",
+        "relative": "#2313",
+        "full": "meltano/meltano#2313"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214646,
+      "relative_position": -2137241666
+    },
+    {
+      "id": 70429887,
+      "iid": 2317,
+      "project_id": 7603319,
+      "title": "Add \"Removing plugins from your project\" section to Plugin Management doc",
+      "description": "Let's make it explicit that removing the entry from `meltano.yml` is usually sufficient, but that traces will remain in `.meltano` and the system database.",
+      "state": "closed",
+      "created_at": "2020-08-28T16:13:07.826Z",
+      "updated_at": "2020-11-06T00:13:26.968Z",
+      "closed_at": "2020-11-06T00:13:26.906Z",
+      "closed_by": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "labels": [
+        "Documentation",
+        "flow::Doing"
+      ],
+      "milestone": {
+        "id": 1653879,
+        "iid": 131,
+        "group_id": 2524164,
+        "title": "Fri: Nov 6, 2020",
+        "description": "",
+        "state": "closed",
+        "created_at": "2020-09-30T21:49:54.260Z",
+        "updated_at": "2020-11-06T23:54:09.901Z",
+        "due_date": "2020-11-07",
+        "start_date": "2020-10-31",
+        "expired": true,
+        "web_url": "https://gitlab.com/groups/meltano/-/milestones/131"
+      },
+      "assignees": [
+        {
+          "id": 87854,
+          "username": "DouweM",
+          "public_email": "",
+          "name": "Douwe Maan",
+          "state": "active",
+          "locked": false,
+          "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+          "web_url": "https://gitlab.com/DouweM"
+        }
+      ],
+      "author": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "type": "ISSUE",
+      "assignee": {
+        "id": 87854,
+        "username": "DouweM",
+        "public_email": "",
+        "name": "Douwe Maan",
+        "state": "active",
+        "locked": false,
+        "avatar_url": "https://secure.gravatar.com/avatar/bbb752c75ae2744bddf1640d75edf9b6f7d4e5f4fbba4a4f0910961e6f0519b9?s=80&d=identicon",
+        "web_url": "https://gitlab.com/DouweM"
+      },
+      "user_notes_count": 0,
+      "merge_requests_count": 0,
+      "upvotes": 0,
+      "downvotes": 0,
+      "start_date": null,
+      "due_date": null,
+      "confidential": false,
+      "discussion_locked": null,
+      "issue_type": "issue",
+      "web_url": "https://gitlab.com/meltano/meltano/-/work_items/2317",
+      "time_stats": {
+        "time_estimate": 0,
+        "total_time_spent": 0,
+        "human_time_estimate": null,
+        "human_total_time_spent": null
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "weight": null,
+      "blocking_issues_count": null,
+      "has_tasks": true,
+      "task_status": "0 of 0 checklist items completed",
+      "_links": {
+        "self": "https://gitlab.com/api/v4/projects/7603319/issues/2317",
+        "notes": "https://gitlab.com/api/v4/projects/7603319/issues/2317/notes",
+        "award_emoji": "https://gitlab.com/api/v4/projects/7603319/issues/2317/award_emoji",
+        "project": "https://gitlab.com/api/v4/projects/7603319",
+        "closed_as_duplicate_of": null
+      },
+      "references": {
+        "short": "#2317",
+        "relative": "#2317",
+        "full": "meltano/meltano#2317"
+      },
+      "severity": "UNKNOWN",
+      "moved_to_id": null,
+      "imported": false,
+      "imported_from": "none",
+      "service_desk_reply_to": null,
+      "epic_iid": 81,
+      "epic": {
+        "id": 94267,
+        "iid": 81,
+        "title": "Meltano Documentation improvements",
+        "url": "/groups/meltano/-/epics/81",
+        "group_id": 2524164,
+        "human_readable_end_date": "Sep 30, 2022",
+        "human_readable_timestamp": "<strong>Past due</strong>"
+      },
+      "iteration": null,
+      "health_status": null,
+      "epic_issue_id": 214650,
+      "relative_position": -2136461383
+    }
+  ]
+}

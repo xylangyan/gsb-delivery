@@ -1,0 +1,8 @@
+# chore: Enforce `import typing as t` by configuring `ICN003`
+54222bb2dc1903c0816347952c6a77c30267f30f
+
+# docs: Auto-format markdown with `mdformat`
+e91be649cb3494479ae4096729f21a55b0034917
+
+# chore: Bump Ruff to 0.15 and update code to the 2026 style guide
+b9d51d4bfea6ef73141ad2bc6d3ff8f091893f28

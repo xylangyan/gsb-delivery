@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import copy
+import datetime as dt
+import decimal
+import io
+import signal
+import sys
+from contextlib import redirect_stdout
+from unittest import mock
+
+import pytest
+
+from singer_sdk.exceptions import (
+    MissingKeyPropertiesError,
+    RecordsWithoutSchemaException,
+)
+from singer_sdk.helpers.capabilities import PluginCapabilities, TargetCapabilities
+from singer_sdk.singerlib.json import deserialize_json
+from tests.conftest import BatchSinkMock, SQLSinkMock, SQLTargetMock, TargetMock
+
+if sys.version_info >= (3, 12):
+    from typing import override  # noqa: ICN003
+else:
+    from typing_extensions import override
+
+
+def test_get_sink():
+    input_schema_1 = {
+        "properties": {
+            "id": {
+                "type": ["string", "null"],
+            },
+            "col_ts": {
+                "format": "date-time",
+                "type": ["string", "null"],
+            },
+        },
+    }
+    input_schema_2 = copy.deepcopy(input_schema_1)
+    key_properties = []
+    target = TargetMock(config={"add_record_metadata": True})
+    sink = BatchSinkMock(target, "foo", input_schema_1, key_properties)
+    target._sinks_active["foo"] = sink
+    sink_returned = target.get_sink(
+        "foo",
+        schema=input_schema_2,
+        key_properties=key_properties,
+    )
+    assert sink_returned == sink
+
+
+def test_validate_record():
+    target = TargetMock()
+    sink = BatchSinkMock(
+        target=target,
+        stream_name="test",
+        schema={
+            "properties": {
+                "id": {"type": ["integer"]},
+                "name": {"type": ["string"]},
+            },
+        },
+        key_properties=["id"],
+    )
+
+    # Test valid record
+    sink._singer_validate_message({"id": 1, "name": "test"})
+
+    # Test invalid record
+    with pytest.raises(MissingKeyPropertiesError):
+        sink._singer_validate_message({"name": "test"})
+
+
+def test_target_about_info():
+    target = TargetMock()
+    about = target._get_about_info()
+
+    assert about.capabilities == [
+        PluginCapabilities.ABOUT,
+        PluginCapabilities.STREAM_MAPS,
+        PluginCapabilities.FLATTENING,
+        PluginCapabilities.STRUCTURED_LOGGING,
+        TargetCapabilities.VALIDATE_RECORDS,
+        PluginCapabilities.BATCH,
+    ]
+
+    assert "stream_maps" in about.settings["properties"]
+    assert "stream_map_config" in about.settings["properties"]
+    assert "flattening_enabled" in about.settings["properties"]
+    assert "flattening_max_depth" in about.settings["properties"]
+    assert "batch_config" in about.settings["properties"]
+    assert "add_record_metadata" in about.settings["properties"]
+    assert "batch_size_rows" in about.settings["properties"]
+
+
+def test_sql_get_sink():
+    input_schema_1 = {
+        "properties": {
+            "id": {
+                "type": ["string", "null"],
+            },
+            "col_ts": {
+                "format": "date-time",
+                "type": ["string", "null"],
+            },
+        },
+    }
+    input_schema_2 = copy.deepcopy(input_schema_1)
+    key_properties = []
+    target = SQLTargetMock(config={"sqlalchemy_url": "sqlite:///"})
+    sink = SQLSinkMock(
+        target=target,
+        stream_name="foo",
+        schema=input_schema_1,
+        key_properties=key_properties,
+        connector=target.target_connector,
+    )
+    target._sinks_active["foo"] = sink
+    sink_returned = target.get_sink(
+        "foo",
+        schema=input_schema_2,
+        key_properties=key_properties,
+    )
+    assert sink_returned is sink
+
+
+def test_add_sqlsink_and_get_sink():
+    input_schema_1 = {
+        "properties": {
+            "id": {
+                "type": ["string", "null"],
+            },
+            "col_ts": {
+                "format": "date-time",
+                "type": ["string", "null"],
+            },
+        },
+    }
+    input_schema_2 = copy.deepcopy(input_schema_1)
+    key_properties = []
+    target = SQLTargetMock(config={"sqlalchemy_url": "sqlite:///"})
+    sink = target.add_sqlsink(
+        "foo",
+        schema=input_schema_2,
+        key_properties=key_properties,
+    )
+
+    sink_returned = target.get_sink(
+        "foo",
+    )
+
+    assert sink_returned is sink
+
+    # Test invalid call
+    with pytest.raises(RecordsWithoutSchemaException):
+        target.get_sink(
+            "bar",
+        )
+
+
+def test_create_sink_override():
+    """Target.create_sink() can be overridden to inject extra constructor args."""
+    injected = {}
+
+    class CustomSink(BatchSinkMock):
+        def __init__(self, *args, extra=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            injected["extra"] = extra
+
+    class CustomTarget(TargetMock):
+        @override
+        def create_sink(self, *, stream_name, schema, key_properties=None):
+            return CustomSink(
+                target=self,
+                stream_name=stream_name,
+                schema=schema,
+                key_properties=key_properties,
+                extra="injected_value",
+            )
+
+    schema = {"properties": {"id": {"type": ["integer"]}}}
+    target = CustomTarget()
+    sink = target.add_sink("test_stream", schema, [])
+    assert isinstance(sink, CustomSink)
+    assert injected["extra"] == "injected_value"
+
+
+def test_sql_create_sink_override():
+    """SQLTarget.create_sink() can be overridden to inject extra constructor args."""
+    injected = {}
+
+    class CustomSQLSink(SQLSinkMock):
+        def __init__(self, *args, extra=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            injected["extra"] = extra
+
+    class CustomSQLTarget(SQLTargetMock):
+        @override
+        def create_sink(self, *, stream_name, schema, key_properties=None):
+            return CustomSQLSink(
+                target=self,
+                stream_name=stream_name,
+                schema=schema,
+                key_properties=key_properties,
+                connector=self.target_connector,
+                extra="sql_injected",
+            )
+
+    schema = {"properties": {"id": {"type": ["integer"]}}}
+    target = CustomSQLTarget(config={"sqlalchemy_url": "sqlite:///"})
+    sink = target.add_sqlsink("test_stream", schema, [])
+    assert isinstance(sink, CustomSQLSink)
+    assert injected["extra"] == "sql_injected"
+
+
+def test_batch_size_rows_and_max_size():
+    input_schema_1 = {
+        "properties": {
+            "id": {
+                "type": ["string", "null"],
+            },
+            "col_ts": {
+                "format": "date-time",
+                "type": ["string", "null"],
+            },
+        },
+    }
+    key_properties = []
+    target_default = TargetMock()
+    sink_default = BatchSinkMock(
+        target=target_default,
+        stream_name="foo",
+        schema=input_schema_1,
+        key_properties=key_properties,
+    )
+    target_set = TargetMock(config={"batch_size_rows": 100000})
+    sink_set = BatchSinkMock(
+        target=target_set,
+        stream_name="bar",
+        schema=input_schema_1,
+        key_properties=key_properties,
+    )
+    assert sink_default.stream_name == "foo"
+    assert sink_default._batch_size_rows is None
+    assert sink_default.batch_size_rows is None
+    assert sink_default.max_size == 10000
+    assert sink_set.stream_name == "bar"
+    assert sink_set._batch_size_rows == 100000
+    assert sink_set.batch_size_rows == 100000
+    assert sink_set.max_size == 100000
+
+
+def test_duplicate_termination_signal_does_not_redrain():
+    """A second signal arriving mid-drain is ignored and sinks drain once."""
+    target = TargetMock()
+    drain_calls: list[dict] = []
+
+    def fake_drain_all(**kwargs) -> None:
+        drain_calls.append(kwargs)
+        # simulate the duplicate signal arriving while the drain is in flight,
+        # e.g. delivered by the OS process group and forwarded by Meltano
+        target._handle_termination(signal.SIGINT, None)
+
+    with (
+        mock.patch.object(target, "drain_all", side_effect=fake_drain_all),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        target._handle_termination(signal.SIGTERM, None)
+
+    assert exc_info.value.code == 0
+    assert len(drain_calls) == 1
+
+
+def test_target_write_state():
+    target = TargetMock()
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        target._write_state_message(
+            {
+                "integer": 42,
+                "decimal": decimal.Decimal("3.14"),
+                "datetime": dt.datetime(2021, 1, 1, tzinfo=dt.timezone.utc),
+            },
+        )
+
+    buf.seek(0)
+    assert deserialize_json(buf.read()) == {
+        "integer": 42,
+        "decimal": decimal.Decimal("3.14"),
+        "datetime": "2021-01-01T00:00:00+00:00",
+    }
