@@ -1,0 +1,16 @@
+name:
+  gem: dry-transformer
+  constant: Dry::Transformer
+github_org: dry-rb
+gemspec:
+  authors: ["Hanakai team"]
+  email: ["info@hanakai.org"]
+  summary: "Data transformation toolkit"
+  homepage: "https://dry-rb.org/gems/dry-transformer"
+  development_dependencies:
+    - bundler
+    - rake
+    - rspec
+  runtime_dependencies:
+    - [bigdecimal]
+    - [zeitwerk, "~> 2.6"]
