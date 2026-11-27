@@ -1,0 +1,67 @@
+核账案例: GSB1109-20261127-BAO-ADTK-01
+========================================================================
+
+相符经过 6 条，排除 2 条。
+
+【相符经过与最终模型状态 / 补查签名】
+  1. wiring=distinct, process=continue_failed, calibration=none
+     终态: A: 均值=30.0, 残差界=1.0; B: 均值=42.857143, 残差界=8.357143; C: 上界=1.0
+     补查签名: m1_A35_B0=告警, m2_A45_B0=告警, m3_A0_B55=告警, m4_A0_B0=正常
+  2. wiring=distinct, process=continue_failed, calibration=applied
+     终态: A: 均值=50.0, 残差界=1.0; B: 均值=42.857143, 残差界=8.357143; C: 上界=1.0
+     补查签名: m1_A35_B0=正常, m2_A45_B0=正常, m3_A0_B55=告警, m4_A0_B0=正常
+  3. wiring=shared_B, process=continue_failed, calibration=none
+     终态: A: 均值=42.857143, 残差界=1.0; B: 均值=42.857143, 残差界=8.357143; C: 上界=1.0
+     补查签名: m1_A35_B0=正常, m2_A45_B0=告警, m3_A0_B55=告警, m4_A0_B0=正常
+  4. wiring=shared_B, process=continue_failed, calibration=applied
+     终态: A: 均值=50.0, 残差界=1.0; B: 均值=50.0, 残差界=8.357143; C: 上界=1.0
+     补查签名: m1_A35_B0=正常, m2_A45_B0=正常, m3_A0_B55=正常, m4_A0_B0=正常
+  5. wiring=shared_B, process=reload_checkpoint, calibration=none
+     终态: A: 均值=42.857143, 残差界=1.0; B: 均值=42.857143, 残差界=8.357143; C: 上界=1.0
+     补查签名: m1_A35_B0=正常, m2_A45_B0=告警, m3_A0_B55=告警, m4_A0_B0=正常
+  6. wiring=shared_B, process=reload_checkpoint, calibration=applied
+     终态: A: 均值=50.0, 残差界=1.0; B: 均值=50.0, 残差界=8.357143; C: 上界=1.0
+     补查签名: m1_A35_B0=正常, m2_A45_B0=正常, m3_A0_B55=正常, m4_A0_B0=正常
+
+【已排除经过及首个对不上的记录】
+  - wiring=distinct, process=reload_checkpoint, calibration=none -> 记录 r3_report_fit_detect，第 1 分钟: 预测 告警 vs 日报 正常
+    原因: aggregate label mismatch
+  - wiring=distinct, process=reload_checkpoint, calibration=applied -> 记录 r3_report_fit_detect，第 1 分钟: 预测 告警 vs 日报 正常
+    原因: aggregate label mismatch
+
+【日报逐分钟告警归属（跨全部相符经过）】
+  分钟 1 日报=正常 确定触发=无 可能触发=无 缺数分支=无
+  分钟 2 日报=正常 确定触发=无 可能触发=无 缺数分支=无
+  分钟 3 日报=正常 确定触发=无 可能触发=无 缺数分支=无
+  分钟 4 日报=正常 确定触发=无 可能触发=无 缺数分支=无
+  分钟 5 日报=正常 确定触发=无 可能触发=无 缺数分支=无
+  分钟 6 日报=未知 确定触发=无 可能触发=无 缺数分支=['A']
+  分钟 7 日报=告警 确定触发=['B'] 可能触发=['B'] 缺数分支=无
+
+【一次派工最少补查分钟】 ['m1_A35_B0', 'm2_A45_B0', 'm3_A0_B55']（按此顺序派工）
+  签名 [m1_A35_B0=告警, m2_A45_B0=告警, m3_A0_B55=告警]: 1 条经过
+    - calibration=none, process=continue_failed, wiring=distinct
+      分支级 {"calibration": "none", "process": "continue_failed", "wiring": "distinct"}: m1_A35_B0: A=告警/B=正常/C=正常; m2_A45_B0: A=告警/B=正常/C=正常; m3_A0_B55: A=正常/B=告警/C=正常
+  签名 [m1_A35_B0=正常, m2_A45_B0=正常, m3_A0_B55=告警]: 1 条经过
+    - calibration=applied, process=continue_failed, wiring=distinct
+      分支级 {"calibration": "applied", "process": "continue_failed", "wiring": "distinct"}: m1_A35_B0: A=正常/B=正常/C=正常; m2_A45_B0: A=正常/B=正常/C=正常; m3_A0_B55: A=正常/B=告警/C=正常
+  签名 [m1_A35_B0=正常, m2_A45_B0=告警, m3_A0_B55=告警]: 2 条经过
+    - calibration=none, process=continue_failed, wiring=shared_B
+    - calibration=none, process=reload_checkpoint, wiring=shared_B
+      分支级 {"calibration": "none", "process": "continue_failed", "wiring": "shared_B"}: m1_A35_B0: A=正常/B=正常/C=正常; m2_A45_B0: A=告警/B=正常/C=正常; m3_A0_B55: A=正常/B=告警/C=正常
+      分支级 {"calibration": "none", "process": "reload_checkpoint", "wiring": "shared_B"}: m1_A35_B0: A=正常/B=正常/C=正常; m2_A45_B0: A=告警/B=正常/C=正常; m3_A0_B55: A=正常/B=告警/C=正常
+  签名 [m1_A35_B0=正常, m2_A45_B0=正常, m3_A0_B55=正常]: 2 条经过
+    - calibration=applied, process=continue_failed, wiring=shared_B
+    - calibration=applied, process=reload_checkpoint, wiring=shared_B
+      分支级 {"calibration": "applied", "process": "continue_failed", "wiring": "shared_B"}: m1_A35_B0: A=正常/B=正常/C=正常; m2_A45_B0: A=正常/B=正常/C=正常; m3_A0_B55: A=正常/B=正常/C=正常
+      分支级 {"calibration": "applied", "process": "reload_checkpoint", "wiring": "shared_B"}: m1_A35_B0: A=正常/B=正常/C=正常; m2_A45_B0: A=正常/B=正常/C=正常; m3_A0_B55: A=正常/B=正常/C=正常
+
+【现存进程也无法分开的历史（证据缺口）】
+  - calibration=none, process=continue_failed, wiring=shared_B
+  - calibration=none, process=reload_checkpoint, wiring=shared_B
+    未决维度: ['process']
+    缺口说明: 现存进程的 detect 对全部归档分钟给出相同标签；需要该选择点所在时点的装载/执行回执，或当时的分支级标签，才能区分。
+  - calibration=applied, process=continue_failed, wiring=shared_B
+  - calibration=applied, process=reload_checkpoint, wiring=shared_B
+    未决维度: ['process']
+    缺口说明: 现存进程的 detect 对全部归档分钟给出相同标签；需要该选择点所在时点的装载/执行回执，或当时的分支级标签，才能区分。

@@ -1,0 +1,95 @@
+{
+  "case_id": "GSB1109-20261127-BAO-ADTK-01",
+  "description": "补录重跑 ADTK 日报：A/B 正向 RegressionAD(c=3, 均值回归器)，C QuantileAD(high=0.5)",
+  "branches": [
+    {
+      "name": "A",
+      "kind": "regression_positive",
+      "columns": ["rpm", "loadA"],
+      "target": "loadA",
+      "c": 3.0,
+      "train": {"rpm": [100.0, 100.0], "loadA": [9.0, 11.0]}
+    },
+    {
+      "name": "B",
+      "kind": "regression_positive",
+      "columns": ["rpm", "loadB"],
+      "target": "loadB",
+      "c": 3.0,
+      "train": {"rpm": [100.0, 100.0], "loadB": [18.0, 22.0]}
+    },
+    {
+      "name": "C",
+      "kind": "quantile_high",
+      "columns": ["vib"],
+      "high_quantile": 0.5,
+      "train": {"vib": [0.0, 2.0]}
+    }
+  ],
+  "wirings": [
+    {"name": "distinct", "share_regressor": []},
+    {"name": "shared_B", "share_regressor": [{"anchor": "B", "members": ["A", "B"]}]}
+  ],
+  "choice_points": {
+    "wiring": ["distinct", "shared_B"],
+    "process": ["continue_failed", "reload_checkpoint"],
+    "calibration": ["none", "applied"]
+  },
+  "records": [
+    {
+      "id": "r1_makeup_fit",
+      "op": "fit",
+      "skip": ["B"],
+      "failed_node": "C",
+      "input": {
+        "rpm": [100.0, 100.0],
+        "loadA": [29.0, 31.0],
+        "loadB": [null, null],
+        "vib": [null, null]
+      }
+    },
+    {
+      "id": "r2_reload",
+      "op": "reload",
+      "only_if": {"process": "reload_checkpoint"}
+    },
+    {
+      "id": "r3_report_fit_detect",
+      "op": "fit_detect",
+      "skip": ["A", "C"],
+      "input": {
+        "rpm": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+        "loadA": [12.0, 8.0, 8.0, 8.0, 8.0, null, 25.0],
+        "loadB": [39.0, 39.0, 40.0, 40.0, 41.0, 41.0, 60.0],
+        "vib": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      },
+      "observed": [false, false, false, false, false, null, true]
+    },
+    {
+      "id": "r4_post_report_calibration",
+      "op": "fit",
+      "only_if": {"calibration": "applied"},
+      "skip": ["B", "C"],
+      "input": {
+        "rpm": [100.0, 100.0],
+        "loadA": [49.0, 51.0],
+        "loadB": [null, null],
+        "vib": [null, null]
+      }
+    }
+  ],
+  "archive_minutes": {
+    "m1_A35_B0": {
+      "input": {"rpm": [100.0], "loadA": [35.0], "loadB": [0.0], "vib": [0.0]}
+    },
+    "m2_A45_B0": {
+      "input": {"rpm": [100.0], "loadA": [45.0], "loadB": [0.0], "vib": [0.0]}
+    },
+    "m3_A0_B55": {
+      "input": {"rpm": [100.0], "loadA": [0.0], "loadB": [55.0], "vib": [0.0]}
+    },
+    "m4_A0_B0": {
+      "input": {"rpm": [100.0], "loadA": [0.0], "loadB": [0.0], "vib": [0.0]}
+    }
+  }
+}
