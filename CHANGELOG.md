@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+### Added
+
+- ![R parsing] Add a common intake entry point (`rdata.intake`) that accepts a
+  public worksheet (RDA) and a binary supplement (RDS) through one gate,
+  rejecting a document attached to the wrong slot before it is persisted.
+- ![R parsing] Preserve the distinction between reported missing values and
+  computed NaNs, original factor codes and automatic versus manual row names
+  on the worksheet draft, while the public view keeps just-enough values and
+  strings.
+- ![R parsing] Validate registered corrections in approval order, including
+  grouped fields, shared-origin interpretations, source segment moves and
+  open-ticket drift, and transcode short binary supplements to ASCII before
+  warehousing.
 
 ## [1.1.0] - 2026-06-11
 
