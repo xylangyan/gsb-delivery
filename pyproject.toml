@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bitstring"
+version = "5.0.0"
+license = { text = "MIT" }
+authors = [
+  { name="Scott Griffiths", email="dr.scottgriffiths@gmail.com" },
+]
+description = "Simple construction, analysis and modification of binary data: bit arrays, bitfields and unaligned binary formats."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = [
+    "binary", "bits", "bitstring", "bit array", "bitarray", "bit vector",
+    "bitvector", "bitfield", "bitset", "bit manipulation", "binary parsing",
+    "unaligned", "packet", "struct", "endianness", "file format",
+]
+dependencies = [
+  "tibs >= 2.0.2, < 3.0",
+]
+
+[project.urls]
+homepage = "https://github.com/scott-griffiths/bitstring"
+documentation = "https://bitstring.readthedocs.io/"
+source = "https://github.com/scott-griffiths/bitstring"
+issues = "https://github.com/scott-griffiths/bitstring/issues"
+changelog = "https://github.com/scott-griffiths/bitstring/blob/main/release_notes.md"
+
+# Keep in sync with tests/requirements.txt, which the CI uses.
+[dependency-groups]
+dev = [
+  "pytest >= 7.4.2, < 8",
+  "hypothesis >= 6.98.13, < 7",
+  "gfloat >= 0.5.2, < 0.6",
+  "pytest-benchmark >= 4.0.0, < 4.1",
+]
+
+[tool.setuptools]
+packages = ["bitstring"]

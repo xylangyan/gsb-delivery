@@ -1,0 +1,1407 @@
+#!/usr/bin/env python
+import pytest
+import io
+import sys
+import bitstring
+import array
+import os
+import re
+from bitstring import Bits, BitArray
+from tibs import Mutibs, Tibs
+from hypothesis import given
+import hypothesis.strategies as st
+
+sys.path.insert(0, "..")
+
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def remove_unprintable(s: str) -> str:
+    colour_escape = re.compile(r"(?:\x1B[@-_])[0-?]*[ -/]*[@-~]")
+    return colour_escape.sub("", s)
+
+
+
+class TestCreation:
+    def test_explicit_factory_methods(self, tmp_path):
+        assert Bits.from_string("0xf, u4=1") == "0xf1"
+        assert Bits.from_dtype("u8", 12) == "0x0c"
+        assert Bits.from_bytes(b"\xf0", offset=1, length=3) == "0b111"
+        assert Bits.from_bools([True, 0, "x"]) == "0b101"
+        assert Bits.from_zeros(5) == "0b00000"
+        assert Bits.from_ones(5) == "0b11111"
+        assert Bits.from_joined(["0xa", "0xb"]) == "0xab"
+        assert Bits.from_joined([]) == Bits()
+        # The same empty bitstring repeated used to crash in tibs < 1.1.
+        empty = Bits()
+        assert Bits.from_joined([empty, empty, empty]) == Bits()
+
+        filename = tmp_path / "factory.bin"
+        filename.write_bytes(b"\x12\x34")
+        file_bits = Bits.from_file(filename)
+        assert file_bits == "0x1234"
+        assert eval(repr(file_bits)) == file_bits
+        with filename.open("rb") as f:
+            assert Bits.from_file(f, offset=4, length=8) == "0x23"
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_from_file_honours_file_position(self, cls, tmp_path):
+        filename = tmp_path / "seek.bin"
+        filename.write_bytes(b"\x12\x34\x56")
+        with filename.open("rb") as f:
+            f.seek(1)
+            assert cls.from_file(f) == "0x3456"
+        with filename.open("rb") as f:
+            f.seek(1)
+            assert cls.from_file(f, offset=4, length=8) == "0x45"
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_from_file_rejects_in_memory_streams(self, cls):
+        with pytest.raises(TypeError, match="from_bytes"):
+            cls.from_file(io.BytesIO(b"\x12\x34"))
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_to_bools(self, cls):
+        assert cls('0b0110').to_bools() == [False, True, True, False]
+        assert cls().to_bools() == []
+        bools = [True, False] * 500
+        assert cls.from_bools(bools).to_bools() == bools
+
+    def test_to_mutable(self):
+        bits = Bits("0b101")
+        bitarray = bits.to_mutable()
+        assert type(bitarray) is BitArray
+        assert bitarray == bits
+        bitarray.append("0b1")
+        assert bits == "0b101"
+        assert bitarray == "0b1011"
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_to_mutable_and_to_immutable_are_meaningful_on_both(self, cls):
+        # Both directions work on both classes, so neither needs suppressing on the
+        # subclass. to_immutable() mirrors copy(): self when already immutable.
+        obj = cls("0b101")
+        mutable = obj.to_mutable()
+        immutable = obj.to_immutable()
+        assert type(mutable) is BitArray
+        assert type(immutable) is Bits
+        assert mutable == immutable == obj
+        assert (immutable is obj) is (cls is Bits)
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_conversions_do_not_alias(self, cls):
+        source = BitArray("0b101")
+        mutable = source.to_mutable()
+        immutable = source.to_immutable()
+        source.append("0b1")
+        assert mutable == "0b101"
+        assert immutable == "0b101"
+        assert source == "0b1011"
+
+    @pytest.mark.parametrize("name", ["to_bitarray", "to_bits"])
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_old_conversion_names_are_gone(self, cls, name):
+        assert not hasattr(cls("0b101"), name)
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_reader_read_array_does_not_alias_its_source(self, cls):
+        # read_array() builds its own mutable data, whichever type the Reader wraps.
+        source = cls("0xffee")
+        a = bitstring.Reader(source).read_array("u8", 2)
+        assert a.to_list() == [255, 238]
+        a.data.set(0, 0)
+        assert source == "0xffee"
+        assert a.to_list() == [127, 238]
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_length_is_keyword_only(self, cls):
+        # A positional length was never valid - it's only meaningful alongside a
+        # dtype keyword - so it's now rejected as a TypeError rather than parsed
+        # and then failing.
+        with pytest.raises(TypeError):
+            cls("0xff", 8)
+        with pytest.raises(TypeError):
+            cls(b"\xff", 8)
+        # The keyword form is unaffected.
+        assert cls(u=5, length=8) == "0x05"
+        assert len(cls(hex="ff", length=8)) == 8
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_length_only_construction_removed(self, cls):
+        with pytest.raises(ValueError, match="from_zeros"):
+            cls(length=8)
+        # No initialiser at all is still an empty bitstring.
+        assert len(cls()) == 0
+        # And a length is still fine with a dtype keyword initialiser.
+        assert len(cls(u=0, length=8)) == 8
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    @pytest.mark.parametrize("attribute", ["len", "length"])
+    def test_length_properties_removed(self, cls, attribute):
+        bits = cls("0b101")
+        assert len(bits) == 3
+        with pytest.raises(AttributeError):
+            getattr(bits, attribute)
+
+    def test_tibs_conversion(self):
+        tibs = Tibs.from_bin("101")
+        bits = Bits.from_tibs(tibs)
+        assert type(bits) is Bits
+        assert bits == "0b101"
+        assert bits.to_tibs() is tibs
+        assert Bits("0b101").to_tibs() == tibs
+
+        mutibs = Mutibs.from_bin("101")
+        bits = Bits.from_tibs(mutibs)
+        assert type(bits) is Bits
+        assert bits == "0b101"
+        mutibs.append(0)
+        assert bits == "0b101"
+
+    @pytest.mark.parametrize("tibs_type", [Tibs, Mutibs])
+    def test_constructor_accepts_tibs_types(self, tibs_type):
+        tibs = tibs_type.from_bin("101")
+        bits = Bits(tibs)
+        assert type(bits) is Bits
+        assert bits == "0b101"
+        if tibs_type is Tibs:
+            assert bits.to_tibs() is tibs
+
+    @pytest.mark.parametrize("tibs_type", [Tibs, Mutibs])
+    def test_constructor_rejects_tibs_types_with_length(self, tibs_type):
+        tibs = tibs_type.from_bin("101")
+        with pytest.raises(ValueError, match="explicit length"):
+            Bits(tibs, length=2)
+
+    def test_mutibs_input_is_copied(self):
+        source = Mutibs.from_bin("101")
+        constructed = Bits(source)
+        from_tibs = Bits.from_tibs(source)
+
+        source.append(0)
+
+        assert constructed == "0b101"
+        assert from_tibs == "0b101"
+
+    def test_tibs_types_promote_as_bits_type(self):
+        tibs = Tibs.from_bin("101")
+        mutibs = Mutibs.from_bin("101")
+        bits = Bits("0b00101")
+
+        assert bits.find(tibs) == 2
+        assert bits.endswith(mutibs)
+        assert Bits("0b10100").startswith(tibs)
+        assert Bits.from_joined([Tibs.from_bin("10"), mutibs]) == "0b10101"
+        assert bitstring.pack("bits3", tibs) == "0b101"
+        assert bitstring.pack("bits3", mutibs) == "0b101"
+
+    def test_to_bytes_and_to_file_aliases(self, tmp_path):
+        bits = Bits("0b101")
+        assert bits.to_bytes() == b"\xa0"
+        assert bits.tobytes() == b"\xa0"
+        assert bytes(bits) == b"\xa0"
+
+        filename = tmp_path / "bits.bin"
+        with filename.open("wb") as f:
+            bits.to_file(f)
+        assert filename.read_bytes() == b"\xa0"
+
+        filename = tmp_path / "bits_alias.bin"
+        with filename.open("wb") as f:
+            bits.tofile(f)
+        assert filename.read_bytes() == b"\xa0"
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_positional_integer_constructor_removed(self, cls):
+        with pytest.raises(TypeError, match="from_zeros"):
+            cls(5)
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_filename_keyword_removed(self, cls, tmp_path):
+        filename = tmp_path / "source.bin"
+        filename.write_bytes(b"\xff")
+        with pytest.raises(ValueError, match="from_file"):
+            cls(filename=filename)
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_bytes_keyword_removed(self, cls):
+        with pytest.raises(ValueError, match="from_bytes"):
+            cls(bytes=b"\xff")
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_constructor_accepts_strict_bit_patterns(self, cls):
+        assert cls([1, 0, True, False]) == "0b1010"
+        assert cls((True, False, 1, 0)) == "0b1010"
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_ambiguous_constructor_sources_removed(self, cls, tmp_path):
+        with pytest.raises(TypeError, match="0, 1, True or False"):
+            cls([1, 2, 3])
+        with pytest.raises(TypeError, match="from_bools"):
+            cls(range(2))
+        with pytest.raises(TypeError, match="from_bytes"):
+            cls(io.BytesIO(b"\xff"))
+        with pytest.raises(TypeError, match="from_bytes"):
+            cls(array.array("B", [0xff]))
+
+        filename = tmp_path / "source.bin"
+        filename.write_bytes(b"\xff")
+        with filename.open("rb") as f:
+            with pytest.raises(TypeError, match="from_file"):
+                cls(f)
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_removed_constructor_sources_still_rejected_with_length(self, cls, tmp_path):
+        with pytest.raises(ValueError, match="explicit length"):
+            cls([1, 0, 1], length=3)
+        with pytest.raises(TypeError, match="0, 1, True or False"):
+            cls([1, 2, 3], length=3)
+        with pytest.raises(TypeError, match="from_bytes"):
+            cls(io.BytesIO(b"\xff"), length=8)
+        with pytest.raises(TypeError, match="from_bytes"):
+            cls(array.array("B", [0xff]), length=8)
+
+        filename = tmp_path / "source.bin"
+        filename.write_bytes(b"\xff")
+        with filename.open("rb") as f:
+            with pytest.raises(TypeError, match="from_file"):
+                cls(f, length=8)
+
+    def test_removed_constructor_sources_still_promote_as_bits_type(self, tmp_path):
+        assert Bits("0b101").find([1, 0, 1]) == 0
+        assert Bits("0b101").find((1, 0, True)) == 0
+        assert Bits("0xa0").startswith(memoryview(b"\xa0"))
+        with pytest.raises(TypeError, match="from_bools"):
+            Bits("0b101").find(range(2))
+        with pytest.raises(TypeError, match="0, 1, True or False"):
+            Bits("0b101").find([1, 2])
+        with pytest.raises(TypeError, match="from_bytes"):
+            Bits("0xa0").startswith(io.BytesIO(b"\xa0"))
+        with pytest.raises(TypeError, match="from_bytes"):
+            Bits("0xff").endswith(array.array("B", [0xff]))
+
+        filename = tmp_path / "source.bin"
+        filename.write_bytes(b"\xa0")
+        with filename.open("rb") as f:
+            with pytest.raises(TypeError, match="from_file"):
+                Bits("0xa0ff").startswith(f)
+
+        bits = BitArray("0b0")
+        bits.append([1, 0, 1])
+        assert bits == "0b0101"
+        with pytest.raises(TypeError, match="0, 1, True or False"):
+            bits.append((1, 0, "bad"))
+
+    @pytest.mark.parametrize("cls", [Bits, BitArray])
+    def test_fromstring_compatibility_alias(self, cls):
+        s = cls.fromstring("u4=15, 0b01")
+        assert type(s) is cls
+        assert s == cls.from_string("u4=15, 0b01")
+
+    def test_creation_from_bytes(self):
+        s = Bits.from_bytes(b"\xa0\xff")
+        assert (len(s), s.hex) == (16, "a0ff")
+        s = Bits.from_bytes(b"abc", length=0)
+        assert s == ""
+
+    @given(st.binary())
+    def test_creation_from_bytes_roundtrip(self, data):
+        s = Bits.from_bytes(data)
+        assert s.bytes == data
+
+    def test_creation_from_bytes_errors(self):
+        with pytest.raises(ValueError):
+            Bits.from_bytes(b"abc", length=25)
+
+    def test_creation_from_data_with_offset(self):
+        s1 = Bits.from_bytes(b"\x0b\x1c\x2f", offset=0, length=20)
+        s2 = Bits.from_bytes(b"\xa0\xb1\xc2", offset=4)
+        assert (len(s2), s2.hex) == (20, "0b1c2")
+        assert (len(s1), s1.hex) == (20, "0b1c2")
+        assert s1 == s2
+
+    def test_creation_from_hex(self):
+        s = Bits(hex="0xA0ff")
+        assert (len(s), s.hex) == (16, "a0ff")
+        s = Bits(hex="0X")
+        assert (len(s), s.hex) == (0, "")
+
+    def test_creation_from_hex_with_whitespace(self):
+        s = Bits(hex="  \n0 X a  4e       \r3  \n")
+        assert s.hex == "a4e3"
+
+    @pytest.mark.parametrize("bad_val", ["0xx0", "0xX0", "0Xx0", "-2e", "0x0x0X", "ff0x"])
+    def test_creation_from_hex_errors(self, bad_val: str):
+        with pytest.raises(ValueError):
+            Bits(hex=bad_val)
+        with pytest.raises(ValueError):
+            Bits("0x2", length=2)
+
+    def test_creation_from_bin(self):
+        s = Bits(bin="1010000011111111")
+        assert (len(s), s.hex) == (16, "a0ff")
+        s = Bits(bin="00")[:1]
+        assert s.bin == "0"
+        s = Bits(bin=" 0000 \n 0001\r ")
+        assert s.bin == "00000001"
+
+    def test_creation_from_bin_with_whitespace(self):
+        s = Bits(bin="  \r\r\n0   B    00   1 1 \t0 ")
+        assert s.bin == "00110"
+
+    def test_creation_from_oct_errors(self):
+        s = Bits("0b00011")
+        with pytest.raises(ValueError):
+            _ = s.oct
+        with pytest.raises(ValueError):
+            _ = Bits("oct=8")
+
+    def test_offset_constructor_keyword_removed(self):
+        with pytest.raises(ValueError):
+            Bits(u=12, length=8, offset=1)
+
+    def test_long_numeric_keyword_initialisers_are_compatibility_aliases(self):
+        assert Bits(uint=4, length=10) == Bits(u=4, length=10)
+        assert Bits(int=-2, length=10) == Bits(i=-2, length=10)
+        assert Bits(float=1.5, length=16) == Bits(f=1.5, length=16)
+        assert BitArray(uint=4, length=10) == BitArray(u=4, length=10)
+        assert BitArray(int=-2, length=10) == BitArray(i=-2, length=10)
+        assert BitArray(float=1.5, length=16) == BitArray(f=1.5, length=16)
+
+    def test_creation_from_u_errors(self):
+        with pytest.raises(ValueError):
+            Bits(u=-1, length=10)
+        with pytest.raises(ValueError):
+            Bits(u=12)
+        with pytest.raises(ValueError):
+            Bits(u=4, length=2)
+        with pytest.raises(ValueError):
+            Bits(u=0, length=0)
+        with pytest.raises(ValueError):
+            Bits(u=12, length=-12)
+
+    def test_creation_from_i(self):
+        s = Bits(i=0, length=4)
+        assert s.bin == "0000"
+        s = Bits(i=1, length=2)
+        assert s.bin == "01"
+        s = Bits(i=-1, length=11)
+        assert s.bin == "11111111111"
+        s = Bits(i=12, length=7)
+        assert s.int == 12
+        s = Bits(i=-243, length=108)
+        assert (s.int, len(s)) == (-243, 108)
+        for length in range(6, 10):
+            for value in range(-17, 17):
+                s = Bits(i=value, length=length)
+                assert (s.int, len(s)) == (value, length)
+        _ = Bits(i=10, length=8)
+
+    @pytest.mark.parametrize("value, length", [[-1, 0], [12, None], [4, 3], [-5, 3]])
+    def test_creation_from_i_errors(self, value, length):
+        with pytest.raises(ValueError):
+            _ = Bits(i=value, length=length)
+
+    def test_creation_from_se(self):
+        for i in range(-100, 10):
+            s = Bits(se=i)
+            assert s.se == i
+        with pytest.raises(ValueError):
+            _ = Bits(se=10, length=40)
+
+    def test_creation_from_se_with_offset(self):
+        with pytest.raises(ValueError):
+            Bits(se=-13, offset=1)
+
+    def test_creation_from_se_errors(self):
+        with pytest.raises(ValueError):
+            Bits(se=-5, length=33)
+        with pytest.raises(ValueError):
+            Bits("se2=0")
+        s = Bits(bin="001000")
+        with pytest.raises(ValueError):
+            _ = s.se
+
+    def test_creation_from_ue(self):
+        for i in range(0, 20):
+            assert Bits(ue=i).ue == i
+
+    def test_creation_from_ue_with_offset(self):
+        with pytest.raises(ValueError):
+            Bits(ue=104, offset=2)
+
+    def test_creation_from_ue_errors(self):
+        with pytest.raises(ValueError):
+            Bits(ue=-1)
+        with pytest.raises(ValueError):
+            Bits(ue=1, length=12)
+        s = Bits(bin="10")
+        with pytest.raises(ValueError):
+            _ = s.ue
+
+    def test_creation_from_bool(self):
+        a = Bits("bool=1")
+        assert a == "bool=1"
+        b = Bits("bool:1=0")
+        assert b == [0]
+        c = bitstring.pack("bool=1, 2*bool", 0, 1)
+        assert c == "0b101"
+        d = bitstring.pack("bool:1=1, 2*bool1", 1, 0)
+        assert d == "0b110"
+
+    def test_creation_from_bool_errors(self):
+        with pytest.raises(ValueError):
+            _ = Bits("bool=3")
+        with pytest.raises(ValueError):
+            _ = Bits(bool=0, length=2)
+
+    def test_creation_keyword_error(self):
+        with pytest.raises(ValueError):
+            Bits(squirrel=5)
+
+    def test_creation_from_memoryview(self):
+        x = bytes(bytearray(range(20)))
+        m = memoryview(x[10:15])
+        b = Bits(m)
+        assert b.unpack("5*u8") == [10, 11, 12, 13, 14]
+
+
+class TestInitialiserLength:
+    # An explicit length= is either used or rejected, never silently dropped.
+
+    @pytest.mark.parametrize("kwargs, length", [
+        ({'hex': 'ff'}, 4),
+        ({'bin': '1010'}, 2),
+        ({'oct': '77'}, 3),
+    ])
+    def test_wrong_length_is_rejected(self, kwargs, length):
+        for cls in (Bits, BitArray):
+            with pytest.raises(ValueError):
+                cls(length=length, **kwargs)
+
+    @pytest.mark.parametrize("kwargs, length, expected", [
+        ({'hex': 'ff'}, 8, '0xff'),
+        ({'bin': '1010'}, 4, '0b1010'),
+        ({'oct': '77'}, 6, '0o77'),
+    ])
+    def test_matching_length_is_accepted(self, kwargs, length, expected):
+        assert Bits(length=length, **kwargs) == expected
+        # And is the same as giving no length at all.
+        assert Bits(**kwargs) == expected
+
+    @pytest.mark.parametrize("kwargs, length", [
+        ({'u': 5}, 8),
+        ({'i': -5}, 8),
+        ({'f': 1.5}, 32),
+        ({'ube': 5}, 16),
+        ({'bool': True}, 1),
+    ])
+    def test_length_consuming_initialisers_are_unaffected(self, kwargs, length):
+        assert len(Bits(length=length, **kwargs)) == length
+
+    def test_length_rejected_by_the_dtype_itself(self):
+        # These were already errors and stay that way.
+        with pytest.raises(ValueError):
+            Bits(bool=True, length=8)
+        with pytest.raises(ValueError):
+            Bits(se=5, length=8)
+        with pytest.raises(ValueError):
+            Bits('0xff', length=4)
+
+
+class TestEqualityAndHashing:
+    # Equality promotes, hashing doesn't. Deliberate: many strings describe the same
+    # bits and they don't share a hash, so no hash of a bitstring could match them all.
+
+    @pytest.mark.parametrize("other", ["0xff", b"\xff", bytearray(b"\xff")])
+    def test_equality_promotes(self, other):
+        assert Bits("0xff") == other
+        assert Bits("0xff") in [other]
+
+    def test_bit_pattern_lists_compare_equal(self):
+        assert Bits("0b1010") == [1, 0, 1, 0]
+        assert Bits("0b1") == [True]
+
+    def test_hashing_does_not_promote(self):
+        assert Bits("0xff") not in {"0xff"}
+        with pytest.raises(KeyError):
+            {Bits("0xff"): 1}["0xff"]
+
+    def test_bitstrings_hash_together_normally(self):
+        assert Bits("0xff") in {Bits("0xff")}
+        assert {Bits("0xff"): 1}[Bits("0xff")] == 1
+        assert len({Bits("0xff"), Bits("0b11111111")}) == 1
+
+    def test_why_the_hash_cannot_promote(self):
+        # All of these are equal to the same bitstring, and their hashes all differ.
+        equivalent = ["0xff", "0b11111111", "u8=255", "i8=-1", "hex=ff"]
+        for s in equivalent:
+            assert Bits("0xff") == s
+        assert len({hash(s) for s in equivalent}) == len(equivalent)
+
+
+class TestEmptyOperators:
+    # Every operator treats an empty bitstring as unremarkable rather than as an
+    # error, so that code doesn't need to special-case the empty case.
+
+    def test_unary_and_binary_operators(self):
+        empty = Bits()
+        assert ~empty == empty
+        assert empty & empty == empty
+        assert empty | empty == empty
+        assert empty ^ empty == empty
+        assert empty * 3 == empty
+        assert empty + empty == empty
+
+    def test_shifts(self):
+        empty = Bits()
+        assert empty << 1 == empty
+        assert empty >> 1 == empty
+        assert empty << 0 == empty
+        assert empty >> 0 == empty
+
+    def test_in_place_shifts(self):
+        for n in [0, 1, 100]:
+            a = BitArray()
+            a <<= n
+            assert a == BitArray()
+            a = BitArray()
+            a >>= n
+            assert a == BitArray()
+
+    def test_rotates(self):
+        for n in [0, 1, 100]:
+            a = BitArray()
+            a.rol(n)
+            assert a == BitArray()
+            a = BitArray()
+            a.ror(n)
+            assert a == BitArray()
+
+    def test_negative_amounts_are_still_rejected(self):
+        with pytest.raises(ValueError):
+            Bits() << -1
+        with pytest.raises(ValueError):
+            Bits() >> -1
+        with pytest.raises(ValueError):
+            BitArray().rol(-1)
+        with pytest.raises(ValueError):
+            BitArray().ror(-1)
+        with pytest.raises(ValueError):
+            a = BitArray()
+            a <<= -1
+        with pytest.raises(ValueError):
+            a = BitArray()
+            a >>= -1
+
+
+class TestInitialisation:
+    def test_empty_init(self):
+        a = Bits()
+        assert a == ""
+
+    def test_no_pos(self):
+        a = Bits("0xabcdef")
+        with pytest.raises(AttributeError):
+            _ = a.pos
+
+    def test_find(self):
+        a = Bits("0xabcd")
+        assert a.find("0xab") == 0
+        assert "0xab" in a
+        r = a.find("0xbc")
+        assert r == 4
+        r = a.find("0x23462346246", bytealigned=True)
+        assert r is None
+
+    def test_rfind(self):
+        a = Bits("0b11101010010010")
+        b = a.rfind("0b010")
+        assert b == 11
+        assert a.rfind("0b111") == 0
+
+    def test_find_all(self):
+        a = Bits("0b0010011")
+        b = list(a.findall([1]))
+        assert b == [2, 5, 6]
+        t = BitArray("0b10")
+        tp = list(t.findall("0b1"))
+        assert tp == [0]
+
+    def test_pp_honours_redirected_stdout(self):
+        import contextlib
+        s = io.StringIO()
+        with contextlib.redirect_stdout(s):
+            Bits("0xabcd").pp(color=False)
+        assert "ab cd" in s.getvalue()
+
+    def test_start_and_end_are_clamped_like_slice_indices(self):
+        # See issue #302. Out of range start/end are clipped rather than raising,
+        # and end < start gives an empty range, matching str and slice behaviour.
+        s = Bits("0b00110")
+        assert s.find("0b1", -100, 100) == 2
+        assert s.rfind("0b1", -100, 100) == 3
+        assert list(s.findall("0b1", -100, 100)) == [2, 3]
+        assert s.startswith("0b0", -100)
+        assert s.endswith("0b10", 0, 100)
+        assert [c.bin for c in s.cut(5, -100, 100)] == ["00110"]
+        assert list(s.cut(1, 3, 2)) == []
+        assert s.find("0b1", 3, 2) is None
+        assert not s.startswith("0b0", 3, 2)
+
+        t = BitArray("0b00110")
+        assert t.replace("0b1", "0b1", -100, 100) == 2
+        t.reverse(4, 1)  # Empty range, so a no-op.
+        t.rol(3, 4, 1)
+        t.ror(3, -100, -200)
+        assert t.byteswap(1, 4, 1) == 0
+        assert t == "0b00110"
+
+    def test_optional_range_arguments_can_be_positional(self):
+        s = BitArray("0b101001")
+        assert s.find("0b1", 1) == 2
+        assert s.find("0b1", 1, 3) == 2
+        assert s.rfind("0b1", 0, 4) == 2
+        assert list(s.findall("0b1", 1, 6, 2)) == [2, 5]
+        assert [chunk.bin for chunk in s.cut(2, 1, 5, 2)] == ["01", "00"]
+        assert [chunk.bin for chunk in s.split("0b0", 1, 5, 2)] == ["", "01"]
+        assert s.startswith("0b10", 0, 2)
+        assert s.endswith("0b00", 1, 5)
+
+        t = BitArray("0b101001")
+        assert t.replace("0b0", "0b11", 1, 5, 2) == 2
+
+        u = BitArray("0b1000")
+        u.reverse(0, 3)
+        assert u.bin == "0010"
+        u.rol(1, 0, 4)
+        assert u.bin == "0100"
+        u.ror(1, 0, 4)
+        assert u.bin == "0010"
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda s: s.find("0b1", 0, None, False),
+            lambda s: list(s.findall("0b1", 0, None, None, False)),
+            lambda s: list(s.split("0b1", 0, None, None, False)),
+            lambda s: s.replace("0b1", "0b0", 0, None, None, False),
+        ],
+    )
+    def test_bytealigned_argument_is_keyword_only(self, call):
+        with pytest.raises(TypeError):
+            call(BitArray("0b1010"))
+
+
+class TestCut:
+    def test_cut(self):
+        s = Bits("0b000111") * 10
+        for t in s.cut(6):
+            assert t.bin == "000111"
+
+
+class TestInterleavedExpGolomb:
+    def test_creation(self):
+        s1 = Bits(uie=0)
+        s2 = Bits(uie=1)
+        assert s1 == [1]
+        assert s2 == [0, 0, 1]
+        s1 = Bits(sie=0)
+        s2 = Bits(sie=-1)
+        s3 = Bits(sie=1)
+        assert s1 == [1]
+        assert s2 == [0, 0, 1, 1]
+        assert s3 == [0, 0, 1, 0]
+
+    def test_creation_from_property(self):
+        s = BitArray()
+        s.uie = 45
+        assert s.uie == 45
+        s.sie = -45
+        assert s.sie == -45
+
+    def test_interpretation(self):
+        for x in range(101):
+            assert Bits(uie=x).uie == x
+        for x in range(-100, 100):
+            assert Bits(sie=x).sie == x
+
+    def test_errors(self):
+        for f in ["sie=100, 0b1001", "0b00", "uie=100, 0b1001"]:
+            s = Bits.from_string(f)
+            with pytest.raises(ValueError):
+                _ = s.sie
+            with pytest.raises(ValueError):
+                _ = s.uie
+        with pytest.raises(ValueError):
+            Bits(uie=-10)
+
+
+class TestFileBased:
+    def setup_method(self):
+        filename = os.path.join(THIS_DIR, "smalltestfile")
+        self.a = Bits.from_file(filename)
+        self.b = Bits.from_file(filename, offset=16)
+        self.c = Bits.from_file(filename, offset=20, length=16)
+        self.d = Bits.from_file(filename, offset=20, length=4)
+
+    def test_creation_with_offset(self):
+        assert str(self.a) == "0x0123456789abcdef"
+        assert str(self.b) == "0x456789abcdef"
+        assert str(self.c) == "0x5678"
+
+    def test_bit_operators(self):
+        x = self.b[4:20]
+        assert x == "0x5678"
+        assert (x & self.c).hex == self.c.hex
+        assert self.c ^ self.b[4:20] == Bits.from_zeros(16)
+        assert self.a[23:36] | self.c[3:] == self.c[3:]
+        y = x & self.b[4:20]
+        assert y == self.c
+        assert repr(y) == repr(self.c)
+
+    def test_addition(self):
+        _ = self.d + "0x1"
+        x = self.a[20:24] + self.c[-4:] + self.c[8:12]
+        assert x == "0x587"
+        x = self.b + x
+        assert x.hex == "456789abcdef587"
+        x = BitArray(x)
+        del x[12:24]
+        assert x == "0x456abcdef587"
+
+
+class TestComparisons:
+    def test_unorderable(self):
+        a = Bits.from_zeros(5)
+        b = Bits.from_zeros(5)
+        with pytest.raises(TypeError):
+            _ = a < b
+        with pytest.raises(TypeError):
+            _ = a > b
+        with pytest.raises(TypeError):
+            _ = a <= b
+        with pytest.raises(TypeError):
+            _ = a >= b
+
+
+class TestSubclassing:
+    def test_is_instance(self):
+        class SubBits(bitstring.Bits):
+            pass
+
+        a = SubBits()
+        assert isinstance(a, SubBits)
+
+    def test_class_type(self):
+        class SubBits(bitstring.Bits):
+            pass
+
+        assert SubBits().__class__ == SubBits
+
+
+class TestLongBoolConversion:
+    def test_long_bool(self):
+        a = Bits.from_zeros(1000)
+        b = bool(a)
+        assert b is True
+
+
+class TestPadToken:
+    def test_creation(self):
+        a = Bits.from_string("pad:10")
+        assert a == Bits.from_zeros(10)
+        b = Bits("pad:0")
+        assert b == Bits()
+        c = Bits("0b11, pad:1, 0b111")
+        assert c == Bits("0b110111")
+
+    def test_pack(self):
+        s = bitstring.pack("0b11, pad:3, 0b1")
+        assert s.bin == "110001"
+        d = bitstring.pack("pad:c", c=12)
+        assert d == Bits.from_zeros(12)
+        e = bitstring.pack("0xf, uint12, pad:1, bin, pad4, 0b10", 0, "111")
+        assert e.bin == "11110000000000000111000010"
+
+    def test_unpack(self):
+        s = Bits("0b111000111")
+        x, y = s.unpack("3, pad:3, 3")
+        assert (x, y.u) == ("0b111", 7)
+        x, y = s.unpack("2, pad2, bin")
+        assert (x.u2, y) == (3, "00111")
+        x = s.unpack("pad:1, pad:2, pad:3")
+        assert x == []
+
+    def test_unpack_bug(self):
+        t = Bits("0o755, ue=12, i3=-1")
+        a, b = t.unpack("pad:9, ue, i3")
+        assert (a, b) == (12, -1)
+
+    def test_unpack_with_a_bare_dtype(self):
+        # A Dtype is accepted on its own, not only inside a list.
+        s = Bits("0xff")
+        assert s.unpack(bitstring.Dtype("u8")) == [255]
+        assert s.unpack(bitstring.Dtype("u8")) == s.unpack([bitstring.Dtype("u8")])
+        assert s.unpack(bitstring.Dtype("u8")) == s.unpack("u8")
+        # Including variable length and stretchy dtypes.
+        assert Bits("0b00110").unpack(bitstring.Dtype("ue")) == [5]
+        assert s.unpack(bitstring.Dtype("bin")) == ["11111111"]
+
+    def test_read_list_with_a_bare_dtype(self):
+        r = bitstring.Reader(Bits("0xff"))
+        assert r.read_list(bitstring.Dtype("u4")) == [15]
+        assert r.read_list(bitstring.Dtype("u4")) == [15]
+        assert r.pos == 8
+
+
+class TestModifiedByAddingBug:
+    def test_adding(self):
+        a = Bits("0b0")
+        b = Bits("0b11")
+        c = a + b
+        assert c == "0b011"
+        assert a == "0b0"
+        assert b == "0b11"
+
+    def test_adding2(self):
+        a = Bits.from_zeros(100)
+        b = Bits.from_zeros(101)
+        c = a + b
+        assert a == Bits.from_zeros(100)
+        assert b == Bits.from_zeros(101)
+        assert c == Bits.from_zeros(201)
+
+
+class TestWrongTypeBug:
+    def test_append_to_bits(self):
+        a = Bits(BitArray())
+        with pytest.raises(AttributeError):
+            a.append("0b1")
+        assert type(a) == Bits
+        b = Bits(BitArray())
+        assert type(b) == Bits
+
+
+class TestInitFromArray:
+    @given(st.sampled_from(["B", "H", "I", "L", "Q", "f", "d"]))
+    def test_empty_array(self, t):
+        a = array.array(t)
+        b = Bits.from_bytes(a.tobytes())
+        assert len(b) == 0
+
+    def test_single_byte(self):
+        a = array.array("B", b"\xff")
+        b = Bits.from_bytes(a.tobytes())
+        assert len(b) == 8
+        assert b.hex == "ff"
+
+    def test_signed_short(self):
+        a = array.array("h")
+        a.append(10)
+        a.append(-1)
+        b = Bits.from_bytes(a.tobytes())
+        assert len(b) == 32
+        assert b.bytes == a.tobytes()
+
+    def test_double(self):
+        a = array.array("d", [0.0, 1.0, 2.5])
+        b = Bits.from_bytes(a.tobytes())
+        assert len(b) == 192
+        native_f64 = "fle:64" if sys.byteorder == "little" else "f:64"
+        c, d, e = b.unpack(f"3*{native_f64}")
+        assert (c, d, e) == (0.0, 1.0, 2.5)
+
+
+class TestIteration:
+    def test_iterate_empty_bits(self):
+        assert list(Bits.from_bools([])) == []
+        assert list(Bits.from_bools([1, 0])[1:1]) == []
+
+    def test_iterate_non_empty_bits(self):
+        assert list(Bits.from_bools([1, 0])) == [True, False]
+        assert list(Bits.from_bools([1, 0, 0, 1])[1:3]) == [False, False]
+
+    def test_iterate_long_bits(self):
+        assert list(Bits.from_bools([1, 0]) * 1024) == [True, False] * 1024
+
+
+class TestContainsBug:
+    def test_contains(self):
+        a = Bits("0b1, 0x0001dead0001")
+        assert "0xdead" in a
+        assert "0xfeed" not in a
+
+        assert "0b1" in Bits("0xf")
+        assert "0b0" not in Bits("0xf")
+
+
+class TestByteStoreImmutablity:
+    def test_immutability_bug_append(self):
+        a = Bits("0b111")
+        b = a + "0b000"
+        c = BitArray(b)
+        c[1] = 0
+        assert c.bin == "101000"
+        assert a.bin3 == "111"
+        assert b.bin == "111000"
+
+    def test_immutability_bug_prepend(self):
+        a = Bits("0b111")
+        b = "0b000" + a
+        c = BitArray(b)
+        c[1] = 1
+        assert b.bin == "000111"
+        assert c.bin == "010111"
+
+
+class TestUnderscoresInLiterals:
+    def test_hex_creation(self):
+        a = Bits(hex="ab_cd__ef")
+        assert a.hex == "abcdef"
+        b = Bits("0x0102_0304")
+        assert b.uint == 0x0102_0304
+
+    def test_binary_creation(self):
+        a = Bits(bin="0000_0001_0010")
+        assert a.bin == "000000010010"
+        b = Bits.from_string("0b0011_1100_1111_0000")
+        assert b.bin == "0011110011110000"
+        v = 0b1010_0000
+        c = Bits(u=0b1010_0000, length=8)
+        assert c.uint == v
+
+    def test_octal_creation(self):
+        a = Bits(oct="0011_2233_4455_6677")
+        assert a.uint == 0o001122334455_6677
+        b = Bits("0o123_321_123_321")
+        assert b.uint == 0o123_321_123321
+
+
+class TestPrettyPrinting:
+    def test_simplest_cases(self):
+        a = Bits("0b101011110000")
+        s = io.StringIO()
+        a.pp(stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='bin', length=12 bits> [
+ 0: 10101111 0000    
+]
+"""
+        )
+
+        s = io.StringIO()
+        a.pp("hex", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='hex', length=12 bits> [
+ 0: af 0 
+]
+"""
+        )
+
+        s = io.StringIO()
+        a.pp("oct", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='oct', length=12 bits> [
+ 0: 5360
+]
+"""
+        )
+
+    def test_color_option(self, monkeypatch):
+        a = Bits("0xff")
+
+        monkeypatch.setenv("NO_COLOR", "1")
+        s = io.StringIO()
+        a.pp(stream=s)
+        assert "\x1b[" not in s.getvalue()
+
+        s = io.StringIO()
+        a.pp(stream=s, color=True)
+        assert "\x1b[" in s.getvalue()
+
+        s = io.StringIO()
+        a.pp(stream=s, color=False)
+        assert "\x1b[" not in s.getvalue()
+
+    def test_small_width(self):
+        a = Bits.from_zeros(20)
+        s = io.StringIO()
+        a.pp(fmt="bin", stream=s, width=5)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='bin', length=20 bits> [
+ 0: 00000000
+ 8: 00000000
+16: 0000    
+]
+"""
+        )
+
+    def test_separator(self):
+        a = Bits("0x0f0f") * 9
+        s = io.StringIO()
+        a.pp("hex:32", sep="!-!", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='hex32', length=144 bits> [
+  0: 0f0f0f0f!-!0f0f0f0f!-!0f0f0f0f!-!0f0f0f0f
+] + trailing_bits = 0x0f0f
+"""
+        )
+
+    def test_multi_line(self):
+        a = Bits.from_zeros(100)
+        s = io.StringIO()
+        a.pp("bin", sep="", stream=s, width=80)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='bin', length=100 bits> [
+  0: 000000000000000000000000000000000000000000000000000000000000000000000000
+ 72: 0000000000000000000000000000                                            
+]
+"""
+        )
+
+    def test_multiformat(self):
+        a = Bits("0b1111000011110000")
+        s = io.StringIO()
+        a.pp(stream=s, fmt="bin, hex")
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='bin, hex', length=16 bits> [
+ 0: 11110000 11110000 : f0 f0
+]
+"""
+        )
+        s = io.StringIO()
+        a.pp(stream=s, fmt="hex, bin:12")
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='hex, bin12', length=16 bits> [
+ 0: f0f : 111100001111
+] + trailing_bits = 0x0
+"""
+        )
+
+    def test_multi_line_multi_format(self):
+        a = Bits(i=-1, length=112)
+        s = io.StringIO()
+        a.pp(stream=s, fmt="bin:8, hex:8", width=42)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='bin8, hex8', length=112 bits> [
+  0: 11111111 11111111 11111111 : ff ff ff
+ 24: 11111111 11111111 11111111 : ff ff ff
+ 48: 11111111 11111111 11111111 : ff ff ff
+ 72: 11111111 11111111 11111111 : ff ff ff
+ 96: 11111111 11111111          : ff ff   
+]
+"""
+        )
+        s = io.StringIO()
+        a.pp(stream=s, fmt="bin, hex", width=41)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='bin, hex', length=112 bits> [
+  0: 11111111 11111111 : ff ff
+ 16: 11111111 11111111 : ff ff
+ 32: 11111111 11111111 : ff ff
+ 48: 11111111 11111111 : ff ff
+ 64: 11111111 11111111 : ff ff
+ 80: 11111111 11111111 : ff ff
+ 96: 11111111 11111111 : ff ff
+]
+"""
+        )
+
+        a = bytearray(range(0, 256))
+        b = Bits.from_bytes(a)
+        s = io.StringIO()
+        b.pp(stream=s, fmt="bytes")
+        assert (
+            remove_unprintable(s.getvalue())
+            == r"""<Bits, fmt='bytes', length=2048 bits> [
+   0: ĀāĂă ĄąĆć ĈĉĊċ ČčĎď ĐđĒē ĔĕĖė ĘęĚě ĜĝĞğ  !"# $%&' ()*+ ,-./ 0123 4567 89:; <=>? @ABC DEFG HIJK LMNO PQRS TUVW XYZ[
+ 736: \]^_ `abc defg hijk lmno pqrs tuvw xyz{ |}~ſ ƀƁƂƃ ƄƅƆƇ ƈƉƊƋ ƌƍƎƏ ƐƑƒƓ ƔƕƖƗ Ƙƙƚƛ ƜƝƞƟ ƠơƢƣ ƤƥƦƧ ƨƩƪƫ ƬƭƮƯ ưƱƲƳ ƴƵƶƷ
+1472: Ƹƹƺƻ Ƽƽƾƿ ǀǁǂǃ ǄǅǆǇ ǈǉǊǋ ǌǍǎǏ ǐǑǒǓ ǔǕǖǗ ǘǙǚǛ ǜǝǞǟ ǠǡǢǣ ǤǥǦǧ ǨǩǪǫ ǬǭǮǯ ǰǱǲǳ ǴǵǶǷ ǸǹǺǻ ǼǽǾǿ                         
+]
+"""
+        )
+
+    def test_group_size_errors(self):
+        a = Bits.from_zeros(120)
+        with pytest.raises(ValueError):
+            a.pp("hex:3")
+        with pytest.raises(ValueError):
+            a.pp("hex:4, oct")
+
+    def test_zero_group_size(self):
+        a = Bits.from_zeros(600)
+        s = io.StringIO()
+        a.pp("bin0", stream=s, show_offset=False)
+        expected_output = """<Bits, fmt='bin0', length=600 bits> [
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+
+        a = Bits.from_zeros(400)
+        s = io.StringIO()
+        a.pp(stream=s, fmt="hex:0", show_offset=False, width=80)
+        expected_output = """<Bits, fmt='hex0', length=400 bits> [
+00000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000                                                            
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+
+        s = io.StringIO()
+        a = Bits(u=10, length=48)
+        a.pp(stream=s, width=20, fmt="hex:0, oct:0", show_offset=False)
+        expected_output = """<Bits, fmt='hex0, oct0', length=48 bits> [
+000000 : 00000000
+00000a : 00000012
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+
+    def test_oct(self):
+        a = Bits("0o01234567") * 20
+        s = io.StringIO()
+        a.pp(stream=s, fmt="oct", show_offset=False, width=20)
+        expected_output = """<Bits, fmt='oct', length=480 bits> [
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+0123 4567 0123 4567
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+
+        t = io.StringIO()
+        a.pp("hex, oct:0", width=1, show_offset=False, stream=t)
+        expected_output = """<Bits, fmt='hex, oct0', length=480 bits> [
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+053977 : 01234567
+]
+"""
+        assert remove_unprintable(t.getvalue()) == expected_output
+
+    def test_bytes(self):
+        a = Bits.from_bytes(b"helloworld!!" * 5)
+        s = io.StringIO()
+        a.pp(stream=s, fmt="bytes", show_offset=False, width=48)
+        expected_output = """<Bits, fmt='bytes', length=480 bits> [
+hell owor ld!! hell owor ld!! hell owor ld!!
+hell owor ld!! hell owor ld!!               
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+        s = io.StringIO()
+        a.pp(stream=s, fmt="bytes0", show_offset=False, width=40)
+        expected_output = """<Bits, fmt='bytes0', length=480 bits> [
+helloworld!!helloworld!!helloworld!!hell
+oworld!!helloworld!!                    
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+
+    def test_bool(self):
+        a = Bits("0b1100")
+        s = io.StringIO()
+        a.pp(stream=s, fmt="bool", show_offset=False, width=20)
+        expected_output = """<Bits, fmt='bool', length=4 bits> [
+1 1 0 0
+]
+"""
+        assert remove_unprintable(s.getvalue()) == expected_output
+
+
+class TestPrettyPrintingErrors:
+    def test_wrong_formats(self):
+        a = Bits("0x12341234")
+        with pytest.raises(ValueError):
+            a.pp("binary")
+        with pytest.raises(ValueError):
+            a.pp("bin, bin, bin")
+
+    def test_interpret_problems(self):
+        a = Bits.from_zeros(7)
+        with pytest.raises(ValueError):
+            a.pp("oct")
+        with pytest.raises(ValueError):
+            a.pp("hex")
+        with pytest.raises(ValueError):
+            a.pp("bin, bytes")
+
+
+class TestPrettyPrinting_NewFormats:
+    def test_f_formats(self):
+        a = Bits("f32=10.5")
+        s = io.StringIO()
+        a.pp("f32", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='f32', length=32 bits> [
+ 0:                    10.5
+]
+"""
+        )
+        s = io.StringIO()
+        a.pp("f16", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='f16', length=32 bits> [
+ 0:                2.578125                     0.0
+]
+"""
+        )
+
+    def test_u(self):
+        a = Bits().join([Bits(u=x, length=12) for x in range(40, 105)])
+        s = io.StringIO()
+        a.pp("u, hex12", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<Bits, fmt='u, hex12', length=780 bits> [
+  0:   40   41   42   43   44   45   46   47   48   49   50   51 : 028 029 02a 02b 02c 02d 02e 02f 030 031 032 033
+144:   52   53   54   55   56   57   58   59   60   61   62   63 : 034 035 036 037 038 039 03a 03b 03c 03d 03e 03f
+288:   64   65   66   67   68   69   70   71   72   73   74   75 : 040 041 042 043 044 045 046 047 048 049 04a 04b
+432:   76   77   78   79   80   81   82   83   84   85   86   87 : 04c 04d 04e 04f 050 051 052 053 054 055 056 057
+576:   88   89   90   91   92   93   94   95   96   97   98   99 : 058 059 05a 05b 05c 05d 05e 05f 060 061 062 063
+720:  100  101  102  103  104                                    : 064 065 066 067 068                            
+]
+"""
+        )
+
+    def test_i_and_f(self):
+        a = BitArray(f=76.25, length=64) + "0b11111"
+        s = io.StringIO()
+        a.pp("i64, f", stream=s)
+        assert (
+            remove_unprintable(s.getvalue())
+            == """<BitArray, fmt='i64, f', length=69 bits> [
+ 0:  4635066033680416768 :                    76.25
+] + trailing_bits = 0b11111
+"""
+        )
+
+
+class TestCopy:
+    def test_copy_method(self):
+        s = Bits("0xc00dee")
+        t = s.copy()
+        assert s == t
+
+
+def test_native_endian_integer_dtypes_removed():
+    for name in ["une", "ine"]:
+        with pytest.raises(ValueError):
+            _ = Bits(**{name: 1}, length=16)
+    for token in ["une16=454", "ine:64=-1000"]:
+        with pytest.raises(ValueError):
+            _ = Bits(token)
+
+
+def test_large_ints():
+    s = Bits(i=-1, length=123)
+    assert s.int == -1
+    s = Bits(i=-1, length=201)
+    assert s.int == -1
+    s = Bits(u=12, length=201)
+    assert s.uint == 12
+
+
+@pytest.mark.parametrize("left", ["0xff", b"\xff", [1, 1, 1, 1, 1, 1, 1, 1]])
+def test_reflected_add_to_bitarray_stays_mutable(left):
+    x = left + BitArray("0x00")
+    assert type(x) is BitArray
+    assert x == "0xff00"
+    x[0] = 0
+    x.set(1, -1)
+    x.reverse()
+    x.append("0b1")
+    assert x == "0b1000000011111110, 0b1"
+
+
+@pytest.mark.parametrize("name, bits", [("ue", "0b000"), ("se", ""), ("uie", "0b0"), ("sie", "0b01")])
+def test_incomplete_exp_golomb_code_has_message(name, bits):
+    with pytest.raises(ValueError, match=f"not a single '{name}' code"):
+        _ = getattr(Bits(bits), name)
+
+
+def test_printable_bytes_maps_0xff_like_other_non_ascii():
+    s = io.StringIO()
+    Bits.from_bytes(b"\xfe\xff").pp("bytes", stream=s, color=False)
+    assert chr(0x1FE) + chr(0x1FF) in s.getvalue()
+
+
+def test_unpack_unknown_length_keyword_names_token():
+    with pytest.raises(ValueError, match="u:x") as e:
+        Bits("0xff").unpack("u:x")
+    assert "invalid literal" not in str(e.value)
+
+
+@pytest.mark.parametrize("name", ["u", "i", "uint", "int"])
+def test_missing_integer_length_message_uses_canonical_name(name):
+    canonical = name[0]
+    with pytest.raises(ValueError, match=f"'{canonical}' initialiser"):
+        _ = Bits(**{name: 5})
+
+
+@pytest.mark.parametrize("value", [1.0, 0.0, 0.5])
+def test_bool_rejects_floats(value):
+    with pytest.raises(ValueError):
+        _ = Bits(bool=value)
+    with pytest.raises(ValueError):
+        _ = bitstring.pack("bool", value)
+    with pytest.raises(ValueError):
+        _ = bitstring.Array("bool", [value])
+    a = BitArray("0b0")
+    with pytest.raises(ValueError):
+        a.bool = value
+
+
+@pytest.mark.parametrize("value, expected", [(True, True), (1, True), ("1", True), ("True", True),
+                                             (False, False), (0, False), ("0", False), ("False", False)])
+def test_bool_still_accepts_bools_ints_and_strings(value, expected):
+    assert Bits(bool=value).bool is expected
+
+
+@pytest.mark.parametrize("method, value, s", [('all', 1, '0b1'), ('any', 1, '0b0')])
+def test_all_any_raise_for_out_of_range_position(method, value, s):
+    # Positions are checked until the result is known (as documented), so here the bad one is reached.
+    with pytest.raises(IndexError):
+        getattr(Bits(s), method)(value, [0, 5])

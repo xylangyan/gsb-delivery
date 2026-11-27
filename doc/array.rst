@@ -1,0 +1,704 @@
+.. currentmodule:: bitstring
+
+
+Array
+=====
+
+.. class:: Array(dtype: str | Dtype, initializer: Iterable | Array | array.array | None = None, trailing_bits: BitsType | None = None)
+
+    Create a new ``Array`` whose elements are set by the `dtype` (data-type) string or :class:`Dtype`.
+    This can be any format which has a fixed, non-zero length.
+    See :ref:`format_tokens` and :ref:`compact_format` for details on allowed dtype strings, noting that only formats with well defined bit lengths are allowed.
+
+    The `initializer` is an iterable of values appropriate to the `dtype`, such as a list, another ``bitstring.Array`` or an ``array.array``. ::
+
+        >>> bitstring.Array('i4', [-3, 0, 5])
+        Array('i4', [-3, 0, 5])
+
+    To create an ``Array`` from raw binary data use :meth:`Array.from_bytes`, and to create one full of zeroed items use :meth:`Array.from_zeros`. ::
+
+        >>> bitstring.Array.from_zeros('i4', 8)
+        Array('i4', [0, 0, 0, 0, 0, 0, 0, 0])
+        >>> bitstring.Array.from_bytes('u8', b'AB')
+        Array('u8', [65, 66])
+
+    The `trailing_bits` typically isn't used in construction, and specifies bits left over after interpreting the stored binary data according to the data type `dtype`.
+
+
+The ``Array`` class is a way to efficiently store data that has a single type with a set length.
+The ``bitstring.Array`` type is meant as a more flexible version of the standard ``array.array``, and can be used the same way. ::
+
+    import array
+    import sys
+    import bitstring
+
+    x = array.array('f', [1.0, 2.0, 3.14])
+    dtype = 'fle32' if sys.byteorder == 'little' else 'f32'
+    y = bitstring.Array(dtype, [1.0, 2.0, 3.14])
+
+    assert x.tobytes() == y.to_bytes()
+
+This example packs three 32-bit floats into objects using both libraries.
+The bitstring version chooses an explicit byte order to match the current machine.
+The bitstring Array's advantage lies in the way that any fixed-length bitstring format can be used instead of just the dozen or so typecodes supported by the ``array`` module.
+
+For example ``'u4'``, ``'bfloat'`` or ``'hex12'`` can be used, and the endianness of multi-byte dtypes can be properly specified.
+
+Each element in the ``Array`` must then be something that makes sense for the ``dtype``.
+Some examples will help illustrate::
+
+    from bitstring import Array
+
+    # Each unsigned int is stored in 4 bits
+    a = Array('u4', [0, 5, 5, 3, 2])
+
+    # Convert and store floats in 8 bits each
+    b = Array('p3binary', [-56.0, 0.123, 99.6])
+
+    # Each element is a 7 bit signed integer
+    c = Array('i7', [-3, 0, 120])
+
+You can then access and modify the ``Array`` with the usual notation::
+
+    a[1:4]  # Array('u4', [5, 5, 3])
+    b[0]    # -56.0
+    c[-1]   # 120
+
+    a[0] = 2
+    b.extend([0.0, -1.5])
+
+Conversion between ``Array`` types can be done using the :meth:`Array.astype` method.
+If elements of the old array don't fit or don't make sense in the new array then the relevant exceptions will be raised.
+Floats aren't converted to an integer dtype, even when they hold a whole number, so convert them explicitly first. ::
+
+    >>> x = Array('f64', [89.3, 200.0, -0.00000001, 34])
+    >>> y = x.astype('f16')
+    >>> y
+    Array('f16', [89.3125, 200.0, -0.0, 34.0])
+    >>> y = y.astype('p4binary')
+    >>> y
+    Array('p4binary', [88.0, 192.0, 0.0, 32.0])
+    >>> y.astype('u8')
+    ValueError: An integer dtype needs a whole number, but received 88.0, which is a float.
+    >>> z = Array('u8', [int(v) for v in y])
+    >>> z
+    Array('u8', [88, 192, 0, 32])
+    >>> z.astype('u7')
+    ValueError: Value 192 does not fit in 7 bits.
+
+Note that float dtypes overflow to ``inf`` rather than clamping, so a value too large for the new dtype won't raise on its own, but will if it is then cast to an integer dtype.
+
+You can also reinterpret the data by changing the :attr:`Array.dtype` property directly.
+This will not copy any data but will cause the current data to be shown differently. ::
+
+    >>> x = Array('i16', [-5, 100, -4])
+    >>> x
+    Array('i16', [-5, 100, -4])
+    >>> x.dtype = 'i8'
+    >>> x
+    Array('i8', [-1, -5, 0, 100, -1, -4])
+
+
+The data for the array is stored internally as a :class:`BitArray` object.
+It can be directly accessed using the :attr:`Array.data` property.
+You can freely manipulate the internal data using all of the methods available for the :class:`BitArray` class.
+The property gives you the ``Array``'s own buffer rather than a copy, so changes made through it change the ``Array``.
+It can only be set to a :class:`BitArray`, as the data has to stay mutable.
+
+The :class:`Array` object also has a :attr:`Array.trailing_bits` read-only data member, which consists of the end bits of the :attr:`Array.data` that are left over when the :class:`Array` is interpreted using the :attr:`Array.dtype`.
+Typically :attr:`Array.trailing_bits` will be an empty :class:`BitArray` but if you change the length of the :attr:`Array.data` or change the :attr:`Array.dtype` specification there may be some bits left over.
+
+Some methods, such as :meth:`~Array.append` and :meth:`~Array.extend` will raise an exception if used when :attr:`Array.trailing_bits` is not empty, as it is not clear how these should behave in this case.
+You can however still use :meth:`~Array.insert` which will always leave the :attr:`Array.trailing_bits` unchanged.
+The in-place operators such as ``a += 1`` and ``a &= '0x0f'`` change the items and also leave the :attr:`Array.trailing_bits` unchanged.
+
+Trailing bits are never dropped silently when another ``Array`` is used as a source of values: :meth:`~Array.extend` and slice assignment raise a ``ValueError`` if the source ``Array`` has trailing bits.
+
+The :attr:`Array.dtype` string can be a type code such as ``'>H'`` or ``'<d'`` but it can also be a string defining any format which has a fixed-length in bits, for example ``'i12'``, ``'bfloat'``, ``'bytes5'`` or ``'bool'``.
+
+Note that the typecodes must include an endianness character to give the byte ordering.
+This is more like the ``struct`` module typecodes, and is different to the ``array.array`` typecodes which are always native-endian.
+
+The correspondence between the big-endian type codes and bitstring dtype strings is given in the table below.
+
+=========   ===================
+Type code   bitstring dtype
+=========   ===================
+``'>b'``     ``'i8'``
+``'>B'``     ``'u8'``
+``'>h'``     ``'i16'``
+``'>H'``     ``'u16'``
+``'>l'``     ``'i32'``
+``'>L'``     ``'u32'``
+``'>q'``     ``'i64'``
+``'>Q'``     ``'u64'``
+``'>e'``     ``'f16'``
+``'>f'``     ``'f32'``
+``'>d'``     ``'f64'``
+=========   ===================
+
+The endianness character can be ``'>'`` for big-endian or ``'<'`` for little-endian.
+In the bitstring dtypes the default is big-endian, but you can specify little-endian using an ``'le'`` modifier, for example:
+
+============  =============================
+Type code     bitstring dtype
+============  =============================
+``'>H'``      ``'u16'`` / ``'ube16'``
+``'<H'``      ``'ule16'``
+============  =============================
+
+
+Note that:
+
+* The ``array`` module's native endianness means that different packed binary data will be created on different types of machines.
+  Users may find that behaviour unexpected which is why bitstring requires big- or little-endian byte order to be specified explicitly.
+
+* The ``'u'`` type code from the ``array`` module isn't supported as its length is platform dependent.
+
+* The ``'e'`` type code isn't one of the ``array`` supported types, but it is used in the ``struct`` module and we support it here.
+
+* The ``'b'`` and ``'B'`` type codes need to be preceded by an endianness character even though it makes no difference which one you use as they are only 1 byte long.
+
+----
+
+Methods
+-------
+
+.. method:: Array.append(x: float | int | str | bytes) -> None
+
+    Add a new element with value `x` to the end of the Array.
+    The type of `x` should be appropriate for the type of the Array.
+
+    Raises a ``ValueError`` if the Array's bit length is not a multiple of its dtype length (see :attr:`~Array.trailing_bits`).
+
+.. method:: Array.astype(dtype: Dtype | str) -> Array
+
+    Cast the ``Array`` to the new `dtype` and return the result. ::
+
+        >>> a = Array('f64', [-990, 34, 1, 0.25])
+        >>> a.data
+        BitArray('0xc08ef0000000000040410000000000003ff00000000000003fd0000000000000')
+        >>> b = a.astype('f16')
+        >>> b.data
+        BitArray('0xe3bc50403c003400')
+        >>> b.to_list() == a.to_list()
+        True
+
+
+.. method:: Array.byteswap() -> None
+
+    Change the byte endianness of each element.
+
+    Raises a ``ValueError`` if the format is not an integer number of bytes long. ::
+
+        >>> a = Array('u32', [100, 1, 999])
+        >>> a.byteswap()
+        >>> a
+        Array('u32', [1677721600, 16777216, 3875733504])
+        >>> a.dtype = 'ule32'
+        >>> a
+        Array('ule32', [100, 1, 999])
+
+    Every item is swapped, using the item size as the pattern. To byteswap only part of an
+    ``Array``, or with a different pattern, use :meth:`BitArray.byteswap` on its
+    :attr:`~Array.data` instead.
+
+.. method:: Array.count(value: float | int | str | bytes) -> int
+
+    Returns the number of elements set to *value*. ::
+
+        >>> a = Array('hex4')
+        >>> a.data += '0xdeadbeef'
+        >>> a
+        Array('hex4', ['d', 'e', 'a', 'd', 'b', 'e', 'e', 'f'])
+        >>> a.count('e')
+        3
+
+    For floating point types, using a `value` of ``float('nan')`` will count the number of elements for which ``math.isnan()`` returns ``True``.
+
+.. method:: Array.equals(other: Any) -> bool
+
+    Equality test - `other` can be either another bitstring Array or an ``array``.
+    Returns ``True`` if the dtypes are equivalent and the underlying bit data is the same, otherwise returns ``False``. ::
+
+        >>> a = Array('u8', [1, 2, 3, 2, 1])
+        >>> a[0:3].equals(a[-1:-4:-1])
+        True
+        >>> b = Array('i8', [1, 2, 3, 2, 1])
+        >>> a.equals(b)
+        False
+
+    To compare only the values contained in the Array, extract them using :meth:`~Array.to_list` first::
+
+        >>> a.to_list() == b.to_list()
+        True
+
+    Note that the ``==`` operator does something different: it compares element-wise and returns a new ``Array`` of dtype ``'bool'``. It compares values, so unlike ``equals`` the dtypes don't have to match, but the lengths do.
+
+        >>> a == b
+        Array('bool', [True, True, True, True, True])
+        >>> a == Array('u8', [1, 0, 3, 0, 1])
+        Array('bool', [True, False, True, False, True])
+
+
+.. method:: Array.extend(iterable: Iterable | Array) -> None
+
+    Extend the Array by constructing new elements from the values in a list or other iterable.
+
+    The `iterable` can be another ``Array`` or an ``array.array``, but only if the dtype is the same.
+    A ``ValueError`` is raised if `iterable` is an ``Array`` with :attr:`~Array.trailing_bits`. To leave them out use a slice such as ``b[:]``, or to keep them append to the data directly with ``a.data += b.data``. ::
+
+        >>> a = Array('i5', [-5, 0, 10])
+        >>> a.extend([3, 2, 1])
+        >>> a.extend(a[0:3] // 5)
+        >>> a
+        Array('i5', [-5, 0, 10, 3, 2, 1, -1, 0, 2])
+
+.. classmethod:: Array.from_bytes(dtype: str | Dtype, data: bytes | bytearray | memoryview, /) -> Array
+
+    Create a new ``Array`` with its binary data taken from a bytes-like object. ::
+
+        >>> a = Array.from_bytes('u8', b'ABC')
+        >>> a
+        Array('u8', [65, 66, 67])
+
+.. classmethod:: Array.from_file(dtype: str | Dtype, source: str | Path | BinaryIO, /, n: int | None = None) -> Array
+
+    Create a new ``Array`` with items read from a file path or binary file object.
+
+    If a file object is given the items are read from its current file position.
+    If *n* is specified then exactly that many items are read, and an :exc:`EOFError` is raised if there is not enough data. Otherwise as many whole items as possible are read. Short reads from a binary stream are collected until the requested number of items is available or the stream reaches EOF.
+
+.. classmethod:: Array.from_zeros(dtype: str | Dtype, n: int, /) -> Array
+
+    Create a new ``Array`` containing *n* zeroed items. ::
+
+        >>> a = Array.from_zeros('i12', 5)
+        >>> a
+        Array('i12', [0, 0, 0, 0, 0])
+
+.. method:: Array.insert(i: int, x: float | int | str | bytes) -> None
+
+    Insert an item at a given position. ::
+
+        >>> a = Array('p3binary', [-10, -5, -0.5, 5, 10])
+        >>> a.insert(3, 0.5)
+        >>> a
+        Array('p3binary', [-10.0, -5.0, -0.5, 0.5, 5.0, 10.0])
+
+
+.. method:: Array.pop(i: int = -1) -> float | int | str | bytes
+
+    Remove and return the item at position i.
+
+    If a position isn't specified the final item is returned and removed. ::
+
+        >>> a = Array('bytes3', [b'ABC', b'DEF', b'ZZZ'])
+        >>> a.pop(0)
+        b'ABC'
+        >>> a.pop()
+        b'ZZZ'
+        >>> a.pop()
+        b'DEF'
+
+
+.. method:: Array.pp(fmt: str | None = None, width: int = 120, sep: str = ' ', show_offset: bool = True, stream: TextIO | None = None, color: bool | None = None) -> None
+
+    Pretty print the Array.
+
+    The format string `fmt` defaults to the Array's current :attr:`dtype`, but any other valid Array format string can be used.
+
+    If a `fmt` doesn't have an explicit length, the Array's :attr:`itemsize` will be used.
+
+    A pair of comma-separated format strings can also be used - if both formats specify a length they must be the same. For example ``'f, hex16'`` or ``'u4, bin4'``.
+
+    The output will try to stay within `width` characters per line, but will always output at least one element value.
+
+    The `sep` string is printed between groups, and defaults to a single space.
+
+    Setting `show_offset` to ``False`` will hide the element index on each line of the output.
+
+    An output `stream` can be specified. This should be an object with a ``write`` method and the default is ``sys.stdout``.
+
+        >>> a = Array.from_bytes('u20', bytearray(range(100)))
+        >>> a.pp(width=70, show_offset=False)
+        <Array dtype='u20', length=40, itemsize=20 bits, total data size=100 bytes> [
+             16  131844   20576  460809   41136  789774   61697   70163
+          82257  399128  102817  728093  123378    8482  143938  337447
+         164498  666412  185058  995377  205619  275766  226179  604731
+         246739  933696  267300  214085  287860  543050  308420  872015
+         328981  152404  349541  481369  370101  810334  390662   90723
+        ]
+
+        >>> a.pp('hex32', width=70)
+        <Array fmt='hex32', length=25, itemsize=32 bits, total data size=100 bytes> [
+          0: 00010203 04050607 08090a0b 0c0d0e0f 10111213 14151617 18191a1b
+          7: 1c1d1e1f 20212223 24252627 28292a2b 2c2d2e2f 30313233 34353637
+         14: 38393a3b 3c3d3e3f 40414243 44454647 48494a4b 4c4d4e4f 50515253
+         21: 54555657 58595a5b 5c5d5e5f 60616263
+        ]
+
+        >>> a.pp('i12, hex', show_offset=False, width=70)
+        <Array fmt='i12, hex', length=66, itemsize=12 bits, total data size=100 bytes> [
+            0   258    48  1029    96  1800 : 000 102 030 405 060 708
+          144 -1525   192  -754   241    17 : 090 a0b 0c0 d0e 0f1 011
+          289   788   337  1559   385 -1766 : 121 314 151 617 181 91a
+          433  -995   481  -224   530   547 : 1b1 c1d 1e1 f20 212 223
+          578  1318   626 -2007   674 -1236 : 242 526 272 829 2a2 b2c
+          722  -465   771   306   819  1077 : 2d2 e2f 303 132 333 435
+          867  1848   915 -1477   963  -706 : 363 738 393 a3b 3c3 d3e
+         1012    65  1060   836  1108  1607 : 3f4 041 424 344 454 647
+         1156 -1718  1204  -947  1252  -176 : 484 94a 4b4 c4d 4e4 f50
+         1301   595  1349  1366  1397 -1959 : 515 253 545 556 575 859
+         1445 -1188  1493  -417  1542   354 : 5a5 b5c 5d5 e5f 606 162
+        ] + trailing_bits = 0x63
+
+    Colours are used by default unless the ``NO_COLOR`` environment variable is set. Pass ``color=False`` to disable them for a call, or ``color=True`` to force them on.
+
+
+.. method:: Array.reverse() -> None
+
+    Reverse the order of all items in the Array. ::
+
+        >>> a = Array('>L', [100, 200, 300])
+        >>> a.reverse()
+        >>> a
+        Array('ube32', [300, 200, 100])
+
+.. method:: Array.to_bytes() -> bytes
+
+    Return Array data as bytes object, padding with zero bits at the end if needed. ::
+
+        >>> a = Array('i4', [3, -6, 2, -3, 2, -7])
+        >>> a.to_bytes()
+        b':-)'
+
+.. method:: Array.to_file(f: BinaryIO) -> None
+
+    Writes the Array data to the file object *f*, which should have been opened in binary write mode.
+
+    The data written will be padded at the end with between zero and seven ``0`` bits to make it byte aligned.
+    The file object remains open so the user must call ``.close()`` on it once they are finished.
+
+.. method:: Array.to_list() -> List[float | int | str | bytes]
+
+    Return Array items as a list.
+
+    Each packed element of the Array is converted to an ordinary Python object such as a ``float`` or an ``int`` depending on the Array's format, and returned in a Python list.
+
+----
+
+Special Methods
+---------------
+
+Type promotion
+""""""""""""""
+
+Many operations can be performed between two ``Array`` objects.
+For these to be valid the dtypes of the ``Array`` objects must be numerical, that is they must represent an integer or floating point value.
+Some operations have tighter restrictions, such as the shift operators ``<<`` and ``>>`` requiring integers only.
+
+When the resulting dtype is an integer one, a fractional result is truncated towards zero, so ``Array('i8', [-3, 3]) / 2`` gives ``Array('i8', [-1, 1])``.
+This is only done by the operators; packing a fractional value into an integer dtype any other way is an error.
+
+The dtype of the resulting ``Array`` is calculated by applying these rules:
+
+**Rule 0**: For comparison operators (``<``, ``>=``, ``==``, ``!=`` etc.) the result is always an ``Array`` of dtype ``'bool'``.
+
+For other operators, one of the two input ``Array`` dtypes is used as the output dtype by applying the remaining rules in order until a winner is found:
+
+* **Rule 1**: Floating point types always win against integer types.
+* **Rule 2**: Signed integer types always win against unsigned integer types.
+* **Rule 3**: Longer types win against shorter types.
+* **Rule 4**: In a tie the first type wins.
+
+Some examples should help illustrate:
+
+.. list-table::
+   :widths: 14 16 10 16 8 16
+
+   * - **Rule 0**
+     - ``'u8'``
+     - ``<=``
+     - ``'f64'``
+     - →
+     - ``'bool'``
+   * - **Rule 1**
+     - ``'i32'``
+     - ``+``
+     - ``'f16'``
+     - →
+     - ``'f16'``
+   * - **Rule 2**
+     - ``'u20'``
+     - ``//``
+     - ``'i10'``
+     - →
+     - ``'i10'``
+   * - **Rule 3**
+     - ``'i8'``
+     - ``*``
+     - ``'i16'``
+     - →
+     - ``'i16'``
+   * - **Rule 4**
+     - ``'f16'``
+     - ``-=``
+     - ``'bfloat'``
+     - →
+     - ``'f16'``
+
+Comparison operators
+""""""""""""""""""""
+
+Comparison operators can operate between two ``Array`` objects, or between an ``Array`` and a scalar quantity (usually a number).
+
+Note that they always produce an ``Array`` of :attr:`~Array.dtype` ``'bool'``, including the equality and inequality operators.
+
+To test the boolean equality of two Arrays use the :meth:`~Array.equals` method instead.
+
+``==`` and ``!=`` also accept a list, tuple or ``array.array`` of values, and follow the usual Python rules against anything they can't compare, so ``a == None`` is just ``False``.
+
+.. method:: Array.__eq__(self, other: int | float | str | BitsType | Array) -> Array
+
+    ``a1 == a2``
+
+.. method:: Array.__ne__(self, other: int | float | str | BitsType | Array) -> Array
+
+    ``a1 != a2``
+
+.. method:: Array.__lt__(self, other: int | float | Array) -> Array
+
+    ``a1 < a2``
+
+.. method:: Array.__le__(self, other: int | float | Array) -> Array
+
+    ``a1 <= a2``
+
+.. method:: Array.__gt__(self, other: int | float | Array) -> Array
+
+    ``a1 > a2``
+
+.. method:: Array.__ge__(self, other: int | float | Array) -> Array
+
+    ``a1 >= a2``
+
+
+Numerical operators
+"""""""""""""""""""
+
+.. method:: Array.__add__(other: int | float | Array) -> Array
+
+    ``a + x``
+
+.. method:: Array.__sub__(self, other: int | float | Array) -> Array
+
+    ``a - x``
+
+.. method:: Array.__mul__(self, other: int | float | Array) -> Array
+
+    ``a * x``
+
+.. method:: Array.__truediv__(self, other: int | float | Array) -> Array
+
+    ``a / x``
+
+.. method:: Array.__floordiv__(self, other: int | float | Array) -> Array
+
+    ``a // x``
+
+.. method:: Array.__rshift__(self, other: int | Array) -> Array
+
+    ``a >> i``
+
+.. method:: Array.__lshift__(self, other: int | Array) -> Array
+
+    ``a << i``
+
+.. method:: Array.__mod__(self, other: int | Array) -> Array
+
+    ``a % i``
+
+.. method:: Array.__neg__(self) -> Array
+
+    ``-a``
+
+.. method:: Array.__abs__(self) -> Array
+
+    ``abs(a)``
+
+.. method:: Array.__iadd__(self, other: int | float | Array) -> Array
+
+    ``a += x``
+
+.. method:: Array.__isub__(self, other: int | float | Array) -> Array
+
+    ``a -= x``
+
+.. method:: Array.__imul__(self, other: int | float | Array) -> Array
+
+    ``a *= x``
+
+.. method:: Array.__itruediv__(self, other: int | float | Array) -> Array
+
+    ``a /= x``
+
+.. method:: Array.__ifloordiv__(self, other: int | float | Array) -> Array
+
+    ``a //= x``
+
+.. method:: Array.__imod__(self, other: int | Array) -> Array
+
+    ``a %= i``
+
+.. method:: Array.__irshift__(self, other: int | Array) -> Array
+
+    ``a >>= i``
+
+.. method:: Array.__ilshift__(self, other: int | Array) -> Array
+
+    ``a <<= i``
+
+
+Bitwise operators
+"""""""""""""""""
+
+These are applied to each element in turn, so the other operand must be a bitstring of the
+same length as a single item. ::
+
+    >>> a = Array('u4', [1, 5, 9, 15])
+    >>> a & '0b1110'
+    Array('u4', [0, 4, 8, 14])
+
+.. method:: Array.__and__(self, other: Bits) -> Array
+
+    ``a & bs``
+
+.. method:: Array.__or__(self, other: Bits) -> Array
+
+    ``a | bs``
+
+.. method:: Array.__xor__(self, other: Bits) -> Array
+
+    ``a ^ bs``
+
+.. method:: Array.__iand__(self, other: BitsType) -> Array
+
+    ``a &= bs``
+
+.. method:: Array.__ior__(self, other: BitsType) -> Array
+
+    ``a |= bs``
+
+.. method:: Array.__ixor__(self, other: BitsType) -> Array
+
+    ``a ^= bs``
+
+
+Python language operators
+"""""""""""""""""""""""""
+
+.. method:: Array.__bool__(self) -> bool
+
+    ``if a:``
+
+    Returns ``False`` for an empty ``Array``. Any other ``Array`` raises a :exc:`ValueError`,
+    as there is no single sensible answer - it could mean 'has any elements' or 'are all the
+    elements true'. ::
+
+        >>> bool(Array('u8'))
+        False
+        >>> bool(Array('u8', [1, 2, 3]))
+        ValueError: The truth value of a non-empty Array is ambiguous. Use len() to test for emptiness, equals() to compare two Arrays, or the built-in all() or any().
+
+    This matters most for the comparison operators, which return an ``Array`` rather than a
+    ``bool``, so ``if a == b:`` and ``assert a == b`` are mistakes that would otherwise pass
+    silently whatever the values were. Use :meth:`~Array.equals` for a single boolean, or the
+    built-in ``all()`` and ``any()`` over the result of a comparison. ::
+
+        >>> a = Array('u8', [1, 2, 3])
+        >>> all(a == Array('u8', [1, 2, 3]))
+        True
+
+    Note that :class:`Bits` differs here - ``bool(Bits('0x00'))`` is ``True``, because a
+    bitstring only has to report whether it holds any bits.
+
+.. method:: Array.__len__(self) -> int
+
+    ``len(a)``
+
+    Return the number of elements in the Array. ::
+
+        >>> a = Array('u20', [1, 2, 3])
+        >>> len(a)
+        3
+        >>> a.dtype = 'u1'
+        >>> len(a)
+        60
+
+
+.. method:: Array.__getitem__(self, key: int | slice) -> float | int | str | bytes | Array
+
+    ``a[i]``
+
+    ``a[start:end:step]``
+
+
+.. method:: Array.__setitem__(self, key: int | slice, value) -> None
+
+    ``a[i] = x``
+
+    ``a[start:end:step] = x``
+
+    When assigning to a slice, a ``ValueError`` is raised if `x` is an ``Array`` with :attr:`~Array.trailing_bits`, rather than silently leaving them out. Assign a slice such as ``x[:]`` to leave them out explicitly.
+
+.. method:: Array.__delitem__(self, key: int | slice) -> None
+
+    ``del a[i]``
+
+    ``del a[start:end:step]``
+
+----
+
+Properties
+----------
+
+.. attribute:: Array.data
+    :type: BitArray
+
+    The bit data of the ``Array``, as a ``BitArray``. Read and write, and can be freely manipulated with all ``BitArray`` methods.
+
+    Note that some ``Array`` methods such as :meth:`~Array.append` and :meth:`~Array.extend` require the :attr:`~Array.data` to have a length that is a multiple of the ``Array``'s :attr:`~Array.itemsize`.
+
+.. attribute:: Array.dtype
+    :type: Dtype
+
+    The data type used to initialise the ``Array`` type. Read and write.
+
+    Changing the ``dtype`` for an already formed ``Array`` will cause all of the bit data to be reinterpreted and can change the length of the ``Array``.
+    However, changing the ``dtype`` won't change the underlying bit data in any way.
+
+    Note that some ``Array`` methods such as :meth:`~Array.append` and :meth:`~Array.extend` require the bit data to have a length that is a multiple of the ``Array``'s :attr:`~Array.itemsize`.
+
+.. attribute:: Array.itemsize
+    :type: int
+
+    The size *in bits* of each item in the ``Array``. Read-only.
+
+    Note that this gives a value in bits, unlike the equivalent in the ``array`` module which gives a value in bytes. ::
+
+        >>> a = Array('>h')
+        >>> b = Array('bool')
+        >>> a.itemsize
+        16
+        >>> b.itemsize
+        1
+
+.. attribute:: Array.trailing_bits
+    :type: BitArray
+
+    A ``BitArray`` object equal to the end of the ``data`` that is not a multiple of the ``itemsize``. Read only.
+
+    This will typically be an empty ``BitArray``, but if the ``dtype`` or the ``data`` of an ``Array`` object has been altered after its creation then there may be left-over bits at the end of the data.
+
+    Note that any methods that append items to the ``Array`` will fail with a ``ValueError`` if there are any trailing bits.

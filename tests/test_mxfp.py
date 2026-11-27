@@ -1,0 +1,373 @@
+from __future__ import annotations
+
+import sys
+import math
+from bitstring import BitArray, Dtype, Array
+import pytest
+import gfloat
+from gfloat.formats import format_info_ocp_e4m3, format_info_ocp_e5m2
+
+sys.path.insert(0, '..')
+
+
+def test_creation_e3m2mxfp():
+    x = BitArray('0b000000')
+    assert x.e3m2mxfp == 0.0
+    x.e3m2mxfp = 0.0
+    assert x.e3m2mxfp == 0.0
+    assert len(x) == 6
+
+def test_getting_e4m3mxfp_values():
+    assert BitArray('0b00000000').e4m3mxfp_saturate == 0.0
+    assert BitArray('0b01111110').e4m3mxfp_saturate == 448.0
+    assert BitArray('0b11111110').e4m3mxfp_saturate == -448.0
+    assert BitArray('0b00001000').e4m3mxfp_saturate == 2**-6
+    assert math.isnan(BitArray('0b01111111').e4m3mxfp_saturate)
+    assert math.isnan(BitArray('0b11111111').e4m3mxfp_saturate)
+
+def test_setting_e4m3mxfp_values():
+    x = BitArray('0b00000000')
+    x.e4m3mxfp_saturate = 0.0
+    assert x == '0b00000000'
+    x.e4m3mxfp_saturate = -(2 ** -9)
+    assert x == '0b10000001'
+    x.e4m3mxfp_saturate = 99999
+    assert x.e4m3mxfp_saturate == 448.0
+
+def test_getting_e5m2mxfp_values():
+    assert BitArray('0b00000000').e5m2mxfp_saturate == 0.0
+    assert BitArray('0b01111011').e5m2mxfp_saturate == 57344
+    for b in ['0b01111101', '0b11111101', '0b01111110', '0b11111110', '0b01111111', '0b11111111']:
+        assert math.isnan(BitArray(b).e5m2mxfp_saturate)
+    assert BitArray('0b01111100').e5m2mxfp_saturate == float('inf')
+    assert BitArray('0b11111100').e5m2mxfp_saturate == float('-inf')
+    assert BitArray('0b00000001').e5m2mxfp_saturate == 2 ** -16
+    assert BitArray('0b00000100').e5m2mxfp_saturate == 2 ** -14
+
+def test_setting_e5m2mxfp_values():
+    x = BitArray('0b00000000')
+    x.e5m2mxfp_saturate = 0.0
+    assert x == '0b00000000'
+    x.e5m2mxfp_saturate = -(2 ** -16)
+    assert x == '0b10000001'
+    x.e5m2mxfp_saturate = 99999
+    assert x.e5m2mxfp_saturate == 57344.0
+
+
+def test_unadorned_e4m3_and_e5m2_mxfp_names_removed():
+    for name in ['e4m3mxfp', 'e5m2mxfp']:
+        with pytest.raises(ValueError):
+            _ = Dtype(name)
+        with pytest.raises(ValueError):
+            _ = BitArray(**{name: 0.0})
+        assert not hasattr(BitArray('0x00'), name)
+
+
+def test_getting_e3m2mxfp_values():
+    assert BitArray('0b000000').e3m2mxfp == 0.0
+    assert BitArray('0b000001').e3m2mxfp == 0.0625
+    assert BitArray('0b000011').e3m2mxfp == 0.1875
+    assert BitArray('0b000100').e3m2mxfp == 0.25
+    assert BitArray('0b011111').e3m2mxfp == 28.0
+
+def test_setting_e3m2mxfp_values():
+    x = BitArray('0b000000')
+    x.e3m2mxfp = 0.0
+    assert x == '0b000000'
+    x.e3m2mxfp = -0.0625
+    assert x == '0b100001'
+    x.e3m2mxfp = -0.1875
+    assert x == '0b100011'
+    x.e3m2mxfp = -0.25
+    assert x == '0b100100'
+    x.e3m2mxfp = -28.0
+    assert x == '0b111111'
+
+def test_getting_e2m3mxfp_values():
+    assert BitArray('0b000000').e2m3mxfp == 0.0
+    assert BitArray('0b000001').e2m3mxfp == 0.125
+    assert BitArray('0b000111').e2m3mxfp == 0.875
+    assert BitArray('0b001000').e2m3mxfp == 1.0
+    assert BitArray('0b011111').e2m3mxfp == 7.5
+
+def test_setting_e2m3mxfp_values():
+    x = BitArray('0b000000')
+    x.e2m3mxfp = 0.0
+    assert x == '0b000000'
+    x.e2m3mxfp = -0.125
+    assert x == '0b100001'
+    x.e2m3mxfp = -0.875
+    assert x == '0b100111'
+    x.e2m3mxfp = -1.0
+    assert x == '0b101000'
+    x.e2m3mxfp = -7.5
+    assert x == '0b111111'
+
+def test_getting_e2m1mxfp_values():
+    assert BitArray('0b0000').e2m1mxfp == 0.0
+    assert BitArray('0b0001').e2m1mxfp == 0.5
+    assert BitArray('0b0010').e2m1mxfp == 1.0
+    assert BitArray('0b0111').e2m1mxfp == 6.0
+
+def test_setting_e2m1mxfp_values():
+    x = BitArray('0b0000')
+    x.e2m1mxfp = 0.0
+    assert x == '0b0000'
+    x.e2m1mxfp = -0.5
+    assert x == '0b1001'
+    x.e2m1mxfp = -1.0
+    assert x == '0b1010'
+    x.e2m1mxfp = -6.0
+    assert x == '0b1111'
+
+
+def test_e8m0mxfp_value():
+    x = BitArray('0x00')
+    assert x.e8m0mxfp == 2.0 ** -127
+    x.uint = 127
+    assert x.e8m0mxfp == 1.0
+    x.uint = 254
+    assert x.e8m0mxfp == 2.0 ** 127
+    x.bin = '11111111'
+    assert math.isnan(x.e8m0mxfp)
+
+def test_getting_mxint_values():
+    assert BitArray('0b00000000').mxint == 0.0
+    assert BitArray('0b00000001').mxint == 1 * 2 ** -6
+    assert BitArray('0b00000011').mxint == 3 * 2 ** -6
+    assert BitArray('0b01111111').mxint == 127 * 2 ** -6
+    assert BitArray('0b10000000').mxint == -2.0
+    assert BitArray('0b11111111').mxint == -1 * 2 ** -6
+    assert BitArray('0b11111110').mxint == -2 * 2 ** -6
+    assert BitArray('0b10000001').mxint == -127 * 2 ** -6
+
+def test_setting_mxint_values():
+    x = BitArray('0b00000000')
+    x.mxint = 0.0
+    assert x == '0b00000000'
+    x.mxint = 1 * 2 ** -6
+    assert x == '0b00000001'
+    x.mxint = -1 * 2 ** -6
+    assert x == '0b11111111'
+
+
+def test_scale_no_longer_supported():
+    # The scale factor was removed in 5.0. See release notes for the replacement.
+    with pytest.raises(TypeError):
+        _ = Dtype('e3m2mxfp', scale=2)
+    with pytest.raises(TypeError):
+        _ = Dtype('e3m2mxfp', scale='auto')
+    assert not hasattr(Dtype('e3m2mxfp'), 'scale')
+
+
+def test_setting_from_outside_range():
+    b = BitArray(e2m1mxfp=0.0)
+    b.e2m1mxfp = 6.0
+    assert b.e2m1mxfp == 6.0
+    b.e2m1mxfp = 7.0
+    assert b.e2m1mxfp == 6.0
+    b.e2m1mxfp = 10000000000.0
+    assert b.e2m1mxfp == 6.0
+    s = Array('e2m1mxfp', [-1000.0, 6.0, 7.0, 10000.0])
+    assert s.tolist() == [-6.0, 6.0, 6.0, 6.0]
+
+def test_ops():
+    s = Array('e8m0mxfp', [0.5, 1.0, 2.0, 4.0, 8.0])
+    t = s * 2
+    assert type(t) is Array
+    assert t.tolist() == [1.0, 2.0, 4.0, 8.0, 16.0]
+    assert t.dtype == Dtype('e8m0mxfp')
+
+def test_conversion_to_e8m0():
+    x = BitArray(e8m0mxfp=1.0)
+    assert x.e8m0mxfp == 1.0
+    x = BitArray(e8m0mxfp=2**127)
+    assert x.e8m0mxfp == 2**127
+    x = BitArray(e8m0mxfp=2**-127)
+    assert x.e8m0mxfp == 2**-127
+    x = BitArray(e8m0mxfp=float('nan'))
+    assert math.isnan(x.e8m0mxfp)
+    with pytest.raises(ValueError):
+        _ = BitArray(e8m0mxfp=2**128)
+    with pytest.raises(ValueError):
+        _ = BitArray(e8m0mxfp=-2**128)
+    with pytest.raises(ValueError):
+        _ = BitArray(e8m0mxfp=0.0)
+    with pytest.raises(ValueError):
+        _ = BitArray(e8m0mxfp=1.1)
+
+
+def test_rounding_to_even():
+    # When rounding to even, the value chosen when two are equidistant should end in a zero bit.
+    x = BitArray(e4m3mxfp_saturate=21.0)
+    assert x.e4m3mxfp_saturate == 20.0
+    a = BitArray(e4m3mxfp_saturate=20.0).bin
+    b = BitArray(e4m3mxfp_saturate=22.0).bin
+    assert a[:-1] == b[:-1]
+    assert a[-1] == '0'
+    assert b[-1] == '1'
+    x = BitArray(e4m3mxfp_saturate=22.0)
+    assert x.e4m3mxfp_saturate == 22.0
+    x = BitArray(e4m3mxfp_saturate=23.0)
+    assert x.e4m3mxfp_saturate == 24.0
+    x = BitArray(e4m3mxfp_saturate=24.0)
+    assert x.e4m3mxfp_saturate == 24.0
+
+    x = BitArray(e4m3mxfp_saturate=-50)  # Midway between -48 and -52
+    assert x.e4m3mxfp_saturate == -48.0  # Rounds towards zero
+    assert x.bin[-1] == '0'
+    x = BitArray(e4m3mxfp_saturate=-54)  # Midway between -52 and -56
+    assert x.e4m3mxfp_saturate == -56.0  # Rounds away from zero
+    assert x.bin[-1] == '0'
+
+def test_rounding_consistent_to_gfloat():
+    for fi, dt in [[format_info_ocp_e4m3, Dtype('e4m3mxfp_saturate')],
+                   [format_info_ocp_e5m2, Dtype('e5m2mxfp_saturate')]]:
+        for i in range(1 << 16):
+            f = BitArray(u=i, length=16).float
+            mine = dt.unpack(dt.pack(f))
+            theirs = gfloat.round_float(fi, f, sat=True)
+            if math.isnan(mine):
+                assert math.isnan(theirs)
+            else:
+                assert mine == theirs
+
+def test_rounding_consistent_to_gfloat_with_overflow():
+    for fi, dt in [[format_info_ocp_e4m3, Dtype('e4m3mxfp_overflow')],
+                   [format_info_ocp_e5m2, Dtype('e5m2mxfp_overflow')]]:
+        for i in range(1 << 16):
+            f = BitArray(u=i, length=16).float
+            mine = dt.unpack(dt.pack(f))
+            theirs = gfloat.round_float(fi, f, sat=False)
+            if math.isnan(mine):
+                assert math.isnan(theirs)
+            else:
+                if mine != theirs:
+                    print(mine, theirs)
+
+def test_conversion_from_nan():
+    x = BitArray(e4m3mxfp_saturate=float('nan'))
+    assert x == '0b11111111'
+    x = BitArray(e5m2mxfp_saturate=float('nan'))
+    assert x == '0b11111111'
+    with pytest.raises(ValueError):
+        _ = BitArray(e3m2mxfp=float('nan'))
+    with pytest.raises(ValueError):
+        _ = BitArray(e2m3mxfp=float('nan'))
+    with pytest.raises(ValueError):
+        _ = BitArray(e2m1mxfp=float('nan'))
+    with pytest.raises(ValueError):
+        _ = BitArray(mxint=float('nan'))
+    x = BitArray(e8m0mxfp=float('nan'))
+    assert x == '0b11111111'
+
+def test_conversion_from_inf():
+    x = BitArray(e3m2mxfp=float('inf'))
+    assert x.e3m2mxfp == 28.0
+    x = BitArray(e3m2mxfp=float('-inf'))
+    assert x.e3m2mxfp == -28.0
+
+    x = BitArray(e2m3mxfp=float('inf'))
+    assert x.e2m3mxfp == 7.5
+    x = BitArray(e2m3mxfp=float('-inf'))
+    assert x.e2m3mxfp == -7.5
+
+    x = BitArray(e2m1mxfp=float('inf'))
+    assert x.e2m1mxfp == 6.0
+    x = BitArray(e2m1mxfp=float('-inf'))
+    assert x.e2m1mxfp == -6.0
+
+    x = BitArray(mxint=float('inf'))
+    assert x.mxint == 1.984375
+    x = BitArray(mxint=float('-inf'))
+    assert x.mxint == -2.0
+
+    with pytest.raises(ValueError):
+        _ = BitArray(e8m0mxfp=float('inf'))
+    with pytest.raises(ValueError):
+        _ = BitArray(e8m0mxfp=float('-inf'))
+
+def test_conversion_to_8bit_with_saturate():
+    x = BitArray(e5m2mxfp_saturate=float('inf'))
+    assert x.e5m2mxfp_saturate == 57344.0
+    assert x == BitArray(e5m2mxfp_saturate=float('inf'))
+    x = BitArray(e5m2mxfp_saturate=float('-inf'))
+    assert x.e5m2mxfp_saturate == -57344.0
+
+    x = BitArray(e5m2mxfp_saturate=1e10)
+    assert x.e5m2mxfp_saturate == 57344.0
+    x = BitArray(e5m2mxfp_saturate=-1e10)
+    assert x.e5m2mxfp_saturate == -57344.0
+
+    x = BitArray(e4m3mxfp_saturate=float('inf'))
+    assert x.e4m3mxfp_saturate == 448.0
+    assert x == BitArray(e4m3mxfp_saturate=float('inf'))
+    x = BitArray(e4m3mxfp_saturate=float('-inf'))
+    assert x.e4m3mxfp_saturate == -448.0
+
+    x = BitArray(e4m3mxfp_saturate=1e10)
+    assert x.e4m3mxfp_saturate == 448.0
+    x = BitArray(e4m3mxfp_saturate=-1e10)
+    assert x.e4m3mxfp_saturate == -448.0
+
+def test_conversion_to_8bit_with_overflow():
+    x = BitArray(e5m2mxfp_overflow=float('inf'))
+    assert x.e5m2mxfp_saturate == float('inf')
+    assert x.e5m2mxfp_overflow == float('inf')
+    x = BitArray(e5m2mxfp_overflow=float('-inf'))
+    assert x.e5m2mxfp_saturate == float('-inf')
+
+    x = BitArray(e5m2mxfp_overflow=1e10)
+    assert x.e5m2mxfp_saturate == float('inf')
+    x = BitArray(e5m2mxfp_overflow=-1e10)
+    assert x.e5m2mxfp_saturate == float('-inf')
+
+    x = BitArray(e4m3mxfp_overflow=float('inf'))
+    assert math.isnan(x.e4m3mxfp_saturate)
+    assert math.isnan(x.e4m3mxfp_overflow)
+    x = BitArray(e4m3mxfp_overflow=float('-inf'))
+    assert math.isnan(x.e4m3mxfp_saturate)
+
+    x = BitArray(e4m3mxfp_overflow=1e10)
+    assert math.isnan(x.e4m3mxfp_saturate)
+    x = BitArray(e4m3mxfp_overflow=-1e10)
+    assert math.isnan(x.e4m3mxfp_saturate)
+
+def test_mxint_rounding():
+    x = BitArray('mxint=0.0')
+    assert x == '0x00'
+    x.mxint = -2.0
+    assert x.mxint == -2.0
+    x.mxint = 1.0/64
+    assert x.mxint == 1.0/64
+    assert x == '0x01'
+    x.mxint = 1000
+    assert x.mxint == 1.0 + 63.0/64.0
+    x.mxint = 1.4 / 64.0
+    assert x.mxint == 1.0 / 64.0
+    x.mxint = 1.6 / 64.0
+    assert x.mxint == 2.0 / 64.0
+    x.mxint = 1.5 / 64.0
+    assert x.mxint == 2.0 / 64.0  # Round to even
+    x.mxint = 2.5 / 64.0
+    assert x.mxint == 2.0 / 64.0  # Round to even
+    x.mxint = -2.5
+    assert x.mxint == -2.0
+    x.mxint = -1.5 / 64.0
+    assert x.mxint == -2.0 / 64.0
+    x.mxint = -2.5 / 64.0
+    assert x.mxint == -2.0 / 64.0
+    x.mxint = -3.5 / 64.0
+    assert x.mxint == -4.0 / 64.0
+
+@pytest.mark.parametrize("fmt", [Dtype(x) for x in ['e5m2mxfp_overflow', 'e4m3mxfp_overflow', 'e2m3mxfp', 'e3m2mxfp', 'e2m1mxfp', 'e8m0mxfp', 'mxint', 'p3binary', 'p4binary']])
+def test_roundtrips(fmt):
+    # Note that e5m2mxfp_saturate in saturate mode will not pass this test, as inf -> inf -> max_value.
+    for i in range(1 << fmt.bitlength):
+        b = BitArray(u=i, length=fmt.bitlength)
+        v = fmt.unpack(b)
+        b2 = fmt.pack(v)
+        if math.isnan(fmt.unpack(b)):
+            assert math.isnan(fmt.unpack(b2))
+        else:
+            assert b == b2

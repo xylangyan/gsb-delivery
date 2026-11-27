@@ -1,0 +1,17 @@
+venv
+.git
+*cache*
+.idea
+build
+dist
+manifest
+*egg-info
+doc/_build
+/.hypothesis/
+/doc/html/
+/html/
+/tests/.hypothesis/
+/uv.lock
+/stats
+/tests/stats
+/tests/stress.py

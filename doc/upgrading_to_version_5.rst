@@ -1,0 +1,704 @@
+.. currentmodule:: bitstring
+
+.. _upgrading_to_version_5:
+
+######################
+Upgrading to version 5
+######################
+
+This guide is for code being moved from bitstring 4.4.x to bitstring 5.x.
+
+If your project is using bitstring and performance isn't an
+issue then the best course of action may be to ignore version 5 and pin your bitstring
+dependency to <5.
+
+This guide covers the changes most code will meet. For the complete list see the
+`release notes <https://github.com/scott-griffiths/bitstring/blob/main/release_notes.md>`_.
+
+Minimum Python version
+======================
+
+bitstring 5 requires Python 3.11 or later. If your package metadata pins
+bitstring and Python versions, update both together, for example::
+
+    requires-python = ">=3.11"
+    dependencies = ["bitstring>=5"]
+
+The ``bitarray`` dependency has also been removed. The core bit storage is now
+provided by the required ``tibs`` dependency. If there are problems downloading, building or
+installing tibs then please file a bug report with either project.
+
+Replace stream classes with Reader
+==================================
+
+Possibly the biggest change in version 5 is that bitstrings can no longer store a stream
+position.
+
+The ``ConstBitStream`` and ``BitStream`` classes have been removed. Bit data is
+held by :class:`Bits` or :class:`BitArray`, and a :class:`Reader` supplies the
+stream position::
+
+    # bitstring 4
+    s = ConstBitStream("0x160120f")
+    value = s.read("uint12")
+
+    # bitstring 5
+    r = Reader(Bits("0x160120f"))
+    value = r.read_value("u12")
+
+There is no ``Reader.read``. Version 4's ``read()`` did two different jobs
+depending on the type of its argument, and each now has its own name::
+
+    # bitstring 4
+    header = s.read("uint12")      # an interpreted value
+    payload = s.read(n)            # n bits
+
+    # bitstring 5
+    header = r.read_value("u12")
+    payload = r.read_bits(n)
+
+Old call sites should raise an error explaining the replacement needed:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Version 4
+     - Version 5
+   * - ``s.read("u8")``
+     - :meth:`Reader.read_value`
+   * - ``s.read(n)``
+     - :meth:`Reader.read_bits`
+   * - ``s.readlist(fmt)``
+     - :meth:`Reader.read_list`
+   * - ``s.peek("u8")``, ``s.peek(n)``
+     - :meth:`Reader.peek_value`, :meth:`Reader.peek_bits`
+   * - ``s.peeklist(fmt)``
+     - :meth:`Reader.bookmark` around :meth:`Reader.read_list`
+   * - ``s.readto(bs)``
+     - :meth:`Reader.read_past`
+   * - ``s.bytealign()``
+     - :meth:`Reader.align`
+   * - ``s.find(bs, start=s.pos)``
+     - :meth:`Reader.seek_to`
+   * - ``s.rfind(bs)``
+     - :meth:`Reader.seek_back_to`
+   * - ``s.pos``, ``s.bitpos``
+     - :attr:`Reader.pos`
+   * - ``s.bytepos``
+     - :attr:`Reader.bytepos`
+   * - ``len(s) - s.pos``
+     - :attr:`Reader.remaining`
+
+.. warning::
+
+    Version 4's ``readto()`` read up to **and including** the match, so it
+    becomes :meth:`Reader.read_past`. :meth:`Reader.read_to` is a different
+    method that stops **before** the match. Translating ``readto`` to the
+    similarly spelled ``read_to`` will silently return short data.
+
+Peeking is only provided for single values. Version 4's ``peeklist()`` becomes
+a :meth:`Reader.bookmark` block, which restores the position afterwards and can
+contain any mixture of reads and seeks::
+
+    # bitstring 4
+    kind, size = s.peeklist("uint8, uint16")
+
+    # bitstring 5
+    with r.bookmark():
+        kind, size = r.read_list("u8, u16")
+
+Version 5 also adds :meth:`Reader.read_array` for reading many items of one
+dtype at once.
+
+For mutable data, wrap a :class:`BitArray`. The wrapped object is available as
+:attr:`Reader.bits`, and it is the original object rather than a copy::
+
+    # bitstring 4
+    s = BitStream("0x001122")
+    first = s.read("uint8")
+    s.append("0xff")
+
+    # bitstring 5
+    r = Reader(BitArray("0x001122"))
+    first = r.read_value("u8")
+    r.bits.append("0xff")
+
+The reader position is independent of the wrapped bitstring, so mutating
+``r.bits`` does not adjust :attr:`Reader.pos`.
+
+Operations that used the stream's current position should now pass
+``r.pos`` explicitly and then update it if needed::
+
+    # bitstring 4
+    s = BitStream("0x001122")
+    s.pos = 8
+    s.insert("0xff")
+
+    # bitstring 5
+    r = Reader(BitArray("0x001122"), pos=8)
+    inserted = Bits("0xff")
+    r.bits.insert(r.pos, inserted)
+    r.pos += len(inserted)
+
+As in version 4, assigning a position outside ``0`` to ``len(r.bits)`` raises a
+``ValueError``. If you are reading from a :class:`BitArray` that you are also
+growing, append the new data first and then set the position.
+
+Update pack() usage
+===================
+
+:func:`pack` now returns :class:`Bits` rather than ``BitStream``, so code that
+immediately read from or mutated the result needs to be updated.
+
+For reading, wrap the result in :class:`Reader`::
+
+    # bitstring 4
+    s = pack("uint8, uint8", 1, 2)
+    first = s.read("uint8")
+
+    # bitstring 5
+    bits = pack("u8, u8", 1, 2)
+    r = Reader(bits)
+    first = r.read_value("u8")
+
+For mutation, convert the result to :class:`BitArray`::
+
+    # bitstring 4
+    s = pack("uint8", 1)
+    s.append("0xff")
+
+    # bitstring 5
+    s = pack("u8", 1).to_mutable()
+    s.append("0xff")
+
+Replace stream searching with seeks
+===================================
+
+:meth:`Bits.find` and :meth:`Bits.rfind` now return ``int | None``, instead of a
+single-item tuple for success and an empty tuple for failure. This means a match
+at bit position zero evaluates as ``False`` if tested directly, so test
+explicitly against ``None``::
+
+    # bitstring 4
+    found = s.find("0xff")
+    if found:
+        pos = found[0]
+
+    # bitstring 5
+    pos = s.find("0xff")
+    if pos is not None:
+        ...
+
+``Reader`` has no ``find`` or ``rfind``. Searching that moves the position is
+now done by the seek methods, which return ``True`` or ``False`` and leave
+:attr:`Reader.pos` untouched on a miss::
+
+    # bitstring 4
+    if s.find("0xff", start=s.pos):
+        print(s.pos)
+
+    # bitstring 5
+    if r.seek_to("0xff"):
+        print(r.pos)
+
+There are two forward seeks. :meth:`Reader.seek_to` leaves the position at the
+start of the match and :meth:`Reader.seek_past` leaves it just after. Prefer
+``seek_past`` when looping, since ``seek_to`` on its own will find the same
+match every time::
+
+    # bitstring 4
+    while s.find("0x000001", start=s.pos, bytealigned=True):
+        s.pos += 24
+        handle(s.read(n))
+
+    # bitstring 5
+    while r.seek_past("0x000001", bytealigned=True):
+        handle(r.read_bits(n))
+
+Note two differences from version 4's stream ``find``. It searched from the
+start of the data unless given ``start=s.pos``, and so could move the position
+backwards; the seek methods always search from the current position.
+:meth:`Reader.seek_back_to` is the only one that searches backwards, and it
+considers only matches that end at or before the current position.
+
+The ``bytealigned`` keyword is spelled the same way here as on :meth:`Bits.find`
+and the other whole-bitstring methods, and must be passed by keyword on all of
+them. This is new for :meth:`Bits.find`, :meth:`Bits.rfind`, :meth:`Bits.findall`,
+:meth:`Bits.split` and :meth:`BitArray.replace`, which version 4 let you pass it
+to positionally::
+
+    # bitstring 4
+    pos = s.find("0xff", 0, 64, True)
+
+    # bitstring 5
+    pos = s.find("0xff", 0, 64, bytealigned=True)
+
+To search without moving the position, use the wrapped object directly:
+``r.bits.find(bs, start=r.pos)``.
+
+Remove reliance on range checking exceptions
+============================================
+
+Methods taking ``start`` and ``end`` arguments no longer raise a
+``ValueError`` for out of range values. Instead the values are clamped to the
+ends of the bitstring, as slice indices and the equivalent ``str`` methods are,
+with an ``end`` before the ``start`` giving an empty range.
+This applies to ``find``, ``rfind``, ``findall``, ``cut``, ``split``,
+``startswith``, ``endswith``, ``replace``, ``reverse``, ``rol``, ``ror`` and
+``byteswap``::
+
+    # bitstring 4
+    s = Bits("0x0123")
+    s.find("0x1", start=0, end=100)  # Raised ValueError
+
+    # bitstring 5
+    s.find("0x1", start=0, end=100)  # end is clamped to len(s), finds 4
+
+Code that relied on catching these exceptions to detect out of range values
+should check the positions against ``len(s)`` explicitly instead.
+
+Swap insert() and overwrite() arguments
+=======================================
+
+:meth:`BitArray.insert` and :meth:`BitArray.overwrite` now take the bit
+position first and the bitstring second, matching ``list.insert``,
+``array.array.insert`` and :meth:`Array.insert`::
+
+    # bitstring 4
+    s.insert("0xff", 8)
+    s.overwrite("0xff", 8)
+
+    # bitstring 5
+    s.insert(8, "0xff")
+    s.overwrite(8, "0xff")
+
+Calls using the old positional order raise a ``TypeError`` explaining the
+change. Calls that already used keywords (``s.insert(bs=..., pos=...)``) work
+unchanged.
+
+Use explicit construction helpers
+=================================
+
+Some constructor forms that relied on the type of the first positional
+argument have been removed or should be avoided. Use the explicit factory
+methods instead.
+
+For zero-filled bitstrings, replace integer construction with
+:meth:`Bits.from_zeros` or :meth:`BitArray.from_zeros`. This applies to the
+``length``-only keyword form as well::
+
+    # bitstring 4
+    a = Bits(100)
+    b = BitArray(100)
+    c = BitArray(length=100)
+
+    # bitstring 5
+    a = Bits.from_zeros(100)
+    b = BitArray.from_zeros(100)
+    c = BitArray.from_zeros(100)
+
+Prefer :meth:`Bits.from_string` or :meth:`BitArray.from_string` over the old
+``fromstring`` spelling. The old spelling still works as a compatibility
+alias::
+
+    # bitstring 4
+    s = Bits.fromstring("uint16=1000")
+    t = BitArray.fromstring("0xff")
+
+    # bitstring 5
+    s = Bits.from_string("u16=1000")
+    t = BitArray.from_string("0xff")
+
+Lists and tuples containing only ``0``, ``1``, ``True`` and ``False`` can still
+be used as the first positional argument. Use the other factory methods for
+construction from values that are no longer accepted::
+
+    # bitstring 4
+    f = open("data.bin", "rb")
+    b = Bits(f)
+    f.close()
+    c = Bits(io.BytesIO(b"\x01\x02"))
+    d = Bits(array_obj)
+
+    # bitstring 5
+    with open("data.bin", "rb") as f:
+        b = Bits.from_file(f)
+    c = Bits.from_bytes(b"\x01\x02")
+    d = Bits.from_bytes(array_obj.tobytes())
+
+The ``bytes=`` keyword constructor and constructor-level ``offset=`` keyword
+have also been removed. Use :meth:`Bits.from_bytes` or
+:meth:`BitArray.from_bytes` instead::
+
+    # bitstring 4
+    s = Bits(bytes=b"\x0b\x1c\x2f", offset=4, length=12)
+
+    # bitstring 5
+    s = Bits.from_bytes(b"\x0b\x1c\x2f", offset=4, length=12)
+
+The ``filename=`` keyword constructor has been removed. Use
+:meth:`Bits.from_file` or :meth:`BitArray.from_file` instead::
+
+    # bitstring 4
+    s = Bits(filename="data.bin", offset=8, length=32)
+
+    # bitstring 5
+    s = Bits.from_file("data.bin", offset=8, length=32)
+
+Separate literals with commas
+=============================
+
+A ``0x``, ``0b`` or ``0o`` prefix is now only allowed at the start of a
+literal. Version 4 removed it from anywhere in the string, which let literals be
+run together. A prefix part way through now raises a ``ValueError``, whether in
+a format string or a ``hex=``, ``bin=`` or ``oct=`` value::
+
+    # bitstring 4
+    a = Bits('0x55' * 10)
+    b = Bits('0xff 0xee')
+
+    # bitstring 5
+    a = Bits('0x55') * 10
+    b = Bits('0xff, 0xee')
+
+Use explicit Array construction
+===============================
+
+The :class:`Array` constructor now only accepts an iterable of values (such as
+a list, another ``Array`` or an ``array.array``). The integer item count, raw
+binary data and file object initialiser forms have been removed. Use the
+explicit alternatives instead::
+
+    # bitstring 4
+    a = Array("u8", 100)
+    b = Array("u8", b"some_bytes")
+    c = Array("u8", open("data.bin", "rb"))
+
+    # bitstring 5
+    a = Array.from_zeros("u8", 100)
+    b = Array.from_bytes("u8", b"some_bytes")
+    c = Array.from_file("u8", "data.bin")
+
+:meth:`Array.from_file` is now a constructor taking the dtype as its first
+argument, like the other ``from_`` methods. The bitstring 4 instance method of
+the same name (and its ``fromfile()`` alias) that appended items to an existing
+``Array`` has been removed::
+
+    # bitstring 4
+    a = Array("u8")
+    a.fromfile(f, 10)
+
+    # bitstring 5
+    a = Array.from_file("u8", f, 10)
+
+To append file data to an existing ``Array``, extend from a newly read one,
+for example ``a.extend(Array.from_file(a.dtype, f))``.
+
+:meth:`Array.pp` gained the ``sep`` parameter that :meth:`Bits.pp` has, after
+``width``, so pass ``show_offset`` and ``stream`` by keyword::
+
+    # bitstring 4
+    a.pp('hex', 80, False)
+
+    # bitstring 5
+    a.pp('hex', 80, show_offset=False)
+
+Check file object usage in from_file()
+======================================
+
+When :meth:`Bits.from_file` or :meth:`BitArray.from_file` is given a file
+object it now reads from the object's current file position, where previously
+the position was ignored and the whole file was used. Passing an in-memory
+stream such as ``io.BytesIO`` now raises a ``TypeError`` - use
+:meth:`Bits.from_bytes` for those instead. :meth:`Array.from_file` also reads
+file objects from their current position.
+
+:meth:`Bits.from_file` now reads the file into memory, as
+:meth:`BitArray.from_file` always did. Version 4 memory mapped the file for a
+:class:`Bits` and read it only as needed, which allowed files far larger than
+the available memory. Only the part given by *offset* and *length* is read, so
+for very large files read the part you need, or work through the file in
+pieces::
+
+    # bitstring 4
+    s = Bits(filename="huge.bin")
+    header = s[0:64]
+
+    # bitstring 5
+    header = Bits.from_file("huge.bin", length=64)
+
+Replace bitarray compatibility
+==============================
+
+If you used the external ``bitarray`` package, convert explicitly. For exact
+bit lengths, :meth:`Bits.from_bools` is the most direct replacement. For
+byte-oriented data, use :meth:`Bits.from_bytes` with an explicit length::
+
+    bits = Bits.from_bools(bitarray_obj)
+    bits = Bits.from_bytes(bitarray_obj.tobytes(), length=len(bitarray_obj))
+
+The ``tobitarray()`` method, which returned an object from the external
+``bitarray`` package, has been removed. Use :meth:`Bits.to_mutable` to get a
+bitstring :class:`BitArray`. If you still need an external ``bitarray`` object,
+create it explicitly using that package's API, for example from the bitstring as
+an iterable of booleans or from :meth:`Bits.to_bytes`.
+
+Update names and dtype spellings
+================================
+
+Version 5 removes a few legacy aliases and makes the short dtype names the
+canonical spelling.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Version 4 spelling
+     - Version 5 spelling
+   * - ``s.len`` or ``s.length``
+     - ``len(s)``
+   * - ``s.b``, ``s.o`` or ``s.h``
+     - ``s.bin``, ``s.oct`` or ``s.hex``
+   * - ``b12``, ``o12`` or ``h12`` format tokens
+     - ``bin12``, ``oct12`` or ``hex12``
+   * - ``uint``, ``int`` or ``float``
+     - Prefer ``u``, ``i`` or ``f``. The long names remain compatibility
+       aliases.
+   * - ``uintbe``, ``uintle``, ``intbe``, ``intle`` or ``floatle``
+     - Prefer ``ube``, ``ule``, ``ibe``, ``ile`` or ``fle``.
+   * - Native-endian names such as ``uintne``, ``une``, ``floatne`` or ``fne``
+     - Use explicit big- or little-endian spellings such as ``ube``, ``ule``,
+       ``f`` or ``fle``.
+   * - Struct-style native prefixes ``'='`` or ``'@'``
+     - Use ``'>'`` or ``'<'``.
+
+The plain ``f`` dtype is already big-endian, so both ``fbe`` and ``floatbe``
+are compatibility aliases for ``f``.
+
+:class:`Dtype` stringification, :class:`Array` representations and
+pretty-print headers use the preferred names::
+
+    # bitstring 4
+    n = s.length
+    data = s.h
+    bits = s.unpack("b12, uint8")
+    value = s.read("floatle32")
+
+    # bitstring 5
+    n = len(s)
+    data = s.hex
+    bits = s.unpack("bin12, u8")
+    value = r.read_value("fle32")
+
+``Dtype.build`` and ``Dtype.parse`` have been renamed to
+:meth:`Dtype.pack` and :meth:`Dtype.unpack`::
+
+    # bitstring 4
+    d = Dtype("uint8")
+    bits = d.build(42)
+    value = d.parse(bits)
+
+    # bitstring 5
+    d = Dtype("u8")
+    bits = d.pack(42)
+    value = d.unpack(bits)
+
+Replace global options and modes
+================================
+
+The ``bitstring.options`` object and the old module-level option aliases have
+been removed. Version 5 uses explicit dtype names, per-call arguments and the
+``NO_COLOR`` environment variable instead.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Version 4 setting
+     - Version 5 replacement
+   * - ``bitstring.options.lsb0 = True``
+     - Removed. Indexing is always MSB0. For LSB0 try the tibs library.
+   * - ``bitstring.options.mxfp_overflow = "overflow"``
+     - Use an explicit MXFP dtype suffix such as ``e4m3mxfp_overflow``.
+   * - ``bitstring.bytealigned = True`` or ``bitstring.options.bytealigned = True``
+     - Pass ``bytealigned=True`` to the operation that needs byte-aligned
+       matching.
+   * - ``bitstring.options.no_color = True``
+     - Set ``NO_COLOR`` or pass ``color=False`` to :meth:`Bits.pp` or
+       :meth:`Array.pp`.
+
+Code that enabled LSB0 mode needs to translate positions explicitly. For a
+single bit position ``i`` in a bitstring ``s``, the equivalent MSB0 position is
+``len(s) - 1 - i``. Slice translations depend on the direction and bounds of
+the original slice, so they should be reviewed case by case.
+
+For MXFP packing, the overflow policy is now part of the dtype name. Use
+``e4m3mxfp_saturate`` or ``e5m2mxfp_saturate`` for saturating behaviour, and
+``e4m3mxfp_overflow`` or ``e5m2mxfp_overflow`` for overflow behaviour. The old
+unsuffixed ``e4m3mxfp`` and ``e5m2mxfp`` names have been removed.
+
+::
+
+    # bitstring 4
+    bitstring.options.mxfp_overflow = "overflow"
+    bits = Bits(e4m3mxfp=1e10)
+    bitstring.bytealigned = True
+    pos = bits.find("0xff")
+    bitstring.options.no_color = True
+    bits.pp()
+
+    # bitstring 5
+    bits = Bits(e4m3mxfp_overflow=1e10)
+    pos = bits.find("0xff", bytealigned=True)
+    bits.pp(color=False)
+
+Apply MX scale factors yourself
+===============================
+
+The :class:`Dtype` scale factor has been removed. The ``scale=`` parameter, the
+``scale='auto'`` option and the ``Dtype.scale`` property have all gone, and
+passing ``scale=`` now raises a ``TypeError``.
+
+An :class:`Array` stores just the elements, so apply the scale in your own code.
+When reading, scale the Python floats rather than the ``Array``, as multiplying
+a narrow ``Array`` in place would round every value straight back into the
+narrow format::
+
+    # bitstring 4
+    a = Array(Dtype('e2m1mxfp', scale=2**10), values)
+    scaled_values = a.tolist()
+
+    # bitstring 5
+    a = Array('e2m1mxfp', [v / 2**10 for v in values])
+    scaled_values = [x * 2**10 for x in a]
+
+For ``scale='auto'``, the scale that version 4 calculated lined the largest
+absolute value up with the largest value the format can represent::
+
+    largest = Bits('0b0111').e2m1mxfp  # 6.0, the largest e2m1mxfp value
+    scale = 2 ** (math.floor(math.log2(max(abs(v) for v in values)))
+                  - math.floor(math.log2(largest)))
+
+Version 4 clamped this to the powers of two from 2\ :sup:`-127` to 2\ :sup:`127`
+that the E8M0 format can hold, and used a scale of 1 when every value was zero.
+
+A replacement is planned as block-scaled dtypes once the ``tibs`` core supports
+them.
+
+Check values, truth tests and rounding
+======================================
+
+A few changes affect code that ran without complaint in version 4.
+
+The integer and ``bool`` dtypes now reject floats instead of truncating or
+converting them, even a float holding a whole number such as ``3.0`` or ``1.0``.
+This includes :meth:`Array.astype` from a float dtype to an integer one. Convert
+the values yourself first::
+
+    # bitstring 4
+    s = Bits(u=value, length=8)  # value is a float
+    b = a.astype("u8")  # a has a float dtype
+
+    # bitstring 5
+    s = Bits(u=int(value), length=8)
+    b = Array("u8", [round(x) for x in a])
+
+``bool()`` of a non-empty :class:`Array` now raises a ``ValueError``. The
+comparison operators return an :class:`Array`, so in version 4 ``if a == b:``
+and ``assert a == b`` were true whatever the values. Use ``len(a)`` to test for
+emptiness, :meth:`Array.equals` to compare two Arrays, or the built-in
+``all()`` and ``any()``.
+
+Some floats now pack to different bits, always to the nearer representable
+value. ``bfloat`` rounds to nearest, ties-to-even, rather than truncating, which
+changes about half of all values by one ulp and makes values just beyond the
+largest finite bfloat round to ``inf``. The 8-bit, 6-bit and 4-bit float
+formats round directly from the Python float rather than through a 16-bit
+float, which changes a small fraction of values. Nothing raises, so check any
+stored data or test expectations that depend on the exact bits.
+
+Prefer the new underscored method names
+=======================================
+
+Version 5 adds underscored spellings for several older method names. New code and
+documentation use the underscored names, but the old spellings are kept as
+compatibility aliases and there is no need to change working code. They are not
+deprecated and no ``DeprecationWarning`` is emitted for them.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Version 4 spelling
+     - Preferred version 5 spelling
+   * - ``tobytes()``
+     - :meth:`Bits.to_bytes`
+   * - ``tofile(f)``
+     - :meth:`Bits.to_file`
+   * - ``tolist()``
+     - :meth:`Array.to_list`
+   * - ``fromstring()``
+     - :meth:`Bits.from_string`
+
+The reading methods are not in this table - :class:`Reader` keeps no
+compatibility aliases, and its version 4 equivalents are listed in
+`Replace stream classes with Reader`_ instead.
+
+Update exception handling
+=========================
+
+:exc:`ReadError` is now the only exception class bitstring defines. Bad input or
+state is otherwise a plain ``ValueError`` or ``TypeError``, with an
+``AttributeError`` only for a name that isn't a dtype at all.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Version 4 exception
+     - Version 5 replacement
+   * - ``bitstring.Error``
+     - Removed. Catch ``ReadError``, ``ValueError`` or ``TypeError``.
+   * - ``bitstring.InterpretError``, ``bitstring.CreationError``
+     - Removed. Both were aliases for ``ValueError``, so catch that.
+   * - ``bitstring.ByteAlignError``
+     - Removed. It was never raised; the places that might have raised it raise
+       ``ValueError``.
+   * - ``ReadError`` as an ``IndexError``
+     - ``ReadError`` now subclasses ``ValueError``.
+
+The last of these needs care: a read that runs out of bits no longer raises an
+``IndexError``, so a read loop relying on that will not catch anything. Element
+indexing is unaffected and still raises ``IndexError``::
+
+    # bitstring 4
+    try:
+        while True:
+            values.append(s.read("uint8"))
+    except IndexError:
+        pass
+
+    # bitstring 5
+    try:
+        while True:
+            values.append(r.read_value("u8"))
+    except ReadError:
+        pass
+
+Remove command-line usage
+=========================
+
+The ``python -m bitstring`` command-line interface has been removed. Use a
+small Python script or shell one-liner for any remaining uses.
+
+Suggested upgrade order
+=======================
+
+For a large codebase, the least surprising order is:
+
+1. Replace ``ConstBitStream`` and ``BitStream`` with :class:`Reader`, splitting
+   each ``read`` and ``peek`` by whether it wanted a value or raw bits, and
+   update :func:`pack` call sites that relied on getting a ``BitStream``.
+2. Change :meth:`Bits.find` and :meth:`Bits.rfind` checks to ``is not None``,
+   and pass ``bytealigned`` by keyword.
+3. Replace removed constructor forms, aliases, options and exception classes
+   using the tables above.
+4. Run your tests, looking out for floats packed as integers or bools, truth
+   tests of :class:`Array` objects, ``IndexError`` handlers around reads, and
+   anything that depends on the exact bits of ``bfloat`` or narrow floats.

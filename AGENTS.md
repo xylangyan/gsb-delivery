@@ -1,0 +1,63 @@
+# Agent Guidance for Bitstring
+
+This file gives project-specific guidance for automated coding assistants and contributors working on Bitstring.
+
+## Project Snapshot
+
+- Bitstring is a Python library for creating, analysing and modifying binary data at the bit level.
+- `main` holds bitstring 5.x, a breaking-change rewrite of 4.x built on [tibs](https://github.com/scott-griffiths/tibs), a sibling Rust/PyO3 library by the same author, for the core bit storage and manipulation. 5.0 is released, so public API changes now need the usual care over compatibility.
+- The stable 4.x line - pure Python, depends on `bitarray`, no tibs - lives on `4.x-maintenance`, which is where any 4.x fixes go. This file describes the `main`/5.0 architecture; `4.x-maintenance` predates the tibs core and much of it won't apply there.
+- Targets Python 3.11+ (`requires-python = ">=3.11"`).
+- MIT licensed.
+
+## Repository Layout
+
+- `bitstring/`: the package source.
+  - `bits.py` / `bitarray_.py`: the two public bit containers - immutable `Bits` and mutable `BitArray(Bits)` - mirroring the immutable `Tibs` / mutable `Mutibs` split underneath.
+  - `bitstore.py`: the intended sole point of contact with `tibs`. See "The tibs Boundary" below.
+  - `bitstore_helpers.py`, `array_.py`, `dtypes.py`, `reader.py`, `utils.py`, `helpers.py`, `methods.py`: supporting modules for interpretation formats, the `Array` type, sequential `Reader`, and shared utilities.
+  - `exceptions.py`: the module's exception types.
+- `tests/`: pytest suite, including Hypothesis-based tests and benchmark tests (`test_benchmarks.py`, via `pytest-benchmark`).
+- `benchmarks/`: `benchmark.py`, a standalone script that times the same workloads on 4.x and 5.0 so they can be compared (the source of the speedup table in `release_notes.md`). See `benchmarks/README.md`.
+- `doc/`: Sphinx source (`.rst`). `doc/html/` and `doc/_build/` are generated output - edit the `.rst` source, not generated HTML.
+- `release_notes.md`: user-facing changelog, linked prominently from the README as the place to see what's changed.
+- Generated or local-only, do not edit unless asked: `build/`, `dist/`, `bitstring.egg-info/`, `.venv/`, `venv/`, `.benchmarks/`, `.hypothesis/`, `.pytest_cache/`, `__pycache__/`, `.idea/`.
+
+## The tibs Boundary
+
+- `bitstring/bitstore.py` is the intended sole point of contact with the `tibs` package (`Tibs`, `Mutibs`). It wraps them behind `ConstBitStore` and `MutableBitStore`, which share a `_BitStoreBase`.
+- Several other modules currently import `tibs` directly too: `bits.py` and `bitarray_.py` (for the public `from_tibs`/`to_tibs` interop methods) and `bitstore_helpers.py` (for the per-value `Tibs.from_value(...)` conversions). Treat these as existing debt, not precedent - new code should go through `bitstore.py` rather than adding further direct `tibs` imports elsewhere.
+- `tibs` itself lives in a sibling repository (`../tibs`) but is consumed as a normal PyPI dependency (`tibs >= 2.0.2, < 3.0`; 2.0.2 is the first release that reads a non-byte memoryview as its raw bytes, which `from_bytes()` and `from_file()` rely on). If a task seems to need a change inside `tibs`, that belongs in the tibs repo - flag it rather than editing across the boundary.
+
+## Public API Surface
+
+- 4.x-era compatibility names (e.g. `tobytes`, `tolist`, and the longer dtype names `uint`, `int`, `float`, `uintbe`) are kept alongside their current equivalents rather than removed. They are deliberately not deprecated: no `DeprecationWarning` is raised and there's no plan to remove them, so don't add warnings to them or delete them as part of unrelated cleanup or "dead code" tidying. Only touch them if the task explicitly calls for it.
+- There's no separate `.pyi` stub to keep in sync (unlike tibs's `tibs.pyi`) - `py.typed` marks the package as inline-typed, so a public API change just needs the signature updated in place.
+
+## Development Workflow
+
+- This is a `uv`-managed project. `uv.lock` is gitignored, so isn't committed. `uv sync` installs the package and the `dev` dependency group (`pytest`, `hypothesis`, `gfloat`, `pytest-benchmark`). `tibs` is resolved from PyPI.
+- Run the full suite with `pytest tests/ --benchmark-disable` (matches `.github/workflows/ci.yml`). For quick iteration, run a targeted file or test, e.g. `pytest tests/test_bits.py -k some_case`.
+- Keep `tests/requirements.txt` in sync with the `dev` dependency group in `pyproject.toml` - CI installs from the former, local dev from the latter.
+- There's no configured linter or type checker - no ruff, mypy, black, or flake8 config anywhere in the repo, and CI only builds and runs pytest. Match the surrounding code's style by eye; don't invent a `ruff check`/`mypy` step or assume one gates merges.
+
+## Performance
+
+- Performance still matters in this layer, even though the heavy bit-manipulation core now lives in tibs's Rust implementation. `dtypes.py`, `array_.py`, `reader.py`, and `bitstore_helpers.py` sit on hot paths (dtype lookup/parsing, `Array` element access, sequential reads) and should be checked against the benchmark tests (`tests/test_benchmarks.py`, which only writes results under `.benchmarks/` when run with `--benchmark-autosave`; use `benchmarks/benchmark.py` to compare against 4.x) when a change could plausibly affect them.
+- Avoid adding avoidable Python-level overhead - extra allocations, redundant copies, repeated attribute lookups - on these paths.
+
+## Documentation And Release Notes
+
+- `doc/*.rst` pages are entirely hand-written - none of the 16 files use Sphinx autodoc (`autoclass`/`automethod`/`autofunction`). Changing a docstring or signature in `bitstring/*.py` does not update the docs; the matching `.rst` page needs a manual edit too.
+- Sphinx source lives in `doc/*.rst`; edit that, not generated HTML.
+- The docs build (`doc/requirements.txt`, installed by Read the Docs via `.readthedocs.yaml`) also produces `llms.txt` and `llms-full.txt` for language models, using `sphinx-llms-txt`. These are built straight from the `.rst` sources, which is another reason to keep the reference pages hand-written rather than switching to autodoc.
+- The package docstring in `bitstring/__init__.py` is what `help(bitstring)` shows, so it's a cheat-sheet for the API. `tests/test_docs.py` runs its examples; keep it accurate when the API changes.
+- Update `release_notes.md` alongside any change to public API or behavior - treat it like part of the change, not an afterthought.
+- Match the style of the section you're editing.
+
+## Git And Local State
+
+- The worktree may contain user edits and generated artifacts (such as a local `.venv/` virtualenv, plus build/dist output). Do not revert or clean unrelated changes.
+- Untracked files are common here and are usually local scratch. Don't treat them as a problem in status checks or summaries unless the user asks or they're directly relevant to the task.
+- Before broad edits, inspect the current diff for files you plan to touch.
+- Keep changes tightly scoped to the request.

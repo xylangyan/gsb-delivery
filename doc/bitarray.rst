@@ -1,0 +1,327 @@
+.. currentmodule:: bitstring
+
+BitArray
+========
+
+.. class:: BitArray(auto: BitsType | None, /, *, length: int | None = None, **kwargs)
+
+    The :class:`Bits` class is the base class for :class:`BitArray` and so (with the exception of :meth:`~Bits.__hash__`) all of its methods are also available for :class:`BitArray` objects.
+    The initialiser is the same as for :class:`Bits`.
+
+    A :class:`BitArray` is a mutable :class:`Bits`, and so the one thing all of the methods listed here have in common is that they can modify the contents of the bitstring.
+
+    The factory methods :meth:`~Bits.from_string`, :meth:`~Bits.from_dtype`, :meth:`~Bits.from_bytes`, :meth:`~Bits.from_bools`, :meth:`~Bits.from_zeros`, :meth:`~Bits.from_ones`, :meth:`~Bits.from_joined`, :meth:`~Bits.from_file` and :meth:`~Bits.from_tibs` are also available and return mutable ``BitArray`` objects when called on ``BitArray``.
+    ``BitArray.from_tibs`` accepts both ``tibs.Tibs`` and ``tibs.Mutibs`` objects, and always creates a mutable copy.
+
+----
+
+Methods
+-------
+
+.. classmethod:: BitArray.from_string(s: str, /) -> BitArray
+
+    Creates a new mutable bitstring from a formatted string.
+
+.. classmethod:: BitArray.from_zeros(length: int, /) -> BitArray
+
+    Creates a new mutable bitstring containing *length* zero bits.
+
+.. classmethod:: BitArray.from_bytes(data: bytes | bytearray | memoryview, /, *, length: int | None = None, offset: int = 0) -> BitArray
+
+    Creates a new mutable bitstring from a bytes-like object, with optional bit *offset* and *length*.
+
+.. classmethod:: BitArray.from_file(source: str | Path | BinaryIO, /, *, length: int | None = None, offset: int = 0) -> BitArray
+
+    Creates a new mutable bitstring from a file path or binary file object.
+
+.. method:: BitArray.to_immutable() -> Bits
+
+    Returns an immutable copy of the bitstring as a :class:`Bits`.
+
+.. method:: BitArray.to_tibs() -> tibs.Tibs
+
+    Returns the data as a ``tibs.Tibs`` instance.
+
+    This is an immutable snapshot of the current :class:`BitArray` data, intended for interoperation with the lower-level ``tibs`` library.
+
+.. method:: BitArray.append(bs: BitsType) -> None
+
+   Join a :class:`BitArray` to the end of the current :class:`BitArray`. ::
+
+       >>> s = BitArray('0xbad')
+       >>> s.append('0xf00d')
+       >>> s
+       BitArray('0xbadf00d')
+
+.. method:: BitArray.byteswap(fmt: str | int | Iterable[int] | None = None, start: int | None = None, end: int | None = None, repeat: bool = True) -> int
+
+   Change the endianness of the :class:`BitArray` in-place according to *fmt*. Return the number of swaps done.
+
+   The *fmt* can be an integer, an iterable of integers or a compact format string similar to those used in :func:`pack` (described in :ref:`compact_format`). It gives a pattern of byte sizes to use to swap the endianness of the :class:`BitArray`, and defaults to ``None``, which (like ``0``) reverses as many bytes as possible. Note that if you use a compact format string then the endianness identifier (``<``, ``>`` or ``=``) is not needed, and if present it will be ignored.
+
+   *start* and *end* optionally give a slice to apply the transformation to (it defaults to the whole :class:`BitArray`). Out of range *start* and *end* values are clamped to the ends of the bitstring, in the same way as slice indices. If *repeat* is ``True`` then the byte swapping pattern given by the *fmt* is repeated in its entirety as many times as possible, otherwise it is used at most once. Only whole patterns that finish by *end* are swapped, so a pattern longer than the slice swaps nothing and returns ``0``.
+
+       >>> s = BitArray('0x00112233445566')
+       >>> s.byteswap(2)
+       3
+       >>> s
+       BitArray('0x11003322554466')
+       >>> s.byteswap('h')
+       3
+       >>> s
+       BitArray('0x00112233445566')
+       >>> s.byteswap([2, 5])
+       1
+       >>> s
+       BitArray('0x11006655443322')
+
+   It can also be used to swap the endianness of the whole :class:`BitArray`. ::
+
+       >>> s = BitArray('ule32=1234')
+       >>> s.byteswap()
+       1
+       >>> print(s.ube)
+       1234
+
+   Note that :meth:`Array.byteswap` shares this name but takes no arguments, as an ``Array`` already knows its own item size.
+
+.. method:: BitArray.clear() -> None
+
+    Removes all bits from the bitstring.
+
+    ``s.clear()`` is equivalent to ``del s[:]`` and simply makes the bitstring empty.
+
+.. method:: BitArray.insert(pos: int, bs: BitsType) -> None
+
+    Inserts *bs* at *pos*. ::
+
+        >>> s = BitArray('0xccee')
+        >>> s.insert(8, '0xd')
+        >>> s
+        BitArray('0xccdee')
+        >>> s.insert(12, '0x00')
+        >>> s
+        BitArray('0xccd00ee')
+
+.. method:: BitArray.invert(pos: int | Iterable[int] | None = None) -> None
+
+    Inverts one or many bits from ``1`` to ``0`` or vice versa.
+
+    *pos* can be either a single bit position or an iterable of bit positions. Negative numbers are treated in the same way as slice indices and it will raise :exc:`IndexError` if ``pos < -len(s)`` or ``pos >= len(s)``. The default is to invert the entire :class:`BitArray`. ::
+
+        >>> s = BitArray('0b111001')
+        >>> s.invert(0)
+        >>> s.bin
+        '011001'
+        >>> s.invert([-2, -1])
+        >>> s.bin
+        '011010'
+        >>> s.invert()
+        >>> s.bin
+        '100101'
+
+.. method:: BitArray.overwrite(pos: int, bs: BitsType) -> None
+
+    Replaces the contents of the current :class:`BitArray` with *bs* at *pos*. ::
+
+        >>> s = BitArray.from_zeros(10)
+        >>> s.overwrite(3, '0b111')
+        >>> s
+        BitArray('0b0001110000')
+
+.. method:: BitArray.prepend(bs: BitsType) -> None
+
+    Inserts *bs* at the beginning of the current :class:`BitArray`. ::
+
+        >>> s = BitArray('0b0')
+        >>> s.prepend('0xf')
+        >>> s
+        BitArray('0b11110')
+
+.. method:: BitArray.replace(old: BitsType, new: BitsType, start: int | None = None, end: int | None = None, count: int | None = None, *, bytealigned: bool = False) -> int
+
+    Finds occurrences of *old* and replaces them with *new*. Returns the number of replacements made.
+
+    If *bytealigned* is ``True`` then replacements will only be made on byte boundaries. *start* and *end* give the search range and default to the start and end of the bitstring. Out of range *start* and *end* values are clamped to the ends of the bitstring, in the same way as slice indices. If *count* is specified then no more than this many replacements will be made. ::
+
+        >>> s = BitArray('0b0011001')
+        >>> s.replace('0b1', '0xf')
+        3
+        >>> print(s.bin)
+        0011111111001111
+        >>> s.replace('0b1', '', count=6)
+        6
+        >>> print(s.bin)
+        0011001111
+
+.. method:: BitArray.reverse(start: int | None = None, end: int | None = None) -> None
+
+    Reverses bits in the :class:`BitArray` in-place.
+
+    *start* and *end* give the range of bits to reverse and default to the start and end of the bitstring. Out of range *start* and *end* values are clamped to the ends of the bitstring, in the same way as slice indices. ::
+
+        >>> a = BitArray('0b000001101')
+        >>> a.reverse()
+        >>> a.bin
+        '101100000'
+        >>> a.reverse(start=0, end=4)
+        >>> a.bin
+        '110100000'
+
+.. method:: BitArray.rol(bits: int, start: int | None = None, end: int | None = None) -> None
+
+    Rotates the contents of the :class:`BitArray` in-place by *bits* bits to the left.
+
+    *start* and *end* define the slice to use and default to the start and end of the bitstring. Out of range *start* and *end* values are clamped to the ends of the bitstring, in the same way as slice indices.
+
+    Raises :exc:`ValueError` if ``bits < 0``. ::
+
+        >>> s = BitArray('0b01000001')
+        >>> s.rol(2)
+        >>> s.bin
+        '00000101'
+
+.. method:: BitArray.ror(bits: int, start: int | None = None, end: int | None = None) -> None
+
+    Rotates the contents of the :class:`BitArray` in-place by *bits* bits to the right.
+
+    *start* and *end* define the slice to use and default to the start and end of the bitstring. Out of range *start* and *end* values are clamped to the ends of the bitstring, in the same way as slice indices.
+
+    Raises :exc:`ValueError` if ``bits < 0``.
+
+.. method:: BitArray.set(value: bool, pos: int | Iterable[int] | None = None) -> None
+
+    Sets one or many bits to either ``1`` (if *value* is ``True``) or ``0`` (if *value* isn't ``True``). *pos* can be either a single bit position or an iterable of bit positions. Negative numbers are treated in the same way as slice indices and it will raise :exc:`IndexError` if ``pos < -len(s)`` or ``pos >= len(s)``. The default is to set every bit in the :class:`BitArray`.
+
+    Using ``s.set(True, x)`` can be more efficient than other equivalent methods such as ``s[x] = 1``, ``s[x] = "0b1"`` or ``s.overwrite(x, '0b1')``, especially if many bits are being set. In particular using a ``range`` object as an iterable is treated as a special case and is done efficiently. ::
+
+        >>> s = BitArray('0x0000')
+        >>> s.set(True, -1)
+        >>> print(s)
+        0x0001
+        >>> s.set(1, (0, 4, 5, 7, 9))
+        >>> s.bin
+        '1000110101000001'
+        >>> s.set(0)
+        >>> s.bin
+        '0000000000000000'
+        >>> s.set(1, range(0, len(s), 2))
+        >>> s.bin
+        '1010101010101010'
+
+----
+
+Properties
+----------
+
+Note that the ``i``, ``u`` and ``f`` properties are the preferred names for bit-wise big-endian integer and floating point interpretations.
+The longer ``int``, ``uint`` and ``float`` names remain as compatibility aliases.
+Properties can also have a length in bits appended to them to make properties such as ``u8``, ``hex16`` or ``fle64`` (with the exception of the ``bytes`` property which uses a unit of bytes instead of bits, so ``bytes4`` is 32 bits long). These properties with lengths can be used to quickly create a new bitstring. ::
+
+    >>> a = BitArray()
+    >>> a.f32 = 17.6
+    >>> a.hex
+    '418ccccd'
+    >>> a.i7 = -1
+    >>> a.bin
+    '1111111'
+
+
+The binary interpretation properties of the :class:`Bits` class all become writable in the :class:`BitArray` class.
+
+For integer types, the properties can have a bit length appended to it such as ``u32`` or ``i5`` to specify the new length of the bitstring.
+Using a length too small to contain the value given will raise a :exc:`ValueError`.
+
+When used as a setter without a new length the value must fit into the current length of the :class:`BitArray`, else a :exc:`ValueError` will be raised. ::
+
+    >>> s = BitArray('0xf3')
+    >>> s.i
+    -13
+    >>> s.i = 1232
+    ValueError: Value 1232 does not fit in 8 signed bits.
+
+
+Other types have restrictions on their lengths, and there is no property for a length that isn't allowed.
+There is no 20 bit float or two bit bool, so ``s.f20`` and ``s.bool2`` raise an :exc:`AttributeError`.
+
+----
+
+Special Methods
+---------------
+
+.. method:: BitArray.__delitem__(key)
+
+    ``del s[start:end:step]``
+
+    Deletes the slice specified.
+
+.. method:: BitArray.__iadd__(bs)
+
+    ``s1 += s2``
+
+    Appends *bs* to the current bitstring.
+
+    Note that for :class:`BitArray` objects this will be an in-place change, whereas for :class:`Bits` objects using ``+=`` will not call this method - instead a new object will be created (it is equivalent to a copy and an :meth:`~Bits.__add__`). ::
+
+        >>> s = BitArray(ue=423)
+        >>> s += BitArray(ue=12)
+        >>> r = Reader(s)
+        >>> r.read_value('ue')
+        423
+        >>> r.read_value('ue')
+        12
+
+.. method:: BitArray.__iand__(bs)
+
+    ``s &= bs``
+
+    In-place bit-wise AND between two bitstrings. If the two bitstrings are not the same length then a :exc:`ValueError` is raised.
+
+.. method:: BitArray.__ilshift__(n)
+
+    ``s <<= n``
+
+    Shifts the bits in-place *n* bits to the left. The *n* right-most bits will become zeros and bits shifted off the left will be lost.
+
+.. method:: BitArray.__imul__(n)
+
+    ``s *= n``
+
+    In-place concatenation of *n* copies of the current bitstring.
+
+        >>> s = BitArray('0xbad')
+        >>> s *= 3
+        >>> s.hex
+        'badbadbad'
+
+.. method:: BitArray.__ior__(bs)
+
+    ``s |= bs``
+
+    In-place bit-wise OR between two bitstrings. If the two bitstrings are not the same length then a :exc:`ValueError` is raised.
+
+.. method:: BitArray.__irshift__(n)
+
+    ``s >>= n``
+
+    Shifts the bits in-place *n* bits to the right. The *n* left-most bits will become zeros and bits shifted off the right will be lost.
+
+.. method:: BitArray.__ixor__(bs)
+
+    ``s ^= bs``
+
+    In-place bit-wise XOR between two bitstrings. If the two bitstrings are not the same length then a :exc:`ValueError` is raised.
+
+.. method:: BitArray.__setitem__(key, value)
+
+    ``s1[start:end:step] = s2``
+
+    Replaces the slice specified with a new value. ::
+
+        >>> s = BitArray('0x00000000')
+        >>> s[::8] = '0xf'
+        >>> print(s)
+        0x80808080
+        >>> s[-12:] = '0xf'
+        >>> print(s)
+        0x80808f
