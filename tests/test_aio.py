@@ -1,0 +1,498 @@
+import asyncio
+import contextlib
+import os
+import socket
+import sys
+import threading
+import time
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+import thriftpy2
+from thriftpy2.contrib.aio.protocol import (TAsyncBinaryProtocolFactory,
+                                            TAsyncCompactProtocolFactory)
+from thriftpy2.contrib.aio.transport import (TAsyncBufferedTransportFactory,
+                                             TAsyncFramedTransportFactory)
+from thriftpy2.rpc import make_aio_client, make_aio_server
+from thriftpy2.thrift import TApplicationException
+from thriftpy2.transport import TTransportException
+
+TEST_DIR = Path(__file__).parent
+
+
+if sys.platform == "win32":
+    pytest.skip("Unix domain socket is not supported on Windows",
+                allow_module_level=True)
+
+
+addressbook = thriftpy2.load(os.path.join(os.path.dirname(__file__),
+                                          "addressbook.thrift"))
+
+
+class Dispatcher:
+    def __init__(self):
+        self.ab = addressbook.AddressBook()
+        self.ab.people = {}
+
+    async def ping(self):
+        return True
+
+    async def hello(self, name):
+        return "hello " + name
+
+    async def add(self, person):
+        self.ab.people[person.name] = person
+        return True
+
+    async def remove(self, name):
+        if not name:
+            # undeclared exception
+            raise ValueError('name cannot be empty')
+        try:
+            self.ab.people.pop(name)
+            return True
+        except KeyError:
+            raise addressbook.PersonNotExistsError(
+                "{0} not exists".format(name))
+
+    async def get(self, name):
+        try:
+            return self.ab.people[name]
+        except KeyError:
+            raise addressbook.PersonNotExistsError(
+                "{0} not exists".format(name))
+
+    async def book(self):
+        return self.ab
+
+    async def get_phonenumbers(self, name, count):
+        p = [self.ab.people[name].phones[0]] if name in self.ab.people else []
+        return p * count
+
+    async def get_phones(self, name):
+        phone_numbers = self.ab.people[name].phones
+        return dict((p.type, p.number) for p in phone_numbers)
+
+    async def sleep(self, ms):
+        await asyncio.sleep(ms / 1000.0)
+        return True
+
+
+def _create_person():
+    phone1 = addressbook.PhoneNumber()
+    phone1.type = addressbook.PhoneType.MOBILE
+    phone1.number = '555-1212'
+    phone2 = addressbook.PhoneNumber()
+    phone2.type = addressbook.PhoneType.HOME
+    phone2.number = '555-1234'
+
+    # empty struct
+    phone3 = addressbook.PhoneNumber()
+
+    alice = addressbook.Person()
+    alice.name = "Alice"
+    alice.phones = [phone1, phone2, phone3]
+    alice.created_at = int(time.time())
+
+    return alice
+
+
+def _start_in_thread(server, timeout=5.0):
+    """Run ``server.serve()`` in a daemon thread and wait until it listens."""
+    thread = threading.Thread(target=server.serve, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + timeout
+    while server.server is None:
+        if not thread.is_alive() or time.monotonic() > deadline:
+            raise RuntimeError("aio server failed to start")
+        time.sleep(0.01)
+
+
+class _TestAIO:
+    # Base test case for all async tests
+    TRANSPORT_FACTORY = NotImplemented
+    PROTOCOL_FACTORY = NotImplemented
+
+    @classmethod
+    def setup_class(cls):
+        cls._start_server()
+        cls._start_ipv6_server()
+        cls.person = _create_person()
+
+    @classmethod
+    def teardown_class(cls):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            for server in (cls.server, cls.ipv6_server):
+                try:
+                    loop.run_until_complete(server.close())
+                except Exception:  # noqa Probably already closed earlier
+                    pass
+        finally:
+            loop.close()
+
+    @classmethod
+    def _start_server(cls):
+        cls.server = make_aio_server(
+            addressbook.AddressBookService,
+            Dispatcher(),
+            trans_factory=cls.TRANSPORT_FACTORY,
+            proto_factory=cls.PROTOCOL_FACTORY,
+            loop=asyncio.new_event_loop(),
+            **cls.server_kwargs(),
+        )
+        _start_in_thread(cls.server)
+
+    @classmethod
+    def _start_ipv6_server(cls):
+        cls.ipv6_server = make_aio_server(
+            addressbook.AddressBookService,
+            Dispatcher(),
+            trans_factory=cls.TRANSPORT_FACTORY,
+            proto_factory=cls.PROTOCOL_FACTORY,
+            loop=asyncio.new_event_loop(),
+            socket_family=socket.AF_INET6,
+            **cls.ipv6_server_kwargs(),
+        )
+        _start_in_thread(cls.ipv6_server)
+
+    @classmethod
+    def server_kwargs(cls):
+        name = cls.__name__.lower()
+        return {'unix_socket': '/tmp/aio_thriftpy_test_{}.sock'.format(name)}
+
+    @classmethod
+    def ipv6_server_kwargs(cls):
+        name = cls.__name__.lower()
+        return {
+            'unix_socket': '/tmp/aio_thriftpy_test_{}_ipv6.sock'.format(name)
+        }
+
+    @classmethod
+    def client_kwargs(cls):
+        return cls.server_kwargs()
+
+    @classmethod
+    def ipv6_client_kwargs(cls):
+        return cls.ipv6_server_kwargs()
+
+    async def client(self, timeout: int = 3000000):
+        return await make_aio_client(
+            addressbook.AddressBookService,
+            trans_factory=self.TRANSPORT_FACTORY,
+            proto_factory=self.PROTOCOL_FACTORY,
+            timeout=timeout,
+            **self.client_kwargs(),
+        )
+
+    async def ipv6_client(self, timeout: int = 3000000):
+        return await make_aio_client(
+            addressbook.AddressBookService,
+            trans_factory=self.TRANSPORT_FACTORY,
+            proto_factory=self.PROTOCOL_FACTORY,
+            timeout=timeout,
+            socket_family=socket.AF_INET6,
+            **self.ipv6_client_kwargs(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_void_api(self):
+        c = await self.client()
+        assert await c.ping() is None
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_api_ipv6(self):
+        c = await self.ipv6_client()
+        assert await c.ping() is None
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_string_api(self):
+        c = await self.client()
+        assert await c.hello("world") == "hello world"
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_required_argument(self):
+        c = await self.client()
+        assert await c.hello("") == "hello "
+
+        with pytest.raises(TApplicationException):
+            await c.hello()
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_huge_res(self):
+        c = await self.client()
+        big_str = "world" * 100000
+        assert await c.hello(big_str) == "hello " + big_str
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_tstruct_req(self):
+        c = await self.client()
+        assert await c.add(self.person) is True
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_tstruct_res(self):
+        c = await self.client()
+        assert self.person == await c.get("Alice")
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_complex_tstruct(self):
+        c = await self.client()
+        assert len(await c.get_phonenumbers("Alice", 0)) == 0
+        assert len(await c.get_phonenumbers("Alice", 1000)) == 1000
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_exception(self):
+        c = await self.client()
+        with pytest.raises(addressbook.PersonNotExistsError):
+            await c.remove("Bob")
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_undeclared_exception(self):
+        c = await self.client()
+        with pytest.raises(TTransportException):
+            await c.remove('')
+        c.close()
+
+    @pytest.mark.asyncio
+    async def test_client_socket_timeout(self):
+        c = await self.client(timeout=500)
+        with pytest.raises(asyncio.TimeoutError):
+            await c.sleep(1000)
+        c.close()
+
+
+class SSLServerMixin:
+
+    @classmethod
+    def setup_class(cls):
+        # bind to port 0 and read back what the kernel picked
+        cls.port = 0
+        cls.ipv6_port = 0
+        super().setup_class()
+
+    @classmethod
+    def _start_server(cls):
+        super()._start_server()
+        cls.port = cls.server.server.sockets[0].getsockname()[1]
+
+    @classmethod
+    def _start_ipv6_server(cls):
+        super()._start_ipv6_server()
+        cls.ipv6_port = cls.ipv6_server.server.sockets[0].getsockname()[1]
+
+    @classmethod
+    def server_kwargs(cls):
+        return {
+            'host': 'localhost',
+            'port': cls.port,
+            'certfile': TEST_DIR / "ssl/server.pem",
+            'keyfile': TEST_DIR / "ssl/server.key",
+        }
+
+    @classmethod
+    def ipv6_server_kwargs(cls):
+        kw = cls.server_kwargs()
+        kw['port'] = cls.ipv6_port
+        return kw
+
+    @classmethod
+    def client_kwargs(cls):
+        kw = cls.server_kwargs()
+        kw['cafile'] = TEST_DIR / "ssl/CA.pem"
+        return kw
+
+    @classmethod
+    def ipv6_client_kwargs(cls):
+        kw = cls.client_kwargs()
+        kw['port'] = cls.ipv6_port
+        return kw
+
+    async def client_with_url(self, timeout: int = 3000):
+        kw = self.client_kwargs()
+        kw['url'] = "thrift://{}:{}".format(kw.pop('host'), kw.pop('port'))
+        return await make_aio_client(
+            addressbook.AddressBookService,
+            trans_factory=self.TRANSPORT_FACTORY,
+            proto_factory=self.PROTOCOL_FACTORY,
+            timeout=timeout,
+            **kw,
+        )
+
+    @pytest.mark.asyncio
+    async def test_clients(self):
+        c1 = await self.client()
+        c2 = await self.client_with_url()
+        assert await c1.hello("world") == await c2.hello("world")
+        c1.close()
+        c2.close()
+
+
+class TestAIOBufferedBinary(_TestAIO):
+    TRANSPORT_FACTORY = TAsyncBufferedTransportFactory()
+    PROTOCOL_FACTORY = TAsyncBinaryProtocolFactory()
+
+
+class TestAIOBufferedCompact(_TestAIO):
+    TRANSPORT_FACTORY = TAsyncBufferedTransportFactory()
+    PROTOCOL_FACTORY = TAsyncCompactProtocolFactory()
+
+
+class TestAIOFramedBinary(_TestAIO):
+    TRANSPORT_FACTORY = TAsyncFramedTransportFactory()
+    PROTOCOL_FACTORY = TAsyncBinaryProtocolFactory()
+
+
+class TestAIOFramedCompact(_TestAIO):
+    TRANSPORT_FACTORY = TAsyncFramedTransportFactory()
+    PROTOCOL_FACTORY = TAsyncCompactProtocolFactory()
+
+
+class TestAIOBufferedBinarySSL(SSLServerMixin, TestAIOBufferedBinary):
+    pass
+
+
+class TestAIOBufferedCompactSSL(SSLServerMixin, TestAIOBufferedCompact):
+    pass
+
+
+class TestAIOFramedBinarySSL(SSLServerMixin, TestAIOFramedBinary):
+    pass
+
+
+class TestAIOFramedCompactSSL(SSLServerMixin, TestAIOFramedCompact):
+    pass
+
+
+@pytest.mark.parametrize("use_unix_socket", [False, True])
+@pytest.mark.asyncio
+async def test_server_client_timeout_is_idle_timeout(use_unix_socket):
+    """client_timeout bounds idle time between reads, not connection age."""
+    if use_unix_socket:
+        server_kwargs = {"unix_socket": "/tmp/aio_thriftpy_idle_timeout.sock"}
+    else:
+        server_kwargs = {"host": "127.0.0.1", "port": 0}
+    server = make_aio_server(
+        addressbook.AddressBookService,
+        Dispatcher(),
+        client_timeout=500,
+        loop=asyncio.new_event_loop(),
+        **server_kwargs,
+    )
+    _start_in_thread(server)
+    try:
+        if use_unix_socket:
+            client_kwargs = server_kwargs
+        else:
+            port = server.trans.raw_sock.getsockname()[1]
+            client_kwargs = {"host": "127.0.0.1", "port": port}
+
+        c = await make_aio_client(addressbook.AddressBookService,
+                                  **client_kwargs)
+        try:
+            # a long lived connection that keeps making requests stays open
+            for _ in range(5):
+                await asyncio.sleep(0.1)
+                await c.ping()
+            # a request whose handler runs longer than client_timeout
+            # is not cut short
+            assert await c.sleep(1000) is True
+        finally:
+            c.close()
+
+        # an idle connection is closed by the server after client_timeout,
+        # well before the 3s default that would apply if the value were
+        # dropped on the way to the server socket
+        if use_unix_socket:
+            reader, writer = await asyncio.open_unix_connection(
+                server_kwargs["unix_socket"])
+        else:
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", port)
+        try:
+            assert await asyncio.wait_for(reader.read(1), 2) == b""
+        finally:
+            writer.close()
+    finally:
+        server.loop.call_soon_threadsafe(server.loop.stop)
+
+
+@pytest.mark.asyncio
+async def test_client_connect_timeout():
+    with pytest.raises(TTransportException):
+        c = await make_aio_client(
+            addressbook.AddressBookService,
+            unix_socket='/tmp/test.sock',
+            connect_timeout=1000
+        )
+        await c.hello('test')
+
+
+class TestDeprecatedTimeoutKwarg:
+    """
+    Replace TAsyncSocket with a Mock object that raises a RuntimeError
+    when called. This allows us to check that timeout vs. socket_timeout
+    arguments are properly handled without actually creating the client.
+
+    This class should be removed when the socket_timeout argument is removed.
+    """
+    def setup_method(self):
+        # Create and apply a fresh patch for each test.
+        self.patcher = patch(
+            'thriftpy2.contrib.aio.rpc.TAsyncSocket',
+            side_effect=RuntimeError,
+        )
+        self.async_sock = self.patcher.start()
+
+    def teardown_method(self):
+        self.patcher.stop()
+
+    @pytest.mark.asyncio
+    async def test_no_timeout_given(self):
+        await self._make_client()
+        assert self._given_timeout() == 3000  # Default value
+
+    @pytest.mark.asyncio
+    async def test_timeout_given(self):
+        await self._make_client(timeout=1234)
+        assert self._given_timeout() == 1234
+
+    @pytest.mark.asyncio
+    async def test_socket_timeout_given(self):
+        await self._make_client(warning=DeprecationWarning, socket_timeout=555)
+        assert self._given_timeout() == 555
+
+    @staticmethod
+    async def _make_client(warning=None, **kwargs):
+        """
+        Helper method to create the client and check that the proper warning
+        is emitted (if any) and that the patch is properly applied by
+        consuming the RuntimeError.
+        """
+        if warning:
+            with pytest.warns(warning),\
+                    pytest.raises(RuntimeError):  # Consume error
+                await make_aio_client(addressbook.AddressBookService, **kwargs)
+        else:
+            with pytest.raises(RuntimeError):  # Consume error
+                await make_aio_client(addressbook.AddressBookService, **kwargs)
+
+    def _given_timeout(self):
+        """Get the timeout provided to TAsyncSocket."""
+        try:
+            self.async_sock.assert_called_once()
+        except AttributeError:  # Python 3.5
+            assert self.async_sock.call_count == 1
+        _args, kwargs = self.async_sock.call_args
+        return kwargs['socket_timeout']

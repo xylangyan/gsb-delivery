@@ -1,0 +1,24 @@
+import time
+import thriftpy2
+
+from thriftpy2.rpc import make_server
+
+sleep_thrift = thriftpy2.load("sleep.thrift", module_name="sleep_thrift")
+
+
+class Dispatcher:
+    def sleep(self, seconds):
+        print("I'm going to sleep %d seconds" % seconds)
+        time.sleep(seconds)
+        print("Sleep over!")
+
+
+def main():
+    server = make_server(sleep_thrift.Sleep, Dispatcher(),
+                         '127.0.0.1', 6000)
+    print("serving...")
+    server.serve()
+
+
+if __name__ == '__main__':
+    main()
