@@ -1,0 +1,103 @@
+{
+  "tables": [
+    {
+      "id": "T1",
+      "materials": { "first": 100, "step": 1, "count": 5 },
+      "categories": [":甲", 0, ":甲", 0, ":乙"]
+    },
+    {
+      "id": "T2_LONG",
+      "materials": { "first": 1000000, "step": 7, "count": 10000 },
+      "categories": [0, 1]
+    }
+  ],
+  "batches": [
+    {
+      "id": "B1",
+      "cost": 5,
+      "targets": {
+        "T1": {
+          "materials": [101, 103],
+          "new_category": ":甲"
+        }
+      }
+    },
+    {
+      "id": "B2",
+      "cost": 9,
+      "targets": {
+        "T1": {
+          "materials": [104],
+          "new_category": 0
+        }
+      }
+    },
+    {
+      "id": "B3",
+      "cost": 3,
+      "targets": {
+        "T2_LONG": {
+          "materials": { "first": 1000000, "step": 14, "count": 5000 },
+          "new_category": 1
+        }
+      }
+    }
+  ],
+  "work_orders": [
+    {
+      "name": "single_yi",
+      "table": "T1",
+      "op": "subset",
+      "args": [":乙"],
+      "fallback_at": [4]
+    },
+    {
+      "name": "zeros",
+      "table": "T1",
+      "op": "pos",
+      "args": [0]
+    },
+    {
+      "name": "first_zero",
+      "table": "zeros",
+      "op": "at",
+      "args": [0]
+    },
+    {
+      "name": "dup_read",
+      "table": "T1",
+      "op": "pos",
+      "args": [":甲", ":甲"]
+    }
+  ],
+  "signatures": {
+    "legacy": [
+      {
+        "id": "L1_YI_TICKET_KEPT",
+        "table": "T1",
+        "tickets": [104],
+        "allowed_results": [":乙"]
+      },
+      {
+        "id": "L2_FALLBACK_TICKET",
+        "output": "single_yi",
+        "tickets": [104],
+        "allowed_results": [":乙"],
+        "error_branch": "old_library"
+      },
+      {
+        "id": "L3_DUP_ORDER",
+        "output": "dup_read",
+        "tickets": [100, 100, 102, 102]
+      }
+    ],
+    "tonight": [
+      {
+        "id": "N1_FIRST_ZERO",
+        "output": "first_zero",
+        "tickets": [101],
+        "allowed_results": [0]
+      }
+    ]
+  }
+}

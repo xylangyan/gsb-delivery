@@ -1,0 +1,49 @@
+{
+  "tables": [
+    {
+      "id": "T1",
+      "materials": { "first": 100, "step": 1, "count": 5 },
+      "categories": [":甲", 0, ":甲", 0, ":乙"]
+    }
+  ],
+  "batches": [
+    {
+      "id": "B2",
+      "cost": 9,
+      "targets": {
+        "T1": {
+          "materials": [104],
+          "new_category": 0
+        }
+      }
+    }
+  ],
+  "work_orders": [
+    {
+      "name": "single_yi",
+      "table": "T1",
+      "op": "subset",
+      "args": [":乙"],
+      "fallback_at": [4]
+    }
+  ],
+  "signatures": {
+    "legacy": [
+      {
+        "id": "L_KEEP_YI",
+        "table": "T1",
+        "tickets": [104],
+        "allowed_results": [":乙"]
+      }
+    ],
+    "tonight": [
+      {
+        "id": "N_WANT_ZERO",
+        "output": "single_yi",
+        "tickets": [104],
+        "allowed_results": [0],
+        "error_branch": "old_library"
+      }
+    ]
+  }
+}

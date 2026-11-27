@@ -1,0 +1,66 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require 'optparse'
+require_relative '../errata'
+
+def ticket_audit(traces)
+  return [] if traces.nil?
+
+  traces.filter_map do |trace|
+    next if trace[:interpretations].empty? && trace[:branch].nil?
+
+    {
+      step: trace[:name], op: trace[:op], table: trace[:table],
+      layer: trace[:layer],
+      number_became_position: trace[:interpretations].grep(/used as row position/),
+      category_lookups: trace[:interpretations].grep(/category/),
+      branch: trace[:branch], result: trace[:result]
+    }
+  end
+end
+
+options = {}
+parser = OptionParser.new do |opts|
+  opts.banner = 'usage: ruby bin/errata_plan [--audit MATERIAL] PLAN.json'
+  opts.on('--audit MATERIAL', 'audit one material number across base tables') do |value|
+    options[:audit] = value
+  end
+end
+path = parser.parse(ARGV).first
+if path.nil?
+  warn parser.help
+  exit 2
+end
+
+plan = Errata::Loader.load(path)
+result = Errata::Solver.new(plan).solve
+
+if options[:audit]
+  puts JSON.pretty_generate(
+    Errata::Audit.new(plan, result.selected).by_material(options[:audit])
+  )
+  exit
+end
+
+report = {
+  feasible: result.feasible,
+  tonight: result.selected,
+  deferred: result.deferred,
+  deferral_cost: result.deferral_cost
+}
+
+if result.feasible
+  report[:checks] = result.check_result.failures
+  report[:replay] = result.traces
+  report[:tickets] = ticket_audit(result.traces)
+else
+  report[:unsat_core] = (result.unsat_core || []).map(&:id)
+  report[:failures] = result.check_result.failures.map do |failure|
+    { signature: failure.signature_id, kind: failure.kind,
+      reason: failure.reason, detail: failure.detail }
+  end
+end
+
+puts JSON.pretty_generate(report)
