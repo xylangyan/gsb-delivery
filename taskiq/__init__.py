@@ -36,19 +36,35 @@ from taskiq.result import TaskiqResult
 from taskiq.scheduler.scheduled_task import ScheduledTask
 from taskiq.scheduler.scheduler import TaskiqScheduler
 from taskiq.state import TaskiqState
+from taskiq.storage import (
+    ADMISSION_ID_LABEL,
+    ATTACHMENT_LABEL,
+    AdmissionEntry,
+    AdmissionPlan,
+    AdmissionStorage,
+    ContinuationRecord,
+    InMemoryAdmissionStorage,
+)
 from taskiq.task import AsyncTaskiqTask
 
 __version__ = version("taskiq")
 
 __all__ = [
+    "ADMISSION_ID_LABEL",
     "AckableMessage",
     "AcknowledgeType",
+    "AdmissionEntry",
+    "AdmissionPlan",
+    "AdmissionStorage",
     "AsyncBroker",
     "AsyncResultBackend",
     "AsyncTaskiqDecoratedTask",
     "AsyncTaskiqTask",
+    "ATTACHMENT_LABEL",
     "BrokerMessage",
     "Context",
+    "ContinuationRecord",
+    "InMemoryAdmissionStorage",
     "InMemoryBroker",
     "MultiBroker",
     "NoResultError",

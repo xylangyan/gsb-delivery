@@ -203,6 +203,8 @@ class InMemoryBroker(AsyncBroker):
             if middleware.__class__.startup != TaskiqMiddleware.startup:
                 await maybe_awaitable(middleware.startup())
 
+        if self.admission_storage is not None:
+            await self.admission_storage.startup()
         await self.result_backend.startup()
 
     async def shutdown(self) -> None:
@@ -215,5 +217,7 @@ class InMemoryBroker(AsyncBroker):
             if middleware.__class__.shutdown != TaskiqMiddleware.shutdown:
                 await maybe_awaitable(middleware.shutdown())
 
+        if self.admission_storage is not None:
+            await self.admission_storage.shutdown()
         await self.result_backend.shutdown()
         self.executor.shutdown()

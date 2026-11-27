@@ -1,4 +1,5 @@
 import enum
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -24,6 +25,10 @@ class AcknowledgeType(str, enum.Enum):
     # This option means that the task is responsible
     # for acknowledging the message through Context.ack.
     MANUAL = "manual"
+    # Two-coupon acknowledgement. The delivery is acknowledged only
+    # after both the result (or continuation) coupon and the admission
+    # list coupon are persisted under the fixed admission id.
+    WHEN_SAVED_2PC = "when_saved_2pc"
 
 
 def parse_acknowledge_type(value: Any) -> AcknowledgeType:
@@ -51,23 +56,43 @@ class AckableMessage(BaseModel):
 
     It adds more reliability to brokers and system
     as a whole.
+
+    The optional ``delivery_id`` distinguishes redeliveries of the same
+    logical message: brokers that replace the message object on redelivery
+    give every delivery its own id and its own ``ack`` handle.
     """
 
     data: bytes
     ack: Callable[[], Awaitable[None] | None]
+    delivery_id: str | None = None
 
 
 class AckController:
     """Controls acknowledgement state for a received message."""
 
-    def __init__(self, ack: Callable[[], Awaitable[None] | None] | None) -> None:
+    def __init__(
+        self,
+        ack: Callable[[], Awaitable[None] | None] | None,
+        delivery_id: str | None = None,
+    ) -> None:
         self._ack = ack
+        self.delivery_id = delivery_id or uuid.uuid4().hex
         self.is_acked = False
+        self._early_ack_requested = False
 
     @property
     def is_ackable(self) -> bool:
         """Whether the current message supports acknowledgement."""
         return self._ack is not None
+
+    @property
+    def early_ack_requested(self) -> bool:
+        """Whether the task asked to be acknowledged before coupons were saved."""
+        return self._early_ack_requested
+
+    def mark_early_ack_requested(self) -> None:
+        """Remember that the task declared itself done through Context.ack."""
+        self._early_ack_requested = True
 
     async def ack(self) -> None:
         """Acknowledge the current message once."""

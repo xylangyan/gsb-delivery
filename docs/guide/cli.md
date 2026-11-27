@@ -47,11 +47,12 @@ We have two options for this:
 
 ### Acknowledgements
 
-Taskiq supports four types of acknowledgements:
+Taskiq supports five types of acknowledgements:
 * `when_received` - task is acknowledged when it is **received** by the worker.
 * `when_executed` - task is acknowledged right after it is **executed** by the worker.
 * `when_saved` - task is acknowledged when the result of execution is saved in the result backend.
 * `manual` - task is acknowledged by calling `Context.ack()` inside the task.
+* `when_saved_2pc` - two-coupon acknowledgement, see [two-coupon admissions](#two-coupon-admissions).
 
 This can be configured using `--ack-type` parameter. For example:
 
@@ -80,6 +81,46 @@ async def manually_acked_task(context: Context = TaskiqDepends()) -> None:
 
 If a task has no `ack_type` label, the worker-level `--ack-type` value is used.
 Manual acknowledgement requires a broker that yields `AckableMessage`.
+
+### Two-coupon admissions
+
+The `when_saved_2pc` acknowledge type makes deliveries crash-safe by requiring
+two independently persisted coupons before the broker message is acknowledged:
+
+1. the **result coupon** - the task result, keyed in the admission storage by the
+   fixed admission id (and in the result backend by the task id);
+2. the **admission coupon** - the admission-list entry, also keyed by the
+   admission id, carrying any attachment produced by `post_save` middlewares.
+
+The admission id is a stable identifier of the logical work item. It is taken
+from the `X-Taskiq-admission-id` label and falls back to the task id. It is
+intentionally separate from the task id: a redelivery keeps the same admission
+id while every delivery gets its own `AckableMessage` and its own ack handle.
+Only tasks that explicitly declare `ack_type="when_saved_2pc"` use this flow;
+all other tasks keep their original acknowledgement timing.
+
+The broker must be configured with an admission storage:
+
+```python
+from taskiq import InMemoryAdmissionStorage
+
+broker.with_admission_storage(InMemoryAdmissionStorage())
+```
+
+Before running the task the receiver persists an `AdmissionPlan` containing the
+message and the slots for the result, attachment and continuation request. The
+delivery is acknowledged only after both coupons are re-read from the storage.
+If the process stops after the first coupon or after both coupons but before the
+ack, the broker redelivers the message and a new receiver resumes from the plan:
+it never re-runs the task or re-runs `post_save` when the coupons are complete.
+
+Calling `Context.ack()` inside such a task only records that the task considers
+itself done; the actual acknowledgement stays deferred until the coupons exist.
+Calling `Context.requeue()` persists a continuation coupon and kicks the
+next-round message instead of fabricating a result. The requeued admission is
+acknowledged only once the next-round delivery credential and the admission
+coupon are both present.
+
 
 ### Type casts
 
@@ -167,7 +208,7 @@ The number of signals before a hard kill can be configured with the `--hardkill-
 * `--no-propagate-errors` - if this parameter is enabled, exceptions won't be thrown in generator dependencies.
 * `--receiver` - python path to custom receiver class.
 * `--receiver_arg` - custom args for receiver.
-* `--ack-type` - Type of acknowledgement. This parameter is used to set when to acknowledge the task. Possible values are `when_received`, `when_executed`, `when_saved`, `manual`. Default is `when_saved`.
+* `--ack-type` - Type of acknowledgement. This parameter is used to set when to acknowledge the task. Possible values are `when_received`, `when_executed`, `when_saved`, `manual`, `when_saved_2pc`. Default is `when_saved`.
 * `--max-tasks-per-child` - maximum number of tasks to be executed by a single worker process before restart.
 * `--max-fails` - Maximum number of child process exits.
 * `--shutdown-timeout` - maximum amount of time for graceful broker's shutdown in seconds (default 5).

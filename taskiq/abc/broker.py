@@ -41,6 +41,7 @@ else:
 if TYPE_CHECKING:  # pragma: no cover
     from taskiq.abc.formatter import TaskiqFormatter
     from taskiq.abc.result_backend import AsyncResultBackend
+    from taskiq.storage import AdmissionStorage
 
 _T = TypeVar("_T")
 _FuncParams = ParamSpec("_FuncParams")
@@ -114,6 +115,8 @@ class AsyncBroker(ABC):
         self.state = TaskiqState()
         self.custom_dependency_context: dict[Any, Any] = {}
         self.dependency_overrides: dict[Any, Any] = {}
+        # Storage used by tasks with the two-coupon acknowledge type.
+        self.admission_storage: "AdmissionStorage[Any] | None" = None
         # True only if broker runs in worker process.
         self.is_worker_process = False
         # True only if broker runs in scheduler process.
@@ -197,6 +200,8 @@ class AsyncBroker(ABC):
             if middleware.__class__.startup != TaskiqMiddleware.startup:
                 await maybe_awaitable(middleware.startup())
 
+        if self.admission_storage is not None:
+            await self.admission_storage.startup()
         await self.result_backend.startup()
 
     async def shutdown(self) -> None:
@@ -218,6 +223,8 @@ class AsyncBroker(ABC):
             if middleware.__class__.shutdown != TaskiqMiddleware.shutdown:
                 await maybe_awaitable(middleware.shutdown())
 
+        if self.admission_storage is not None:
+            await self.admission_storage.shutdown()
         await self.result_backend.shutdown()
 
     @abstractmethod
@@ -433,6 +440,19 @@ class AsyncBroker(ABC):
         :return: self
         """
         self.result_backend = result_backend
+        return self
+
+    def with_admission_storage(
+        self,
+        admission_storage: "AdmissionStorage[Any]",
+    ) -> "Self":
+        """
+        Set the admission storage used by two-coupon tasks.
+
+        :param admission_storage: storage backing admission plans and coupons.
+        :return: self
+        """
+        self.admission_storage = admission_storage
         return self
 
     def with_id_generator(

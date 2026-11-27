@@ -16,7 +16,11 @@ from typing import Any, get_type_hints
 import anyio
 from taskiq_dependencies import DependencyGraph
 
-from taskiq.abc.broker import AckableMessage, AsyncBroker
+from taskiq.abc.broker import (
+    AckableMessage,
+    AsyncBroker,
+    AsyncTaskiqDecoratedTask,
+)
 from taskiq.abc.middleware import TaskiqMiddleware
 from taskiq.acks import AckController, AcknowledgeType, parse_acknowledge_type
 from taskiq.context import Context
@@ -25,6 +29,13 @@ from taskiq.message import TaskiqMessage
 from taskiq.receiver.params_parser import parse_params
 from taskiq.result import TaskiqResult
 from taskiq.state import TaskiqState
+from taskiq.storage import (
+    ADMISSION_ID_LABEL,
+    ATTACHMENT_LABEL,
+    AdmissionEntry,
+    AdmissionPlan,
+    AdmissionStorage,
+)
 from taskiq.utils import maybe_awaitable
 
 logger = getLogger(__name__)
@@ -137,6 +148,7 @@ class Receiver:
             )
         self.sem_prefetch = asyncio.Semaphore(delivery_capacity)
         self.is_process_pool = isinstance(executor, ProcessPoolExecutor)
+        self._admission_locks: dict[str, asyncio.Lock] = {}
 
     async def callback(  # noqa: C901, PLR0912
         self,
@@ -157,6 +169,9 @@ class Receiver:
         """
         ack_controller = AckController(
             message.ack if isinstance(message, AckableMessage) else None,
+            delivery_id=(
+                message.delivery_id if isinstance(message, AckableMessage) else None
+            ),
         )
         message_data = message.data if isinstance(message, AckableMessage) else message
         try:
@@ -201,6 +216,16 @@ class Receiver:
             taskiq_msg.task_id,
         )
 
+        if ack_time == AcknowledgeType.WHEN_SAVED_2PC:
+            await self._run_two_coupon_admission(
+                taskiq_msg=taskiq_msg,
+                message_data=message_data,
+                task=task,
+                ack_controller=ack_controller,
+                raise_err=raise_err,
+            )
+            return
+
         if ack_time == AcknowledgeType.WHEN_RECEIVED and ack_controller.is_ackable:
             await ack_controller.ack()
 
@@ -233,6 +258,232 @@ class Receiver:
         if ack_time == AcknowledgeType.WHEN_SAVED and ack_controller.is_ackable:
             await ack_controller.ack()
 
+    async def _run_two_coupon_admission(  # noqa: C901, PLR0913
+        self,
+        taskiq_msg: TaskiqMessage,
+        message_data: bytes,
+        task: AsyncTaskiqDecoratedTask[Any, Any],
+        ack_controller: AckController,
+        raise_err: bool,
+    ) -> None:
+        """Process a delivery using the two-coupon acknowledgement flow."""
+        storage = self.broker.admission_storage
+        if storage is None:
+            raise RuntimeError(
+                "Two-coupon acknowledgement requires an admission storage. "
+                "Configure one with broker.with_admission_storage().",
+            )
+
+        admission_id = str(
+            taskiq_msg.labels.get(ADMISSION_ID_LABEL) or taskiq_msg.task_id,
+        )
+        taskiq_msg.labels[ADMISSION_ID_LABEL] = admission_id
+
+        # Same admission id is serialized, unrelated admission ids stay independent.
+        async with self._get_admission_lock(admission_id):
+            # Both coupons are already there: redelivery only settles its own ack.
+            if await self._admission_coupons_are_complete(storage, admission_id):
+                if ack_controller.is_ackable:
+                    await ack_controller.ack()
+                return
+
+            plan = await storage.get_plan(admission_id)
+            if plan is None:
+                plan = AdmissionPlan.from_message(taskiq_msg)
+                await storage.save_plan(admission_id, plan)
+
+            continuation = await storage.get_continuation(admission_id)
+            if (
+                continuation is not None
+                and continuation.message != message_data
+                and await storage.get_result(admission_id) is None
+            ):
+                # A previous round requeued and this delivery is neither the
+                # next-round message nor a resumable redelivery. Do not re-run.
+                return
+
+            if continuation is not None and continuation.message == message_data:
+                # This delivery presents the next-round credential.
+                continuation.delivered_delivery_id = ack_controller.delivery_id
+                await storage.save_continuation(admission_id, continuation)
+                plan.continuation = continuation
+                await storage.save_plan(admission_id, plan)
+
+            result = await storage.get_result(admission_id)
+            if result is None and plan.result is not None:
+                # The task body finished in an earlier attempt that crashed
+                # before writing the result coupon; resume without re-running.
+                result = plan.result
+            if result is None:
+                result = await self._execute_admission_task(
+                    task=task,
+                    taskiq_msg=taskiq_msg,
+                    ack_controller=ack_controller,
+                    storage=storage,
+                    admission_id=admission_id,
+                    plan=plan,
+                )
+                if result is None:
+                    # NoResultError: a requeue waits for the next round, a plain
+                    # skip is discarded through the normal acknowledgement path.
+                    if (
+                        await storage.get_continuation(admission_id) is None
+                        and ack_controller.is_ackable
+                    ):
+                        await ack_controller.ack()
+                    return
+
+            if await storage.get_result(admission_id) is None:
+                if not await self._write_result_coupon(
+                    storage=storage,
+                    admission_id=admission_id,
+                    taskiq_msg=taskiq_msg,
+                    result=result,
+                    raise_err=raise_err,
+                ):
+                    # First coupon is missing: the admission coupon and the
+                    # acknowledgement must wait for a redelivery.
+                    return
+
+            if await storage.get_admission(admission_id) is None:
+                refreshed_plan = await storage.get_plan(admission_id)
+                if refreshed_plan is None:
+                    refreshed_plan = plan
+                if not refreshed_plan.post_save_done:
+                    await self._run_post_save_hooks(taskiq_msg, result)
+                    attachment = taskiq_msg.labels.get(ATTACHMENT_LABEL)
+                    if isinstance(attachment, str):
+                        attachment = attachment.encode()
+                    if attachment is not None:
+                        refreshed_plan.attachment = attachment
+                    refreshed_plan.post_save_done = True
+                    await storage.save_plan(admission_id, refreshed_plan)
+                entry = AdmissionEntry(
+                    admission_id=admission_id,
+                    task_id=taskiq_msg.task_id,
+                    attachment=refreshed_plan.attachment,
+                    continuation=continuation,
+                )
+                try:
+                    await storage.save_admission(admission_id, entry)
+                except Exception:
+                    # The admission coupon is missing: keep the delivery
+                    # unacknowledged so a redelivery can finish the admission.
+                    logger.exception(
+                        "Can't write the admission coupon for %s.",
+                        admission_id,
+                    )
+                    return
+
+            if not await self._admission_coupons_are_complete(
+                storage,
+                admission_id,
+            ):
+                return
+
+            continuation = await storage.get_continuation(admission_id)
+            if (
+                continuation is not None
+                and continuation.delivered_delivery_id
+                != ack_controller.delivery_id
+            ):
+                # Requeued admission: wait for the credentialed next-round delivery.
+                return
+
+            if ack_controller.is_ackable:
+                await ack_controller.ack()
+
+    def _get_admission_lock(self, admission_id: str) -> asyncio.Lock:
+        """Return the per-admission lock, creating it on first use."""
+        lock = self._admission_locks.get(admission_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._admission_locks[admission_id] = lock
+        return lock
+
+    async def _execute_admission_task(  # noqa: PLR0913
+        self,
+        task: AsyncTaskiqDecoratedTask[Any, Any],
+        taskiq_msg: TaskiqMessage,
+        ack_controller: AckController,
+        storage: AdmissionStorage[Any],
+        admission_id: str,
+        plan: AdmissionPlan,
+    ) -> TaskiqResult[Any] | None:
+        """Run the task body and persist its outcome into the admission plan."""
+        result = await self.run_task(
+            target=task.original_func,
+            message=taskiq_msg,
+            ack_controller=ack_controller,
+            admission_storage=storage,
+        )
+
+        for middleware in reversed(self.broker.middlewares):
+            if middleware.__class__.post_execute != TaskiqMiddleware.post_execute:
+                await maybe_awaitable(middleware.post_execute(taskiq_msg, result))
+
+        if isinstance(result.error, NoResultError):
+            continuation = await storage.get_continuation(admission_id)
+            if continuation is None:
+                return None
+            plan.continuation = continuation
+            await storage.save_plan(admission_id, plan)
+            return None
+
+        plan.result = result
+        plan.early_ack = ack_controller.early_ack_requested
+        await storage.save_plan(admission_id, plan)
+        return result
+
+    async def _write_result_coupon(
+        self,
+        storage: AdmissionStorage[Any],
+        admission_id: str,
+        taskiq_msg: TaskiqMessage,
+        result: TaskiqResult[Any],
+        raise_err: bool,
+    ) -> bool:
+        """Persist the result in both stores, keyed by their own identifiers.
+
+        :return: ``True`` when the result coupon was fully written.
+        """
+        try:
+            await self.broker.result_backend.set_result(taskiq_msg.task_id, result)
+            await storage.save_result(admission_id, result)
+        except Exception as exc:
+            logger.exception("Can't set result in result backend.")
+            if raise_err:
+                raise exc
+            return False
+        return True
+
+    async def _run_post_save_hooks(
+        self,
+        taskiq_msg: TaskiqMessage,
+        result: TaskiqResult[Any],
+    ) -> None:
+        """Run post_save middlewares without letting failures corrupt coupons."""
+        for middleware in reversed(self.broker.middlewares):
+            if middleware.__class__.post_save != TaskiqMiddleware.post_save:
+                try:
+                    await maybe_awaitable(middleware.post_save(taskiq_msg, result))
+                except Exception:
+                    logger.exception(
+                        "post_save hook failed for admission %s.",
+                        taskiq_msg.labels.get(ADMISSION_ID_LABEL),
+                        exc_info=True,
+                    )
+
+    @staticmethod
+    async def _admission_coupons_are_complete(
+        storage: AdmissionStorage[Any],
+        admission_id: str,
+    ) -> bool:
+        """Both coupons are re-read from the store and keyed by admission id."""
+        result = await storage.get_result(admission_id)
+        entry = await storage.get_admission(admission_id)
+        return result is not None and entry is not None
+
     def _get_ack_time(self, message: TaskiqMessage) -> AcknowledgeType:
         """
         Get acknowledge time for a task.
@@ -254,6 +505,7 @@ class Receiver:
         target: Callable[..., Any],
         message: TaskiqMessage,
         ack_controller: AckController | None = None,
+        admission_storage: AdmissionStorage[Any] | None = None,
     ) -> TaskiqResult[Any]:
         """
         This function actually executes functions.
@@ -271,6 +523,8 @@ class Receiver:
 
         :param target: function to execute.
         :param message: received message.
+        :param ack_controller: controller of the delivery acknowledgement.
+        :param admission_storage: storage backing two-coupon admissions.
         :return: result of execution.
         """
         loop = asyncio.get_running_loop()
@@ -294,7 +548,12 @@ class Receiver:
             broker_ctx = self.broker.custom_dependency_context
             broker_ctx.update(
                 {
-                    Context: Context(message, self.broker, ack_controller),
+                    Context: Context(
+                        message,
+                        self.broker,
+                        ack_controller,
+                        admission_storage,
+                    ),
                     TaskiqState: self.broker.state,
                 },
             )
