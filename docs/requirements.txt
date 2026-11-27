@@ -1,0 +1,10 @@
+pandas
+numpy
+thrift
+cython
+cramjam
+fastparquet
+numpydoc
+sphinx<7
+docutils<0.19
+sphinx_rtd_theme
