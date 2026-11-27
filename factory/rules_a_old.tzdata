@@ -1,0 +1,69 @@
+# tzdata-style rule source - EDITION A (old / recovered ledger).
+#
+# This is the previously separately-accounted edition that is still inside its
+# recovery window. The old names Asia/Calcutta and Asia/Dacca remain their own
+# data zones here. US/Eastern and US/Central are recorded as links.
+#
+# Line grammar (parsed by factory/generator.rb):
+#   ZONE  <identifier>
+#   OFFSET <symbol> <base_utc_offset_seconds> <std_offset_seconds> <abbrev>
+#   TRANS <year> <month> <offset_symbol> <utc_epoch_seconds>
+#   LINK  <identifier> <target_identifier>
+# Blank lines and '#' comments are ignored. Offsets must be declared before the
+# transitions that reference them; the first OFFSET is the pre-first-transition
+# offset. Transitions are listed in strictly increasing UTC time.
+
+ZONE America/New_York
+OFFSET o1 -18000 0 EST
+OFFSET o2 -18000 3600 EDT
+TRANS 2024 3 o2 1710054000
+TRANS 2024 11 o1 1730613600
+TRANS 2025 3 o2 1741503600
+TRANS 2025 11 o1 1762063200
+TRANS 2026 3 o2 1772953200
+TRANS 2026 11 o1 1793512800
+TRANS 2027 3 o2 1805007600
+
+ZONE America/Chicago
+OFFSET o1 -21600 0 CST
+OFFSET o2 -21600 3600 CDT
+TRANS 2024 3 o2 1710057600
+TRANS 2024 11 o1 1730617200
+TRANS 2025 3 o2 1741507200
+TRANS 2025 11 o1 1762066800
+TRANS 2026 3 o2 1772956800
+TRANS 2026 11 o1 1793516400
+TRANS 2027 3 o2 1805011200
+
+ZONE Europe/London
+OFFSET o1 0 0 GMT
+OFFSET o2 0 3600 BST
+TRANS 2024 3 o2 1711846800
+TRANS 2024 10 o1 1729990800
+TRANS 2025 3 o2 1743296400
+TRANS 2025 10 o1 1761440400
+TRANS 2026 3 o2 1774746000
+TRANS 2026 10 o1 1792890000
+TRANS 2027 3 o2 1806195600
+
+# Constant-offset South Asia zones. In edition A the old spellings are still
+# independently accounted data zones.
+ZONE Asia/Kolkata
+OFFSET o0 19800 0 IST
+
+ZONE Asia/Calcutta
+OFFSET o0 19800 0 IST
+
+ZONE Asia/Dhaka
+OFFSET o0 21600 0 +06
+
+ZONE Asia/Dacca
+OFFSET o0 21600 0 +06
+
+# Shared constant anchor carried by every cabinet (deduplicated block).
+ZONE Etc/UTC
+OFFSET o0 0 0 UTC
+
+# Historical US aliases carried as links in both editions.
+LINK US/Eastern America/New_York
+LINK US/Central America/Chicago

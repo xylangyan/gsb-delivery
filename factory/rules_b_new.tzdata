@@ -1,0 +1,60 @@
+# tzdata-style rule source - EDITION B (new / current ledger after the rename).
+#
+# Same DST clock rules as edition A, but the rename has landed: the old names
+# Asia/Calcutta and Asia/Dacca are now links to the canonical zones instead of
+# separately-accounted data zones. US/Eastern and US/Central stay links.
+#
+# Grammar is identical to rules_a_old.tzdata and parsed by the same reusable
+# generator (factory/generator.rb).
+
+ZONE America/New_York
+OFFSET o1 -18000 0 EST
+OFFSET o2 -18000 3600 EDT
+TRANS 2024 3 o2 1710054000
+TRANS 2024 11 o1 1730613600
+TRANS 2025 3 o2 1741503600
+TRANS 2025 11 o1 1762063200
+TRANS 2026 3 o2 1772953200
+TRANS 2026 11 o1 1793512800
+TRANS 2027 3 o2 1805007600
+
+ZONE America/Chicago
+OFFSET o1 -21600 0 CST
+OFFSET o2 -21600 3600 CDT
+TRANS 2024 3 o2 1710057600
+TRANS 2024 11 o1 1730617200
+TRANS 2025 3 o2 1741507200
+TRANS 2025 11 o1 1762066800
+TRANS 2026 3 o2 1772956800
+TRANS 2026 11 o1 1793516400
+TRANS 2027 3 o2 1805011200
+
+ZONE Europe/London
+OFFSET o1 0 0 GMT
+OFFSET o2 0 3600 BST
+TRANS 2024 3 o2 1711846800
+TRANS 2024 10 o1 1729990800
+TRANS 2025 3 o2 1743296400
+TRANS 2025 10 o1 1761440400
+TRANS 2026 3 o2 1774746000
+TRANS 2026 10 o1 1792890000
+TRANS 2027 3 o2 1806195600
+
+# Canonical South Asia zones remain data zones.
+ZONE Asia/Kolkata
+OFFSET o0 19800 0 IST
+
+ZONE Asia/Dhaka
+OFFSET o0 21600 0 +06
+
+# Shared constant anchor carried by every cabinet (deduplicated block).
+ZONE Etc/UTC
+OFFSET o0 0 0 UTC
+
+# The rename: old spellings are now aliases of the canonical zones.
+LINK Asia/Calcutta Asia/Kolkata
+LINK Asia/Dacca Asia/Dhaka
+
+# Historical US aliases carried as links in both editions.
+LINK US/Eastern America/New_York
+LINK US/Central America/Chicago
