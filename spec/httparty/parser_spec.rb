@@ -1,0 +1,316 @@
+require 'spec_helper'
+require 'multi_xml'
+
+RSpec.describe HTTParty::Parser do
+  describe ".SupportedFormats" do
+    it "returns a hash" do
+      expect(HTTParty::Parser::SupportedFormats).to be_instance_of(Hash)
+    end
+  end
+
+  describe ".call" do
+    it "generates an HTTParty::Parser instance with the given body and format" do
+      expect(HTTParty::Parser).to receive(:new).with('body', :plain).and_return(double(parse: nil))
+      HTTParty::Parser.call('body', :plain)
+    end
+
+    it "calls #parse on the parser" do
+      parser = double('Parser')
+      expect(parser).to receive(:parse)
+      allow(HTTParty::Parser).to receive_messages(new: parser)
+      parser = HTTParty::Parser.call('body', :plain)
+    end
+  end
+
+  describe ".formats" do
+    it "returns the SupportedFormats constant" do
+      expect(HTTParty::Parser.formats).to eq(HTTParty::Parser::SupportedFormats)
+    end
+
+    it "returns the SupportedFormats constant for subclasses" do
+      klass = Class.new(HTTParty::Parser)
+      klass::SupportedFormats = { "application/atom+xml" => :atom }
+
+      expect(klass.formats).to eq({"application/atom+xml" => :atom})
+    end
+  end
+
+  describe ".format_from_mimetype" do
+    it "returns a symbol representing the format mimetype" do
+      expect(HTTParty::Parser.format_from_mimetype("text/plain")).to eq(:plain)
+    end
+
+    it "returns nil when the mimetype is not supported" do
+      expect(HTTParty::Parser.format_from_mimetype("application/atom+xml")).to be_nil
+    end
+
+    it "ignores the case of the mimetype" do
+      expect(HTTParty::Parser.format_from_mimetype("Application/JSON; charset=UTF-8")).to eq(:json)
+      expect(HTTParty::Parser.format_from_mimetype("TEXT/XML")).to eq(:xml)
+    end
+
+    it "ignores the case of a custom parser's mimetype" do
+      parser = Class.new(HTTParty::Parser) do
+        const_set(:SupportedFormats, { "application/X-Custom" => :custom })
+      end
+
+      expect(parser.format_from_mimetype("application/x-custom")).to eq(:custom)
+      expect(parser.format_from_mimetype("application/X-Custom")).to eq(:custom)
+    end
+  end
+
+  describe ".supported_formats" do
+    it "returns a unique set of supported formats represented by symbols" do
+      expect(HTTParty::Parser.supported_formats).to eq(HTTParty::Parser::SupportedFormats.values.uniq)
+    end
+  end
+
+  describe ".supports_format?" do
+    it "returns true for a supported format" do
+      allow(HTTParty::Parser).to receive_messages(supported_formats: [:json])
+      expect(HTTParty::Parser.supports_format?(:json)).to be_truthy
+    end
+
+    it "returns false for an unsupported format" do
+      allow(HTTParty::Parser).to receive_messages(supported_formats: [])
+      expect(HTTParty::Parser.supports_format?(:json)).to be_falsey
+    end
+  end
+
+  describe "#parse" do
+    it "attempts to parse supported formats" do
+      parser = HTTParty::Parser.new('body', :json)
+      allow(parser).to receive_messages(supports_format?: true)
+
+      expect(parser).to receive(:parse_supported_format)
+      parser.parse
+    end
+
+    it "returns the unparsed body when the format is unsupported" do
+      parser = HTTParty::Parser.new('body', :json)
+      allow(parser).to receive_messages(supports_format?: false)
+
+      expect(parser.parse).to eq(parser.body)
+    end
+
+    it "returns nil for an empty body" do
+      parser = HTTParty::Parser.new('', :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "returns nil for a nil body" do
+      parser = HTTParty::Parser.new(nil, :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "returns nil for a 'null' body" do
+      parser = HTTParty::Parser.new("null", :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "returns nil for a body with spaces only" do
+      parser = HTTParty::Parser.new("   ", :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "does not raise exceptions for bodies with invalid encodings" do
+      parser = HTTParty::Parser.new("\x80", :invalid_format)
+      expect(parser.parse).to_not be_nil
+    end
+
+    it "ignores utf-8 bom" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBF\{\"hi\":\"yo\"\}", :json)
+      expect(parser.parse).to eq({"hi"=>"yo"})
+    end
+
+    it "returns nil for a body that is only a utf-8 bom" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBF", :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "returns nil for a body that is only a utf-8 bom followed by spaces" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBF  \n", :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "ignores utf-8 bom in ascii 8bit encoding" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBF{\"hi\":\"yo\"}".b, :json)
+      expect(parser.parse).to eq({"hi"=>"yo"})
+    end
+
+    it "returns nil for an ascii 8bit body that is only a utf-8 bom" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBF".b, :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "returns nil for an ascii 8bit body that is a utf-8 bom followed by null" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBFnull".b, :json)
+      expect(parser.parse).to be_nil
+    end
+
+    it "ignores utf-8 bom in ascii 8bit encoding for plain text" do
+      parser = HTTParty::Parser.new("\xEF\xBB\xBFhello".b, :plain)
+      expect(parser.parse).to eq("hello")
+    end
+
+    it "does not strip utf-8 bom bytes from ascii 8bit bodies in unsupported formats" do
+      body = "\xEF\xBB\xBF\x00\x01\x02\x03\x04".b
+      parser = HTTParty::Parser.new(body, nil)
+      expect(parser.parse).to eq(body)
+    end
+
+    it "does not strip a utf-8 bom from bodies declared in other encodings" do
+      body = "\xEF\xBB\xBFhello".force_encoding(Encoding::ISO_8859_1)
+      parser = HTTParty::Parser.new(body, :plain)
+      expect(parser.parse).to eq(body)
+    end
+
+    it "does not strip a utf-8 bom from non ascii compatible encodings" do
+      body = "\xEF\xBB\xBF".b.force_encoding(Encoding::UTF_16LE)
+      parser = HTTParty::Parser.new(body, :plain)
+      expect(parser.parse).to eq(body)
+    end
+
+    it "parses ascii 8bit encoding" do
+      parser = HTTParty::Parser.new(
+        "{\"currency\":\"\xE2\x82\xAC\"}".force_encoding('ASCII-8BIT'),
+        :json
+      )
+      expect(parser.parse).to eq({"currency" => "€"})
+    end
+
+    it "parses frozen strings" do
+      parser = HTTParty::Parser.new('{"a":1}'.freeze, :json)
+      expect(parser.parse).to eq("a" => 1)
+    end
+
+    it "returns a copy of utf-8 bodies without a bom" do
+      body = "hello"
+      parsed = HTTParty::Parser.new(body, :plain).parse
+      expect(parsed).to eq("hello")
+      expect(parsed).not_to equal(body)
+    end
+
+    it "returns an unfrozen copy of frozen utf-8 bodies" do
+      parsed = HTTParty::Parser.new("hello".freeze, :plain).parse
+      expect(parsed).not_to be_frozen
+    end
+
+    it "returns a copy of utf-8 html bodies" do
+      body = "<p>hi</p>"
+      parsed = HTTParty::Parser.new(body, :html).parse
+      expect(parsed).to eq("<p>hi</p>")
+      expect(parsed).not_to equal(body)
+    end
+
+    it "returns a copy of utf-8 bodies in unsupported formats" do
+      body = "hello"
+      parsed = HTTParty::Parser.new(body, nil).parse
+      expect(parsed).to eq("hello")
+      expect(parsed).not_to equal(body)
+    end
+
+    it "returns an unfrozen copy of frozen utf-8 bodies with a bom" do
+      body = "\xEF\xBB\xBFhello".freeze
+      parsed = HTTParty::Parser.new(body, :plain).parse
+      expect(parsed).to eq("hello")
+      expect(parsed).not_to equal(body)
+      expect(parsed).not_to be_frozen
+    end
+
+    it "parses scalar JSON values" do
+      parser = HTTParty::Parser.new('true', :json)
+      expect(parser.parse).to be(true)
+    end
+
+    it "allows NaN in JSON" do
+      parser = HTTParty::Parser.new('NaN', :json)
+      expect(parser.parse).to be_nan
+    end
+  end
+
+  describe "#supports_format?" do
+    it "utilizes the class method to determine if the format is supported" do
+      expect(HTTParty::Parser).to receive(:supports_format?).with(:json)
+      parser = HTTParty::Parser.new('body', :json)
+      parser.send(:supports_format?)
+    end
+  end
+
+  describe "#parse_supported_format" do
+    it "calls the parser for the given format" do
+      parser = HTTParty::Parser.new('body', :json)
+      expect(parser).to receive(:json)
+      parser.send(:parse_supported_format)
+    end
+
+    context "when a parsing method does not exist for the given format" do
+      it "raises an exception" do
+        parser = HTTParty::Parser.new('body', :atom)
+        expect do
+          parser.send(:parse_supported_format)
+        end.to raise_error(NotImplementedError, "HTTParty::Parser has not implemented a parsing method for the :atom format.")
+      end
+
+      it "raises a useful exception message for subclasses" do
+        atom_parser = Class.new(HTTParty::Parser) do
+          def self.name
+            'AtomParser'
+          end
+        end
+        parser = atom_parser.new 'body', :atom
+        expect do
+          parser.send(:parse_supported_format)
+        end.to raise_error(NotImplementedError, "AtomParser has not implemented a parsing method for the :atom format.")
+      end
+    end
+  end
+
+  context "parsers" do
+    subject do
+      HTTParty::Parser.new('body', nil)
+    end
+
+    it "parses xml with MultiXML when available" do
+      stub_const('MultiXML', double)
+      expect(MultiXML).to receive(:parse).with('body')
+      subject.send(:xml)
+    end
+
+    it "falls back to MultiXml when MultiXML is unavailable" do
+      hide_const('MultiXML') if defined?(MultiXML)
+      expect(MultiXml).to receive(:parse).with('body')
+      subject.send(:xml)
+    end
+
+    context "with JSON 3" do
+      it "parses json without quirks mode" do
+        stub_const('JSON::VERSION', '3.0.0')
+        expect(JSON).to receive(:parse).with('body', :allow_nan => true)
+        subject.send(:json)
+      end
+    end
+
+    context "with older JSON versions" do
+      it "parses json with quirks mode" do
+        stub_const('JSON::VERSION', '2.0.0')
+        expect(JSON).to receive(:parse).with('body', :quirks_mode => true, :allow_nan => true)
+        subject.send(:json)
+      end
+    end
+
+    it "parses html by simply returning the body" do
+      expect(subject.send(:html)).to eq('body')
+    end
+
+    it "parses plain text by simply returning the body" do
+      expect(subject.send(:plain)).to eq('body')
+    end
+
+    it "parses csv with CSV" do
+      require 'csv'
+      expect(CSV).to receive(:parse).with('body')
+      subject.send(:csv)
+    end
+  end
+end

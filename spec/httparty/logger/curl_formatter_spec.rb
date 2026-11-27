@@ -1,0 +1,214 @@
+require 'spec_helper'
+
+RSpec.describe HTTParty::Logger::CurlFormatter do
+  describe "#format" do
+    let(:logger)          { double('Logger') }
+    let(:response_object) { Net::HTTPOK.new('1.1', 200, 'OK') }
+    let(:parsed_response) { lambda { {"foo" => "bar"} } }
+
+    let(:response) do
+      HTTParty::Response.new(request, response_object, parsed_response)
+    end
+
+    let(:request) do
+      HTTParty::Request.new(Net::HTTP::Get, 'http://foo.bar.com/')
+    end
+
+    subject { described_class.new(logger, :info) }
+
+    before do
+      allow(logger).to receive(:info)
+      allow(request).to receive(:raw_body).and_return('content')
+      allow(response_object).to receive_messages(body: "{foo:'bar'}")
+      response_object['header-key'] = 'header-value'
+
+      subject.format request, response
+    end
+
+    context 'when request is logged' do
+      context "and request's option 'base_uri' is not present" do
+        it 'logs url' do
+          expect(logger).to have_received(:info).with(/\[HTTParty\] \[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\ [+-]\d{4}\] > GET http:\/\/foo.bar.com/)
+        end
+      end
+
+      context "and request's option 'base_uri' is present" do
+        let(:request) do
+          HTTParty::Request.new(Net::HTTP::Get, '/path', base_uri: 'http://foo.bar.com')
+        end
+
+        it 'logs url' do
+          expect(logger).to have_received(:info).with(/\[HTTParty\] \[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\ [+-]\d{4}\] > GET http:\/\/foo.bar.com\/path/)
+        end
+      end
+
+      context 'and headers are not present' do
+        it 'not log Headers' do
+          expect(logger).not_to have_received(:info).with(/Headers/)
+        end
+      end
+
+      context 'and headers are present' do
+        let(:request) do
+          HTTParty::Request.new(Net::HTTP::Get, '/path', base_uri: 'http://foo.bar.com', headers: { key: 'value' })
+        end
+
+        it 'logs Headers' do
+          expect(logger).to have_received(:info).with(/Headers/)
+        end
+
+        it 'logs headers keys' do
+          expect(logger).to have_received(:info).with(/key: value/)
+        end
+      end
+
+      context 'and query is not present' do
+        it 'not logs Query' do
+          expect(logger).not_to have_received(:info).with(/Query/)
+        end
+      end
+
+      context 'and query is present' do
+        let(:request) do
+          HTTParty::Request.new(Net::HTTP::Get, '/path', query: { key: 'value' })
+        end
+
+        it 'logs Query' do
+          expect(logger).to have_received(:info).with(/Query/)
+        end
+
+        it 'logs query params' do
+          expect(logger).to have_received(:info).with(/key: value/)
+        end
+      end
+
+      context 'and query is a string' do
+        let(:request) do
+          HTTParty::Request.new(Net::HTTP::Get, '/path', query: 'key=value&other=1')
+        end
+
+        it 'logs the query string as given' do
+          expect(logger).to have_received(:info).with(/Query: \n.*> key=value&other=1/)
+        end
+      end
+
+      context 'when request raw_body is present' do
+        it 'not logs request body' do
+          expect(logger).to have_received(:info).with(/content/)
+        end
+      end
+    end
+
+    context 'when response is logged' do
+      it 'logs http version and response code' do
+        expect(logger).to have_received(:info).with(/HTTP\/1.1 200/)
+      end
+
+      it 'logs headers' do
+        expect(logger).to have_received(:info).with(/Header-key: header-value/)
+      end
+
+      it 'logs body' do
+        expect(logger).to have_received(:info).with(/{foo:'bar'}/)
+      end
+    end
+
+    it 'logs a binary body next to a non-ASCII header without raising' do
+      logger_double = double('Logger', info: nil)
+      response_object = Net::HTTPOK.new('1.1', 200, 'OK')
+      allow(response_object).to receive(:body).and_return("\xFF".b)
+      request = HTTParty::Request.new(Net::HTTP::Get, 'http://foo.bar.com/', headers: { 'X-Name' => 'café' })
+      allow(request).to receive(:raw_body).and_return(nil)
+      response = HTTParty::Response.new(request, response_object, -> { {} })
+      formatter = described_class.new(logger_double, :info)
+
+      expect { formatter.format(request, response) }.not_to raise_error
+
+      expect(logger_double).to have_received(:info) do |message|
+        expect(message.encoding).to eq(Encoding::UTF_8)
+        expect(message).to include('café')
+        expect(message.valid_encoding?).to eq(true)
+      end
+    end
+
+    it 'converts a body in another charset to UTF-8 instead of garbling it' do
+      logger_double = double('Logger', info: nil)
+      response_object = Net::HTTPOK.new('1.1', 200, 'OK')
+      allow(response_object).to receive(:body).and_return('olé'.encode(Encoding::ISO_8859_1))
+      request = HTTParty::Request.new(Net::HTTP::Get, 'http://foo.bar.com/', headers: { 'X-Name' => 'café' })
+      allow(request).to receive(:raw_body).and_return(nil)
+      response = HTTParty::Response.new(request, response_object, -> { {} })
+      formatter = described_class.new(logger_double, :info)
+
+      formatter.format(request, response)
+
+      expect(logger_double).to have_received(:info) do |message|
+        expect(message.encoding).to eq(Encoding::UTF_8)
+        expect(message).to include('café')
+        expect(message).to include('olé')
+      end
+    end
+
+    it "formats a response in a style that resembles a -v curl" do
+      logger_double = double
+      expect(logger_double).to receive(:info).with(
+          /\[HTTParty\] \[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\ [+-]\d{4}\] > GET http:\/\/localhost/)
+
+      subject = described_class.new(logger_double, :info)
+
+      stub_http_response_with("example.html")
+
+      response = HTTParty::Request.new.perform
+      subject.format(response.request, response)
+    end
+  end
+
+  describe "#format with non UTF-8 data" do
+    let(:logger)          { double('Logger') }
+    let(:response_object) { Net::HTTPOK.new('1.1', 200, 'OK') }
+    let(:parsed_response) { lambda { nil } }
+    let(:binary_body)     { "\x89PNG\r\n\x1a\n\xff\xd8\xff".b }
+
+    let(:response) do
+      HTTParty::Response.new(request, response_object, parsed_response)
+    end
+
+    let(:request) do
+      HTTParty::Request.new(Net::HTTP::Get, 'http://foo.bar.com/', headers: { 'X-Note' => 'café' })
+    end
+
+    subject { described_class.new(logger, :info) }
+
+    before do
+      allow(logger).to receive(:info)
+      allow(request).to receive(:raw_body).and_return(nil)
+      allow(response_object).to receive_messages(body: binary_body)
+    end
+
+    it 'does not raise when the request body is binary' do
+      allow(request).to receive(:raw_body).and_return("\xff\xfe\x00binary".b)
+      allow(response_object).to receive_messages(body: 'ok')
+
+      expect { subject.format request, response }.not_to raise_error
+    end
+
+    it 'does not raise when the response body is in a non ASCII compatible encoding' do
+      allow(response_object).to receive_messages(body: 'hello'.encode(Encoding::UTF_16LE))
+
+      expect { subject.format request, response }.not_to raise_error
+    end
+
+    it 'does not raise when the response body claims an encoding with no converter' do
+      allow(response_object).to receive_messages(body: binary_body.dup.force_encoding(Encoding::UTF_7))
+
+      expect { subject.format request, response }.not_to raise_error
+    end
+
+    it 'does not raise when a non-ASCII header has a binary value' do
+      request.options[:headers] = { 'X-Café' => "\xFF".b }
+
+      expect { subject.format request, response }.not_to raise_error
+      expect(logger).to have_received(:info).with(include('X-Café: �'))
+    end
+  end
+end
