@@ -1,0 +1,1056 @@
+"""The benchmark suite of the aggregation implementations.
+
+Run it with ``python -m numpy_groupies.benchmarks`` - the module measures every
+function of ``func_list`` once per implementation and prints the milliseconds
+per call as a Markdown table.  NumPy and Numba are always measured, ``--help``
+explains the columns to ask for, ``--all`` takes them all.  A single run, the
+default, prints its rows as they are measured; a repeated one reports a counter
+and then the fastest measurement of all runs.  ``--temporal`` measures the
+functions that take datetime64 and timedelta64 values instead, on data of their
+own - the plain functions on clean values, the nan ones with a fifth of them
+NaT - one block per dtype in the same table.
+
+``python -m numpy_groupies.benchmarks.mt`` is a tool of its own: it
+measures the parallel variant of the numba kernels against the sequential
+one and fits the cost model that decides between them.
+"""
+
+import argparse
+import gc
+import platform
+import sys
+import timeit
+from typing import Any
+
+import numpy as np
+
+from numpy_groupies import npg_numpy, npg_purepy
+from numpy_groupies.benchmarks import _ufunc
+from numpy_groupies.dtypes import TEMPORAL_KINDS
+from numpy_groupies.npg_numba import mt as npg_mt
+from numpy_groupies.registry import (
+    funcs_collecting,
+)
+from numpy_groupies.tests.reference import aggregate_ref
+
+# ---------------------------------------------------------------------------
+# the cleanup of the tools: an interrupt ends the run without the shutdown
+# of the interpreter, and the semaphore of the threading-layer
+# initialization of numba would then be reported as leaked by the resource
+# tracker of multiprocessing.  Releasing it is the shared business of both
+# tools, the benchmark and the calibration.
+
+
+def _release_numba_resources() -> None:
+    """Release the semaphore the threading layer of numba leaves behind.
+
+    The lock of the threading-layer initialization is a semaphore of
+    multiprocessing, and the resource tracker of it reports the semaphore
+    as leaked when the process leaves without releasing it - an interrupt
+    leaves exactly like that.  The lock is dropped, and the finalizer that
+    multiprocessing registered when the lock was created then unlinks its
+    name from /dev/shm and unregisters it from the tracker - the very
+    cleanup the shutdown of a normal exit runs.
+    """
+    # dropping the reference of numba runs the dealloc of the lock, and the
+    # dealloc is what calls the finalizer - the finalizer of the lock is the
+    # one that unlinks and unregisters, and calling it here as well would
+    # unlink the name twice
+    numba_parallel._backend_init_process_lock = None
+    gc.collect()
+
+
+try:
+    import numba
+except ImportError:  # pragma: no cover - the benchmarks need numba
+    numba = None
+try:
+    import numbagg
+except ImportError:  # pragma: no cover - numbagg is optional
+    numbagg = None
+try:
+    import pandas
+except ImportError:  # pragma: no cover - pandas is optional
+    pandas = None
+try:
+    import polars
+except ImportError:  # pragma: no cover - polars is optional
+    polars = None
+try:
+    from numba.np.ufunc import parallel as numba_parallel
+except ImportError:  # pragma: no cover - the benchmarks need numba
+    numba_parallel = None
+
+try:
+    from numpy_groupies import npg_numba
+except ImportError:
+    npg_numba = None
+try:
+    from numpy_groupies.benchmarks import _numbagg
+except ImportError:
+    _numbagg = None
+try:
+    from numpy_groupies.benchmarks import _pandas
+except ImportError:
+    _pandas = None
+try:
+    from numpy_groupies.benchmarks import _polars
+except ImportError:
+    _polars = None
+
+
+def arbitrary(iterator):
+    tmp = 0
+    for i, x in enumerate(iterator, 1):
+        tmp += x**i
+    return tmp
+
+
+func_list = (
+    # the sums and the products
+    np.sum,
+    np.prod,
+    # the sum of the squares - the moment the variance is made of
+    "sumofsquares",
+    # the extremes
+    np.min,
+    np.max,
+    # the counts
+    len,
+    "nunique",
+    # the flags
+    np.all,
+    np.any,
+    "anynan",
+    "allnan",
+    # the means
+    np.mean,
+    # the order statistics
+    np.median,
+    "quantile",
+    "mode",
+    # the dispersion and the moments
+    np.trapezoid,
+    np.std,
+    np.var,
+    "skew",
+    "kurt",
+    # the positions
+    "first",
+    "last",
+    "argmax",
+    "argmin",
+    # the values of the group
+    "sort",
+    "topk",
+    "array",
+    # the nan-variants - a block, in the order of the functions they are
+    # the variant of
+    np.nansum,
+    np.nanprod,
+    "nansumofsquares",
+    np.nanmin,
+    np.nanmax,
+    "nanlen",
+    "nannunique",
+    "nanall",
+    "nanany",
+    np.nanmean,
+    np.nanmedian,
+    "nanquantile",
+    "nantrapezoid",
+    np.nanvar,
+    np.nanstd,
+    "nanskew",
+    "nankurt",
+    "nanfirst",
+    "nanlast",
+    "nanargmin",
+    "nanargmax",
+    # the cumulations - a block
+    "cumsum",
+    "cumprod",
+    "cummax",
+    "cummin",
+    # the caller brings a function of its own
+    arbitrary,
+)
+
+# the functions that take datetime64 and timedelta64 values, and the ones that
+# take the durations beyond them - the sums and the accumulations and the
+# median are refused for the points in time, like numpy refuses them, and the
+# moments have no temporal unit anywhere.  The quantile and the percentile
+# numpy computes of both, so they are measured with the datetime64 block.
+# The names are the ones the table shows, and ``nan`` in the name is what
+# sends a function to the NaT data.
+temporal_datetime_funcs = (
+    # the extremes
+    np.min,
+    np.max,
+    np.nanmin,
+    np.nanmax,
+    # the positions
+    "first",
+    "last",
+    "nanfirst",
+    "nanlast",
+    "argmin",
+    "argmax",
+    "nanargmin",
+    "nanargmax",
+    # the counts
+    len,
+    "nanlen",
+    "nunique",
+    "nannunique",
+    # the flags
+    np.all,
+    np.any,
+    "allnan",
+    "anynan",
+    # the means and the order statistics
+    np.mean,
+    "nanmean",
+    "quantile",
+    "nanquantile",
+    "mode",
+    # the values of the group
+    "sort",
+    "array",
+    "topk",
+)
+temporal_timedelta_funcs = temporal_datetime_funcs + (
+    np.sum,
+    np.nansum,
+    "cumsum",
+    "nancumsum",
+    "cummax",
+    "cummin",
+    np.median,
+    np.nanmedian,
+)
+# the temporal table, one block of rows per dtype
+TEMPORAL_TABLE = (("datetime64", "M", temporal_datetime_funcs), ("timedelta64", "m", temporal_timedelta_funcs))
+# the temporal data is measured in nanoseconds: the values gather around one
+# day after the epoch, in a window as wide as the data is long - a span that
+# the mean of the ticks sums exactly for every group of the default data, with
+# the falsy epoch values of the boolean functions included
+TEMPORAL_UNIT = "ns"
+TEMPORAL_BASE = "1970-01-02"
+
+
+def benchmark_data(size=5e5, seed=100, groups=1000):
+    rnd = np.random.RandomState(seed=seed)
+    group_idx = rnd.randint(0, int(groups), int(size))
+    a = rnd.random_sample(group_idx.size)
+    a[a > 0.8] = 0
+    nana = a.copy()
+    nana[(nana < 0.2) & (nana != 0)] = np.nan
+    nan_share = np.mean(np.isnan(nana))
+    assert 0.15 < nan_share < 0.25, f"{nan_share * 100:3f}% nans"
+    return a, nana, group_idx
+
+
+def temporal_benchmark_data(size=5e5, seed=100, groups=1000, *, kind):
+    """The temporal twin of the numeric data: a tick per value, a fifth of
+    them the zero of the dtype and a fifth of the rest NaT in ``nana``.
+
+    The values gather one day after the epoch - close enough that the mean
+    of the ticks stays on the exact fast path of its kernel even with the
+    falsy epoch values in the group, which the ticks of the year 2020 would
+    push onto the slower exact fallback.  The durations stay below a
+    millisecond, so that the sums and the accumulations of every group stay
+    inside int64 - what the benchmark measures is the work, not a wraparound.
+    """
+    rnd = np.random.RandomState(seed=seed)
+    group_idx = rnd.randint(0, int(groups), int(size))
+    span = int(size)
+    base = np.datetime64(TEMPORAL_BASE, TEMPORAL_UNIT).view(np.int64) if kind == "M" else 0
+    if kind == "m":
+        span = min(span, 1_000_000)
+    ticks = base + rnd.randint(0, span, int(size))
+    a = ticks.astype(np.dtype(f"{kind}8[{TEMPORAL_UNIT}]"))
+    # the falsy values: the epoch for a point in time, no duration for a
+    # duration - the tick 0 of either
+    zero = a.dtype.type(0, TEMPORAL_UNIT)
+    nat = a.dtype.type("NaT", TEMPORAL_UNIT)
+    a[ticks - base > int(span * 0.8)] = zero
+    nana = a.copy()
+    # of the remaining values, those below 0.2 are NaT (about 20%), like the
+    # nans of the numeric data - the zeros stay, the falsy values are no
+    # missing ones
+    relative = nana.view(np.int64) - base
+    nana[(relative < int(span * 0.2)) & (relative != -base)] = nat
+    nat_share = np.mean(np.isnat(nana))
+    assert 0.15 < nat_share < 0.25, f"{nat_share * 100:3f}% NaT"
+    return a, nana, group_idx
+
+
+# the cases of the table of the thread counts: the values and the groups of
+# every case, and the state of the kernel grows with the groups - the case
+# that decides is the one whose state no longer fits the cache, and the one
+# beside it, whose state still does
+MT_CASES = (
+    (10_000_000, 1_000),
+    (10_000_000, 10_000),
+    (10_000_000, 100_000),
+    (10_000_000, 1_000_000),
+    (100_000_000, 1_000_000),
+    (100_000_000, 10_000_000),
+)
+
+# the sizes of the temporaries the participants ask for are of this order (an
+# arange over the input, the cast of the weights of bincount), so the ladder
+# reaches every one of them
+_ALLOCATOR_WARMUP_MIN = 1 << 16
+_ALLOCATOR_WARMUP_MAX = 1 << 26
+
+
+def _warm_up_allocator() -> None:
+    """Let the memory of the process arrive before anything is measured.
+
+    The library allocator answers the first requests for a block size with
+    freshly mapped pages and keeps them only after a round or two: every one of
+    those pages has to be faulted in and zeroed, measured 2.2ms for the 4MB an
+    implementation fills per call, of a function that takes 0.5ms otherwise.
+    A measurement that starts before that has happened reports the kernel and
+    not the implementation, and it reports it differently for every row - the
+    first run of a table came out a third slower than the runs after it.
+
+    Walking the sizes once pays the faulting up front, for 18ms.
+    """
+    itemsize = np.dtype(np.float64).itemsize
+    size = _ALLOCATOR_WARMUP_MIN
+    while size <= _ALLOCATOR_WARMUP_MAX:
+        block = np.empty(size // itemsize)
+        # every page of the block, not only its two ends
+        block[:: 4096 // itemsize] = 1.0
+        del block
+        size <<= 1
+
+
+def _byte_snapshot(*arrays: np.ndarray) -> tuple[bytes, ...]:
+    """The bytes of the arrays, to see whether a call changed them.
+
+    The bytes themselves and not a digest of them, though the name suggests a
+    fingerprint: hashing measured 24x slower than the comparison it feeds (6ms
+    for the 4MB of one array against 0.3ms of the copy and the byte-by-byte
+    compare), and it is the memory the comparison has to cross either way that
+    costs the time.  Nor is it ``np.array_equal``, which compares NaN by value
+    and so reports a change for the untouched nan-data of this benchmark.
+
+    The participants must not write into the data: one that does would change
+    the results of the runs that follow, silently.  The snapshot is taken once
+    per run - the data is the same for every function and every participant -
+    and compared after every function, so the copy is paid once and not once
+    per cell of the table.
+    """
+    return tuple(array.tobytes() for array in arrays)
+
+
+def _restore(arrays: tuple[np.ndarray, ...], snapshot: tuple[bytes, ...]) -> bool:
+    """Put the data back as it was, and say whether it had changed.
+
+    The snapshot holds the bytes of the data as they were at the start of the
+    run, so the original values are still in it: a participant that wrote into
+    the data is undone, and the rest of the table is measured on the data the
+    benchmark meant to measure.
+    """
+    changed = False
+    for array, data in zip(arrays, snapshot):
+        if array.tobytes() != data:
+            array[...] = np.frombuffer(data, dtype=array.dtype).reshape(array.shape)
+            changed = True
+    return changed
+
+
+def _assert_same_result(got, want, func_name):
+    """Whether two results of the same function agree.
+
+    The collecting function hands out a sequence per group, which numpy's own
+    comparison cannot take in one go - the groups are compared one by one.
+    The temporal answers are compared for equality rather than closeness:
+    their ticks are int64 counts that float64 does not resolve, and NaT is
+    equal to itself there.
+    """
+    if func_name in funcs_collecting:
+        groups = list(got) if isinstance(got, list) else np.ravel(got)
+        expected = list(want) if isinstance(want, list) else np.ravel(want)
+        assert len(groups) == len(expected), f"{len(groups)} groups against {len(expected)}"
+        for one, other in zip(groups, expected):
+            if one is None or other is None:
+                assert one is None and other is None, f"{one!r} != {other!r}"
+            else:
+                np.testing.assert_array_equal(one, other)
+        return
+    if getattr(want, "dtype", None) is not None and want.dtype.kind in TEMPORAL_KINDS:
+        np.testing.assert_array_equal(got, want)
+        return
+    np.testing.assert_array_almost_equal(got, want)
+
+
+# the participants whose pool has been started already: the first call of a
+# participant in a process starts the threads of its pool and lets each of them
+# map the arena it allocates from, measured 2700 page faults for polars - none
+# of which belongs into a measurement, and the first timed call would show
+def single_run(
+    implementations,
+    group_idx,
+    a,
+    nana,
+    *,
+    repeat,
+    raise_errors,
+    funcs=func_list,
+    on_row=None,
+    snapshot: tuple[bytes, ...] | None = None,
+):
+    """One complete measurement pass - returns the table as
+    ``{func_name: [cell, ...]}``, where a cell is a float in
+    milliseconds, None for unavailable combinations or a marker string
+    ("ERROR"/"FAIL").
+
+    ``on_row(label, cells)`` is called after every function, so the caller can
+    report the row as it is measured instead of waiting for the pass.  ``repeat``
+    is the number of timed executions of a cell, capped per column by
+    ``MAX_REPEAT`` - the fastest of the executions is the one that counts.
+
+    ``snapshot`` is the bytes of the data as they were at the start of the run.
+    It is compared with the data after every function: a participant that wrote
+    into the data is undone, and the row it did it in is not reported, since
+    its numbers were measured on data that changed under it.
+    """
+    table = {}
+    for func in funcs:
+        func_name = getattr(func, "__name__", func)
+        used_a = nana if "nan" in func_name else a
+        cells: list[Any] = []
+        results = []
+        for name, aggregate_fn in implementations:
+            try:
+                res = aggregate_fn(group_idx, used_a, func=func)
+            except NotImplementedError:
+                cells.append(None)
+                continue
+            except Exception:
+                if raise_errors:
+                    raise
+                cells.append("ERROR")
+            else:
+                # the first result is the one the others are compared to
+                results.append(res)
+                try:
+                    _assert_same_result(res, results[0], func_name)
+                except (AssertionError, TypeError, ValueError):
+                    # a disagreement of the answers, or two of them that the
+                    # comparison cannot put side by side - the group-by
+                    # wrappers answer temporal questions in dtypes of their
+                    # own, and None where their library refuses
+                    cells.append("FAIL")
+                else:
+                    # An untimed call that wakes the threads of the pool up:
+                    # the threads of a parallel implementation spin for a
+                    # moment after their region and sleep afterwards, and the
+                    # first call after that pays for the waking up - which
+                    # would tell nothing about the work.  The timed calls
+                    # follow each other without a pause, so that the threads
+                    # stay awake, and the fastest of them is the one that
+                    # counts: a call that the scheduler moves to another core
+                    # or that pays for the waking of a pool is slower than
+                    # the work itself and says nothing about it.
+                    aggregate_fn(group_idx, used_a, func=func)
+                    timer = timeit.Timer(lambda: aggregate_fn(group_idx, used_a, func=func))
+                    number = min(repeat, MAX_REPEAT.get(name, repeat))
+                    t0 = min(timer.repeat(repeat=number, number=1))
+                    cells.append(t0 * 1000)
+        if snapshot is not None and _restore((group_idx, a, nana), snapshot):
+            # a participant wrote into the data: the numbers of this row were
+            # measured on data that changed under it, so they are not reported
+            print(
+                f"{func_name}: a participant changed the data - the row is not reported",
+                file=sys.stderr,
+                flush=True,
+            )
+            cells = ["ERROR"] * len(cells)
+        table[func_name] = cells
+        if on_row is not None:
+            on_row(func_name, cells)
+    return table
+
+
+def _merge_runs(tables):
+    """Per-cell minimum over the complete runs - filters the system noise
+    (cpu frequency, background load) that makes single runs wobble."""
+    if len(tables) == 1:
+        return tables[0]
+    table = {}
+    for func_name in tables[0]:
+        merged = []
+        for col in zip(*(t[func_name] for t in tables)):
+            failures = [c for c in col if c in ("ERROR", "FAIL")]
+            if failures:
+                # a run that failed speaks for all of them: the numbers of the
+                # other runs were measured against data that was not the same
+                merged.append(failures[0])
+                continue
+            numbers = [c for c in col if isinstance(c, float)]
+            if numbers:
+                merged.append(min(numbers))
+            else:
+                merged.append(next((c for c in col if c is not None), None))
+        table[func_name] = merged
+    return table
+
+
+# Width of every measured column: a Markdown table reads just as well in a
+# terminal when the cells are padded, and padding does not hurt the rendering.
+CELL_WIDTH = 12
+NO_IMPL = "----"
+# The reference paths are timed once whatever --repeat asks for: their number
+# is a ratio rather than a result this package competes on, and every further
+# execution only makes the whole measurement wait for them.
+MAX_REPEAT = {"purepy": 1, "grouploop": 1}
+
+
+def _cell_text(cell):
+    """The cell as text: the milliseconds, ``NO_IMPL`` for a combination the
+    implementation does not offer, or the ERROR/FAIL marker."""
+    if cell is None:
+        return NO_IMPL
+    if isinstance(cell, float):
+        return f"{cell:.3f}"
+    return str(cell)
+
+
+def _table_row(label, cells, label_width):
+    return "| " + " | ".join([label.ljust(label_width)] + [_cell_text(cell).rjust(CELL_WIDTH) for cell in cells]) + " |"
+
+
+def _table_rule(header, implementations, label_width):
+    """The two Markdown lines that introduce a table - the numeric columns
+    carry a trailing colon, which is what right-aligns them."""
+    names = [name for name, _ in implementations]
+    return [
+        "| " + " | ".join([header.ljust(label_width)] + [name.rjust(CELL_WIDTH) for name in names]) + " |",
+        "| " + " | ".join(["-" * label_width] + ["-" * (CELL_WIDTH - 1) + ":" for _ in names]) + " |",
+    ]
+
+
+def _table_lines(header, rows, implementations, label_width):
+    """``rows`` are (row label, cells) pairs - the complete Markdown table."""
+    return [
+        *_table_rule(header, implementations, label_width),
+        *(_table_row(label, cells, label_width) for label, cells in rows),
+    ]
+
+
+def _open_report(header, implementations, labels, runs):
+    """How the measurement reports itself while it works.
+
+    A single run is its own report: the rows stream out as Markdown, header
+    first, and nothing is repeated at the end.  Every further run would print
+    the same table again, so a repeated measurement announces itself with a
+    counter alone and the merged minimum is the only output."""
+    label_width = max(len(header), *(len(label) for label in labels))
+    if runs > 1:
+        return None, label_width
+    print(*_table_rule(header, implementations, label_width), sep="\n", flush=True)
+    return sys.stdout, label_width
+
+
+def _version_of(package):
+    """The version of a package, if it is there."""
+    return getattr(package, "__version__", "unknown")
+
+
+def _versions_line(implementations):
+    """The setup of this run as an italic Markdown paragraph."""
+    implementation_names = [name for name, _ in implementations]
+    postfix = ""
+    if "numba" in implementation_names:
+        postfix += f", Numba {numba.__version__}"
+    if "numbagg" in implementation_names:
+        postfix += f", numbagg {_version_of(numbagg)}"
+    if "pandas" in implementation_names:
+        postfix += f", Pandas {_version_of(pandas)}"
+    if "polars" in implementation_names:
+        postfix += f", Polars {_version_of(polars)}"
+    # the threads the implementations had at their disposal
+    threads: list[tuple[str, int]] = []
+    if "numba" in implementation_names:
+        threads.append(("numba", numba.get_num_threads()))
+    if "polars" in implementation_names:
+        threads.append(("polars", polars.thread_pool_size()))
+    if threads:
+        counts = [count for _, count in threads]
+        if len(set(counts)) == 1:
+            postfix += f" ({counts[0]} threads max)"
+        else:
+            postfix += " (" + ", ".join(f"{name} {count}" for name, count in threads) + " threads max)"
+    return (
+        f"*{platform.system()}({platform.machine()}), Python {sys.version.split()[0]}, "
+        f"Numpy {np.version.version}{postfix}*"
+    )
+
+
+def select_funcs(names: str | None) -> tuple[Any, ...]:
+    """The functions to measure, picked by name.
+
+    Without a selection every function of the table is measured.  The names
+    are the ones the table shows, so ``--funcs min,max`` measures the two
+    extremes and nothing else.
+    """
+    if not names:
+        return func_list
+    known = {getattr(func, "__name__", func): func for func in func_list}
+    wanted = [name.strip() for name in names.split(",") if name.strip()]
+    unknown = [name for name in wanted if name not in known]
+    if unknown:
+        raise SystemExit(f"unknown function(s): {', '.join(unknown)} - known are: {', '.join(known)}")
+    return tuple(known[name] for name in wanted)
+
+
+def select_temporal_funcs(names: str | None) -> dict[str, tuple[Any, ...]]:
+    """The temporal functions to measure, per dtype of their data.
+
+    The names are the ones the table shows, so ``--funcs min,sum`` measures
+    the minimum of both dtypes and the sum of the durations - a name a dtype
+    refuses (the sum of a datetime64 among them) is left out of its block
+    silently, and a name neither dtype knows is an error.
+    """
+    known: dict[str, Any] = {}
+    for _, _, kind_funcs in TEMPORAL_TABLE:
+        known.update({getattr(func, "__name__", func): func for func in kind_funcs})
+    if not names:
+        return {label: tuple(kind_funcs) for label, _, kind_funcs in TEMPORAL_TABLE}
+    wanted = [name.strip() for name in names.split(",") if name.strip()]
+    unknown = [name for name in wanted if name not in known]
+    if unknown:
+        raise SystemExit(f"unknown function(s): {', '.join(unknown)} - known are: {', '.join(known)}")
+    return {
+        label: tuple(known[name] for name in wanted if name in {getattr(f, "__name__", f) for f in kind_funcs})
+        for label, _, kind_funcs in TEMPORAL_TABLE
+    }
+
+
+def benchmark(implementations, repeat=5, size=5e5, seed=100, groups=1000, raise_errors=False, runs=1, funcs=None):
+    _warm_up_allocator()
+    a, nana, group_idx = benchmark_data(size=size, seed=seed, groups=groups)
+    # the data as it is now: the participants must not write into it, and the
+    # snapshot is the one they are compared against after every function
+    snapshot = _byte_snapshot(group_idx, a, nana)
+    funcs = func_list if funcs is None else funcs
+    labels = [getattr(func, "__name__", func) for func in funcs]
+    out, label_width = _open_report("function", implementations, labels, runs)
+
+    def report(label, cells):
+        if out is not None:
+            print(_table_row(label, cells, label_width), file=out, flush=True)
+
+    tables = []
+    for run in range(runs):
+        if runs > 1:
+            print(f"run {run + 1}/{runs}", file=sys.stderr, flush=True)
+        tables.append(
+            single_run(
+                implementations,
+                group_idx,
+                a,
+                nana,
+                repeat=repeat,
+                raise_errors=raise_errors,
+                funcs=funcs,
+                on_row=report,
+                snapshot=snapshot,
+            )
+        )
+
+    if runs > 1:
+        table = _merge_runs(tables)
+        print(
+            *_table_lines("function", [(label, table[label]) for label in labels], implementations, label_width),
+            _versions_line(implementations),
+            sep="\n",
+        )
+    else:
+        print(_versions_line(implementations))
+
+
+# The group counts of the ``--sort`` series - the default of the main table and
+# a hundredth and a hundred times it.  ``sort`` orders every group on its own,
+# so its cost turns on the group SIZE (a few large blocks against many small
+# ones) and the main table would only ever show one point of that curve.
+SORT_GROUPS = (100, 1_000, 10_000, 100_000)
+
+
+def sort_benchmark(implementations, *, repeat=5, size=5e5, seed=100, raise_errors=False, runs=1):
+    """Measure ``func='sort'`` alone, over the group counts of ``SORT_GROUPS``."""
+    _warm_up_allocator()
+    labels = [str(groups) for groups in SORT_GROUPS]
+    out, label_width = _open_report("groups", implementations, labels, runs)
+
+    def report(label, cells):
+        if out is not None:
+            print(_table_row(label, cells, label_width), file=out, flush=True)
+
+    rows = []
+    for groups, label in zip(SORT_GROUPS, labels):
+        a, nana, group_idx = benchmark_data(size=size, seed=seed, groups=min(groups, int(size)))
+        snapshot = _byte_snapshot(group_idx, a, nana)
+        tables = []
+        for run in range(runs):
+            if runs > 1:
+                print(f"groups {label}: run {run + 1}/{runs}", file=sys.stderr, flush=True)
+            tables.append(
+                single_run(
+                    implementations,
+                    group_idx,
+                    a,
+                    nana,
+                    repeat=repeat,
+                    raise_errors=raise_errors,
+                    funcs=("sort",),
+                    on_row=lambda _func_name, cells: report(label, cells),
+                    snapshot=snapshot,
+                )
+            )
+        rows.append((label, _merge_runs(tables)["sort"]))
+
+    if runs > 1:
+        print(*_table_lines("groups", rows, implementations, label_width), _versions_line(implementations), sep="\n")
+    else:
+        print(_versions_line(implementations))
+
+
+def _mt_label(n_values: int, n_groups: int) -> str:
+    """The label of a case of the table of the thread counts: the values and
+    the groups, each in the unit that fits it."""
+    return f"{_mt_scaled(n_values)} x {_mt_scaled(n_groups)}"
+
+
+def _mt_scaled(number: int) -> str:
+    """A number in the unit that fits it - thousands, or millions."""
+    if number >= 1_000_000:
+        return f"{number // 1_000_000}M"
+    if number >= 1_000:
+        return f"{number // 1_000}K"
+    return str(number)
+
+
+def mt_thread_counts(max_threads: int) -> tuple[int, ...]:
+    """The thread counts of the table: one, then the powers of two, and the
+    last one the pool has.
+
+    The powers of two, because the interesting counts are the ones that
+    double the work per thread; the last one, because the pool of the
+    machine is what a call can use at all.
+    """
+    counts = [1]
+    threads = 2
+    while threads < max_threads:
+        counts.append(threads)
+        threads *= 2
+    if max_threads > 1:
+        counts.append(max_threads)
+    return tuple(counts)
+
+
+def _mt_case(
+    aggregate: Any, n_values: int, n_groups: int, counts: tuple[int, ...], *, repeat: int, seed: int
+) -> list[float]:
+    """The times of one case of the table of the thread counts.
+
+    The data of the case lives here and nowhere else: the cases run one
+    after the other, and the data of the largest of them does not fit beside
+    the data of the next one.
+    """
+    rnd = np.random.RandomState(seed=seed)
+    group_idx = rnd.randint(0, n_groups, n_values)
+    a = rnd.random_sample(n_values)
+    a[a > 0.8] = 0
+    cells = []
+    for threads in counts:
+        numba.set_num_threads(threads)
+        # the threads are forced: the table measures what a number of threads
+        # does, and not what the model of the cost decides about it
+        with npg_mt.forced_threads(threads):
+            # an untimed call first: the threads of the pool wake up in the
+            # first one, and that would be measured instead of the work
+            aggregate(group_idx, a, func="sum")
+            timer = timeit.Timer(lambda: aggregate(group_idx, a, func="sum"))
+            best = min(timer.repeat(repeat=repeat, number=1))
+        cells.append(best * 1000)
+    return cells
+
+
+def mt_benchmark(aggregate: Any, *, repeat: int = 5, seed: int = 100, max_threads: int | None = None) -> None:
+    """The table of the thread counts: the sum of every case over the counts.
+
+    The sum is the kernel the table is about - it scatters every value into
+    the state of its group, and the state is what the parallel path holds
+    once per thread.  The cases run from a state that fits the cache of the
+    machine many times over to one that does not fit it at all, and the
+    columns are the thread counts: the time of a call is the time of the
+    work plus the traffic of the states of the threads beside it.
+    """
+    _warm_up_allocator()
+    if max_threads is None:
+        max_threads = numba.get_num_threads()
+    counts = mt_thread_counts(max_threads)
+    columns = [(f"T={threads}", None) for threads in counts]
+    labels = [_mt_label(n_values, n_groups) for n_values, n_groups in MT_CASES]
+    # the label column is as wide as its longest content - the labels of the
+    # cases, not only the head of the column
+    label_width = max(len("case"), *(len(label) for label in labels))
+    print(*_table_rule("case", columns, label_width), sep="\n", flush=True)
+
+    for (n_values, n_groups), label in zip(MT_CASES, labels):
+        cells = _mt_case(aggregate, n_values, n_groups, counts, repeat=repeat, seed=seed)
+        numba.set_num_threads(max_threads)
+        print(_table_row(label, cells, label_width), flush=True)
+        gc.collect()
+
+    print(
+        f"*{platform.system()}({platform.machine()}), Python {sys.version.split()[0]}, "
+        f"Numpy {np.version.version}, Numba {numba.__version__} ({max_threads} threads max)*"
+    )
+
+
+def temporal_benchmark(
+    implementations, *, repeat=5, size=5e5, seed=100, groups=1000, raise_errors=False, runs=1, funcs=None
+):
+    """Measure the temporal functions of ``TEMPORAL_TABLE``, one block of rows
+    per dtype: the datetime64 questions on the ticks of the year 2020, the
+    timedelta64 ones on the durations below a millisecond - ``funcs`` narrows
+    both blocks by name, the way ``--funcs`` names them.
+
+    The plain functions run on clean values, the nan ones on values with a
+    fifth of them NaT, like the numeric table runs its plain functions on
+    nan-free data.  Every row is labeled with the dtype it was measured on.
+    """
+    _warm_up_allocator()
+    by_kind = select_temporal_funcs(funcs) if funcs else {label: tuple(f) for label, _, f in TEMPORAL_TABLE}
+    selections = [(label, kind, by_kind[label]) for label, kind, _ in TEMPORAL_TABLE]
+    labels = [
+        f"{getattr(func, '__name__', func)} {dtype}" for dtype, _, kind_funcs in selections for func in kind_funcs
+    ]
+    out, label_width = _open_report("function", implementations, labels, runs)
+
+    def report(label, cells):
+        if out is not None:
+            print(_table_row(label, cells, label_width), file=out, flush=True)
+
+    rows = []
+    for dtype, kind, kind_funcs in selections:
+        a, nana, group_idx = temporal_benchmark_data(size=size, seed=seed, groups=groups, kind=kind)
+        snapshot = _byte_snapshot(group_idx, a, nana)
+        tables = []
+        for run in range(runs):
+            if runs > 1:
+                print(f"{dtype}: run {run + 1}/{runs}", file=sys.stderr, flush=True)
+            tables.append(
+                single_run(
+                    implementations,
+                    group_idx,
+                    a,
+                    nana,
+                    repeat=repeat,
+                    raise_errors=raise_errors,
+                    funcs=kind_funcs,
+                    on_row=lambda func_name, cells, _dtype=dtype: report(f"{func_name} {_dtype}", cells),
+                    snapshot=snapshot,
+                )
+            )
+        merged = _merge_runs(tables)
+        rows.extend(
+            (f"{getattr(func, '__name__', func)} {dtype}", merged[getattr(func, "__name__", func)])
+            for func in kind_funcs
+        )
+
+    if runs > 1:
+        print(*_table_lines("function", rows, implementations, label_width), _versions_line(implementations), sep="\n")
+    else:
+        print(_versions_line(implementations))
+
+
+# The columns in the order they appear in the table.
+COLUMN_ORDER = ("numpy", "numba", "purepy", "grouploop", "numbagg", "polars", "pandas", "ufunc")
+# of those, the ones that have to be asked for
+OPTIONAL_COLUMNS = COLUMN_ORDER[2:]
+# the column names that differ from the name of their flag
+COLUMN_ARGUMENTS: dict[str, str] = {}
+
+
+def _build_implementations(args):
+    """the participants as (column name, aggregate callable) pairs, in
+    ``COLUMN_ORDER``, the optional ones only when they were asked for"""
+    if npg_numba is None:
+        raise SystemExit("this benchmark needs the numba package installed")
+    aggregates = {
+        "numpy": npg_numpy.aggregate,
+        "numba": npg_numba.aggregate,
+        "purepy": npg_purepy.aggregate,
+        "grouploop": aggregate_ref,
+        "ufunc": _ufunc.aggregate,
+        # the optional dependencies are None when they are not installed
+        "numbagg": _numbagg.aggregate if _numbagg is not None else None,
+        "pandas": _pandas.aggregate if _pandas is not None else None,
+        "polars": _polars.aggregate if _polars is not None else None,
+    }
+    impls = []
+    for name in COLUMN_ORDER:
+        if name in OPTIONAL_COLUMNS and not getattr(args, COLUMN_ARGUMENTS.get(name, name), False):
+            continue
+        aggregate = aggregates[name]
+        if aggregate is None:
+            raise SystemExit(f"--{name} needs the optional {name} package installed")
+        impls.append((name, aggregate))
+    return impls
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="python -m numpy_groupies.benchmarks",
+        description="Benchmark the aggregate implementations against each other.\n"
+        "The numpy and numba columns are always measured, the rest is asked for.",
+        epilog="""The table is Markdown: milliseconds per call, '----' where an implementation
+has no such function, and a line naming the versions it was measured with.  A
+single run prints its rows as they are measured; a repeated run replaces them
+with a counter and prints the fastest measurement of all runs once at the end.
+
+numbagg ships nan-guarded reductions only, so its numbers for the plain
+functions are those of the nan twins - on the nan-free data of this benchmark
+the two coincide.  The threads of the machine are numbagg's own business: it
+compiles its grouped reductions to parallel targets and uses the pool where
+there is anything to split - and on a one-dimensional input there is
+nothing, the whole array being the core of the kernel.""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--all", action="store_true", help="include every optional column listed below")
+    parser.add_argument(
+        "--purepy",
+        action="store_true",
+        help="the pure-Python implementation, the reference the others are checked against",
+    )
+    parser.add_argument(
+        "--grouploop",
+        action="store_true",
+        help="the reference implementation, the group loop the backends are measured against",
+    )
+    parser.add_argument(
+        "--ufunc", action="store_true", help="the ufunc.at-based implementation, incomplete and for comparison only"
+    )
+    parser.add_argument(
+        "--numbagg",
+        action="store_true",
+        help="the numbagg grouped reductions (optional dependency, part of the dev extras)",
+    )
+    parser.add_argument("--pandas", action="store_true", help="the pandas groupby wrapper (optional dependency)")
+    parser.add_argument("--polars", action="store_true", help="the polars group_by wrapper (optional dependency)")
+    parser.add_argument(
+        "--sort",
+        action="store_true",
+        help=f"measure 'sort' only, over the group counts {'-'.join(str(g) for g in SORT_GROUPS)} instead of the full table",
+    )
+    parser.add_argument(
+        "--mt",
+        action="store_true",
+        help=(
+            "measure the table of the thread counts: the sum over the cases of the grid, one column "
+            "per thread count (one, the powers of two, and the pool of the machine)"
+        ),
+    )
+    parser.add_argument(
+        "--temporal",
+        action="store_true",
+        help="measure the functions that take datetime64 and timedelta64 values only, on nanosecond data of "
+        "their own (the plain functions on clean values, the nan ones with a fifth of them NaT), one block "
+        "of rows per dtype instead of the numeric table",
+    )
+    parser.add_argument(
+        "--funcs",
+        help="comma-separated names of the functions to measure, e.g. 'min,max' (default: all of them)",
+    )
+    parser.add_argument(
+        "--runs", type=int, default=1, help="complete measurement passes, the per-cell minimum is reported (default: 1)"
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=5,
+        help=(
+            "timed executions per cell, the fastest of them counts, "
+            "except for the pure-Python and "
+            "the group-loop column (default: 5)"
+        ),
+    )
+    parser.add_argument("--size", type=float, default=5e5, help="number of values in the benchmark data (default: 5e5)")
+    parser.add_argument(
+        "--groups",
+        type=float,
+        default=1000,
+        help="number of groups in the benchmark data (default: 1000) - the sort benchmark sweeps its own group counts",
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=0,
+        help="the number of threads of the pool of numba, which the kernels use (default: every hardware thread of the machine)",
+    )
+    parser.add_argument(
+        "--raise-errors",
+        action="store_true",
+        help="abort on the first failing implementation instead of printing ERROR",
+    )
+    args = parser.parse_args(argv)
+    if args.threads:
+        # the numba kernels split their data into as many chunks as there
+        # are threads - the flag sets the pool of numba, and the kernels use
+        # the threads they find there
+        numba.set_num_threads(args.threads)
+    if args.all:
+        for column in OPTIONAL_COLUMNS:
+            setattr(args, COLUMN_ARGUMENTS.get(column, column), True)
+    if args.sort and args.temporal:
+        parser.error("choose one of --sort and --temporal - each replaces the numeric table on its own")
+    if args.mt and (args.sort or args.temporal):
+        parser.error("choose one of --mt, --sort and --temporal - each replaces the numeric table on its own")
+    if args.sort:
+        # the sort is measured on its own, over the group counts
+        sort_benchmark(
+            _build_implementations(args),
+            repeat=args.repeat,
+            size=args.size,
+            raise_errors=args.raise_errors,
+            runs=max(1, args.runs),
+        )
+        return
+    if args.mt:
+        if npg_numba is None:
+            raise SystemExit("this benchmark needs the numba package installed")
+        mt_benchmark(npg_numba.aggregate, repeat=args.repeat)
+        return
+    if args.temporal:
+        temporal_benchmark(
+            _build_implementations(args),
+            repeat=args.repeat,
+            size=args.size,
+            groups=args.groups,
+            raise_errors=args.raise_errors,
+            runs=max(1, args.runs),
+            funcs=args.funcs,
+        )
+        return
+    benchmark(
+        _build_implementations(args),
+        repeat=args.repeat,
+        size=args.size,
+        groups=args.groups,
+        raise_errors=args.raise_errors,
+        runs=max(1, args.runs),
+        funcs=select_funcs(args.funcs),
+    )
+
+
+if __name__ == "__main__":
+    main()

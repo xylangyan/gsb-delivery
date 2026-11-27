@@ -1,0 +1,276 @@
+"""The participants of the benchmark suite, and the calibration tool.
+
+The benchmark is a tool of its own and not part of the package, but the
+participants are the implementations of this package - a mistake in one of
+them would show up in the numbers of the table and nowhere else.  The
+calibration tool of the multithreaded kernels is not a participant either -
+it measures the kernels against each other and fits the cost model to the
+measurements, and a mistake in it would show up in the constants of the
+model and nowhere else.  The parts of it that decide are tested in the
+second section: the measurement of a pair of calls, the crossover of the
+paths and the report of the decisions.
+"""
+
+import time
+
+import numpy as np
+import pytest
+
+from numpy_groupies.benchmarks import (
+    COLUMN_ORDER,
+    _byte_snapshot,
+    _numbagg,
+    _restore,
+    func_list,
+    mt,
+    select_funcs,
+    select_temporal_funcs,
+    temporal_benchmark_data,
+)
+from numpy_groupies.npg_numba import mt as package_mt
+
+
+def test_function_names_of_package():
+
+    assert select_funcs(None) == tuple(func_list)
+    namen = [getattr(func, "__name__", func) for func in func_list]
+    assert "min" in namen and "max" in namen
+    chosen = select_funcs("min,max")
+    assert [getattr(func, "__name__", func) for func in chosen] == ["min", "max"]
+
+
+def test_temporal_functions_are_split_by_dtype_of_their_data():
+
+    by_type = select_temporal_funcs(None)
+    datetime = [getattr(func, "__name__", func) for func in by_type["datetime64"]]
+    timedelta = [getattr(func, "__name__", func) for func in by_type["timedelta64"]]
+    # the sum and the accumulations and the middles are refused for the
+    # points in time - they belong to the durations alone
+    assert "sum" not in datetime and "cumsum" not in datetime and "median" not in datetime
+    assert "sum" in timedelta and "cumsum" in timedelta and "median" in timedelta
+    assert "mean" in datetime and "mean" in timedelta
+    # a selection by name lands in the blocks that know the name, in the
+    # order the caller named them
+    chosen = select_temporal_funcs("min,sum,mean")
+    assert [getattr(func, "__name__", func) for func in chosen["datetime64"]] == ["min", "mean"]
+    assert [getattr(func, "__name__", func) for func in chosen["timedelta64"]] == ["min", "sum", "mean"]
+    with pytest.raises(SystemExit):
+        select_temporal_funcs("kurt")
+
+
+def test_temporal_data_is_suitable_for_kernels(rng):
+    # a fifth of the values is the tick 0 (the falsy values of the boolean
+    # functions), and nana holds a fifth of the rest as NaT - while the span
+    # of every group stays inside the window the mean of the ticks sums
+    # exactly, so the kernels stay on their fast path
+
+    for kind in ("M", "m"):
+        a, nana, group_idx = temporal_benchmark_data(size=50_000, groups=100, kind=kind)
+        assert a.dtype.kind == kind and nana.dtype.kind == kind
+        assert np.mean(a.view(np.int64) == 0) > 0.15
+        nat_share = np.mean(np.isnat(nana))
+        assert 0.15 < nat_share < 0.25
+        # every group fits the window the kernel sums its deviations in
+        counts = np.bincount(group_idx)
+        for grp in np.flatnonzero(counts):
+            span = int(a[group_idx == grp].view(np.int64).max()) - int(a[group_idx == grp].view(np.int64).min())
+            assert span * int(counts[grp]) < 2**63 - 1
+
+
+def test_participant_writing_into_data_is_undone(rng):
+    # the participants must not write into the data: one that does would
+    # change the results of the runs that follow, silently.  The snapshot is
+    # the bytes of the data as they were at the start of the run, and a change
+    # is put back.
+
+    values = rng.random(1000)
+    snapshot = _byte_snapshot(values)
+    values[0] = 42.0
+    assert _restore((values,), snapshot)
+    np.testing.assert_array_equal(values, np.frombuffer(snapshot[0], dtype=values.dtype))
+
+
+def test_pandas_column_does_not_copy_data(rng):
+    # the benchmark goes from the array to the array: a participant that
+    # copies the data pays for the copy, and the pandas one does not have to
+    # - its Series takes the buffer of the array.
+    pd = pytest.importorskip("pandas")
+
+    values = rng.random(1000)
+    series = pd.Series(values, copy=False)
+    assert np.shares_memory(series.to_numpy(), values)
+
+
+@pytest.mark.skipif(_numbagg is None, reason="numbagg is not installed")
+def test_numbagg_column_exists_in_numbagg():
+    # the benchmark does not hold numbagg at one thread and does not measure
+    # it twice: the threads of the machine are numbagg's own business, and a
+    # second column would only show the same numbers twice - on a
+    # one-dimensional input there is nothing for the parallel target of
+    # numbagg to split
+    numbagg = pytest.importorskip("numbagg")
+
+    for name, func in _numbagg.funcs.items():
+        assert isinstance(func, numbagg.decorators.groupndreduce), name
+    # and the second column is gone
+    assert not hasattr(_numbagg, "aggregate_mt")
+    assert "numbagg-mt" not in COLUMN_ORDER
+
+
+@pytest.mark.skipif(_numbagg is None, reason="numbagg is not installed")
+def test_numbagg_column_reports_missing_counterpart():
+    # an operation without a numbagg counterpart is reported as "----", not as
+    # an error
+    with pytest.raises(NotImplementedError):
+        _numbagg.aggregate(np.array([0, 1]), np.array([1.0, 2.0]), func="median")
+
+
+# ---------------------------------------------------------------------------
+# the calibration tool of the multithreaded kernels
+
+
+def test_pair_is_measured_in_same_round():
+    """The two calls of a pair are measured one after the other.
+
+    A hitch of the machine then hits both of them and not only one of them,
+    and the fastest of the rounds is the one that counts.
+    """
+    calls = []
+
+    def first():
+        calls.append("first")
+
+    def second():
+        calls.append("second")
+
+    (fast_first, median_first), (fast_second, median_second) = mt.measure_pair(first, second, 4)
+    assert calls == ["first", "second"] * 4
+    assert fast_first <= median_first
+    assert fast_second <= median_second
+
+
+def test_measurement_reports_spread():
+    """The fastest call and the median of the calls.
+
+    The spread between them is the load of the machine - a machine that is
+    busy measures a median that is far above the fastest call, and the
+    numbers of such a run are worth nothing.
+    """
+    calls = []
+
+    def call():
+        # every second call is a slow one
+        calls.append(len(calls))
+        time.sleep(0.05 if len(calls) % 2 == 0 else 0.001)
+
+    fastest, median = mt.measure(call, 6)
+    # the fastest of the calls and the median of them - the median is the
+    # slow one, the fastest is the quick one
+    assert fastest > 0
+    assert median > fastest
+    assert median > 10 * fastest
+
+
+def test_crossover_is_where_parallel_path_wins():
+    """The size from which the parallel path is faster, and the one before.
+
+    The ratio is the median of the measurements of a size, and the crossover
+    is interpolated between the two sizes that straddle it.
+    """
+    rows = [
+        {"n_values": 1000, "seq_us": 100.0, "mt_us": 100.0},
+        {"n_values": 2000, "seq_us": 200.0, "mt_us": 160.0},
+        {"n_values": 4000, "seq_us": 400.0, "mt_us": 200.0},
+        {"n_values": 8000, "seq_us": 800.0, "mt_us": 300.0},
+    ]
+    cross, below = mt.crossover(rows, "seq_us", "mt_us", 0.8)
+    # the ratio is 1.0 at 1000 values and 0.8 at 2000 - the margin is met
+    # exactly at 2000
+    assert cross == pytest.approx(2000.0)
+    assert below == 1000.0
+
+
+def test_crossover_grid_does_not_reach_is_no_number():
+    rows = [{"n_values": 1000, "seq_us": 100.0, "mt_us": 100.0}]
+    cross, below = mt.crossover(rows, "seq_us", "mt_us", 0.8)
+    assert cross == float("inf")
+    assert below == 1000.0
+    assert "beyond the grid" in mt._values(cross)
+
+
+def test_decision_of_package_matches_model():
+    """What the package decides for a measurement, and what its model says.
+
+    The tool does not change the constants of the package - it says what
+    they do, so that a decision can be compared with the measurement.
+    """
+
+    row = {"path": "chunked", "n_values": 1_000_000, "n_groups": 1000, "n_threads": 6}
+    decision, modelled = mt._package_decision(row)
+    assert decision == bool(package_mt.should_use_mt(1000, 6, 1_000_000))
+    assert modelled == pytest.approx(package_mt.estimate_mt_ratio(1000, 6, 1_000_000))
+
+    row = {"path": "gather", "n_values": 1_000_000, "n_groups": 1, "n_threads": 6}
+    decision, modelled = mt._package_decision(row)
+    assert decision == bool(
+        1_000_000 >= package_mt.GATHER_MT_MIN_VALUES
+        and package_mt.estimate_mt_ratio(0, 6, 1_000_000, 0) <= package_mt.MT_MAX_RATIO
+    )
+
+
+def test_model_of_group_path_has_term_for_groups():
+    """The cost of a value and the cost of a group are two different things.
+
+    With many groups and few values the second is the larger of the two, and
+    a model that leaves it out is wrong where it matters.
+    """
+    model = mt.GroupModel(18.0, 50.0, 0.25, 0.4, 10.0)
+    assert model.kernel_seq_us(1000, 10) == pytest.approx((1000 * 18.0 + 10 * 50.0) / 1e3)
+    assert model.kernel_seq_us(1000, 10_000) == pytest.approx((1000 * 18.0 + 10_000 * 50.0) / 1e3)
+    # the parallel path is faster than the sequential one, and the fixed cost
+    # of the path is on top of it
+    assert model.kernel_mt_us(100_000, 100, 6, 5.0) < model.kernel_seq_us(100_000, 100)
+    # with a single thread the parallel path is the sequential one and the
+    # fixed cost
+    assert model.kernel_mt_us(100_000, 100, 1, 5.0) == pytest.approx(model.kernel_seq_us(100_000, 100) + 15.0)
+
+
+def test_fit_of_group_path_finds_constants():
+    """The fit finds the constants of a model that made the measurements."""
+
+    truth = mt.GroupModel(18.0, 40.0, 0.3, 0.45, 12.0)
+    rows = []
+    for n_values in (10_000, 100_000, 1_000_000):
+        for n_groups in (100, 10_000):
+            for n_threads in (2, 6):
+                seq_us = truth.kernel_seq_us(n_values, n_groups)
+                mt_us = truth.kernel_mt_us(n_values, n_groups, n_threads, 5.0)
+                rows.append(
+                    {
+                        "n_values": n_values,
+                        "n_groups": n_groups,
+                        "n_threads": n_threads,
+                        "seq_us": seq_us,
+                        "mt_us": mt_us,
+                    }
+                )
+    overhead = {2: 5.0, 6: 5.0}
+    model, loss = mt.fit_group(rows, overhead)
+    assert loss < 1e-6
+    assert model.ns_per_value == pytest.approx(18.0, rel=0.05)
+    assert model.ns_per_group == pytest.approx(40.0, rel=0.05)
+    assert model.share == pytest.approx(0.3, rel=0.05)
+    assert model.per_thread == pytest.approx(0.45, rel=0.05)
+    assert model.fixed_us == pytest.approx(12.0, rel=0.05)
+    assert package_mt is not None
+
+
+def test_spread_of_measurements_is_reported():
+    """The quality of the measurements - the fastest against the median."""
+    rows = [
+        {"seq_us": 100.0, "mt_us": 50.0, "seq_median_us": 110.0, "mt_median_us": 60.0},
+        {"seq_us": 200.0, "mt_us": 100.0, "seq_median_us": 600.0, "mt_median_us": 300.0},
+    ]
+    median, worst = mt._spread(rows)
+    assert median >= 1.0
+    assert worst >= median
