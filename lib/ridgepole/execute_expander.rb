@@ -1,0 +1,134 @@
+# frozen_string_literal: true
+
+module Ridgepole
+  class ExecuteExpander
+    class Stub
+      def method_missing(_method_name, *_args, &_block)
+        # Nothing to do
+      end
+
+      def respond_to_missing?(_symbol, _include_private)
+        true
+      end
+    end
+
+    module ConnectionAdapterExt
+      def execute_expander_internal_execute(sql, &block)
+        # Generated/virtual columns cannot have DEFAULT values in MySQL.
+        # Rails' change_column always adds DEFAULT from the existing column,
+        # so we strip it from the SQL for virtual columns.
+        # cf. https://github.com/ridgepole/ridgepole/issues/482
+        if Ridgepole::ConnectionAdapters.mysql? && !Ridgepole::ExecuteExpander.options[:bulk_change]
+          # NOTE: bulk_change does not support changing MySQL generated columns with `DEFAULT NULL`.
+          sql = sql.sub(/\bDEFAULT\s+NULL\z/i, '') if /\AALTER\s+TABLE\b/i.match?(sql) && /\bAS\s*\(/i.match?(sql) && /\bDEFAULT\s+NULL\z/i.match?(sql)
+        end
+        if Ridgepole::ExecuteExpander.noop
+          if (callback = Ridgepole::ExecuteExpander.callback)
+            sql = append_alter_extra(sql)
+            callback.call(sql)
+          end
+
+          if /\A(SELECT|SHOW)\b/i.match?(sql)
+            begin
+              block.call(sql)
+            rescue StandardError
+              Stub.new
+            end
+          else
+            Stub.new
+          end
+        elsif Ridgepole::ExecuteExpander.use_script
+          if /\A(SELECT|SHOW)\b/i.match?(sql)
+            block.call(sql)
+          else
+            sql = append_alter_extra(sql)
+            Ridgepole::ExecuteExpander.sql_executer.execute(sql)
+            nil
+          end
+        else
+          sql = append_alter_extra(sql)
+          block.call(sql)
+        end
+      end
+
+      def execute(*args)
+        name = args[1]
+        execute_expander_internal_execute(args.fetch(0)) do |sql|
+          super(sql, name)
+        end
+      end
+
+      def execute_batch(statements, name = nil, **kwargs)
+        new_statements = []
+        statements.each do |statement|
+          execute_expander_internal_execute(statement) do |sql|
+            new_statements << sql
+          end
+        end
+        super(new_statements, name, **kwargs) unless new_statements.empty?
+        statements
+      end
+
+      private
+
+      def append_alter_extra(sql)
+        if Ridgepole::ExecuteExpander.alter_extra
+          case sql
+          when /\AALTER\b/i
+            sql += ',' + Ridgepole::ExecuteExpander.alter_extra
+          when /\A(CREATE|DROP)\s+((ONLINE|OFFLINE)\s+)?((UNIQUE|FULLTEXT|SPATIAL)\s+)?INDEX\b/i
+            # https://dev.mysql.com/doc/refman/5.6/en/create-index.html
+            # https://dev.mysql.com/doc/refman/5.6/en/drop-index.html
+            sql += ' ' + Ridgepole::ExecuteExpander.alter_extra.tr(',', ' ')
+          end
+        end
+
+        sql
+      end
+    end
+
+    cattr_accessor :noop,         instance_writer: false, instance_reader: false
+    cattr_accessor :callback,     instance_writer: false, instance_reader: false
+    cattr_accessor :use_script,   instance_writer: false, instance_reader: false
+    cattr_accessor :sql_executer, instance_writer: false, instance_reader: false
+    cattr_accessor :alter_extra,  instance_writer: false, instance_reader: false
+    cattr_accessor :options,      instance_writer: false, instance_reader: false
+
+    class << self
+      def without_operation(callback = nil)
+        self.noop = true
+        self.callback = callback
+        yield
+      ensure
+        self.noop = false
+        self.callback = nil
+      end
+
+      def with_script(script, logger)
+        self.use_script = true
+        self.sql_executer = Ridgepole::ExternalSqlExecuter.new(script, logger)
+        yield
+      ensure
+        self.use_script = false
+        self.sql_executer = nil
+      end
+
+      def with_alter_extra(extra)
+        self.alter_extra = extra
+        yield
+      ensure
+        self.alter_extra = nil
+      end
+
+      def expand_execute(connection, options)
+        return if connection.is_a?(ConnectionAdapterExt)
+
+        self.options = options
+
+        connection.class_eval do
+          prepend ConnectionAdapterExt
+        end
+      end
+    end
+  end
+end
