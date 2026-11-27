@@ -1,0 +1,11 @@
+/pkg/
+/doc/
+/coverage*
+/tmp/
+/.yardoc/
+.DS_Store
+# Exclude Gemfile.lock (best practice for gems)
+Gemfile.lock
+
+# Exclude appraisal .locks. per appraisal readme advice
+/gemfiles/*.lock
