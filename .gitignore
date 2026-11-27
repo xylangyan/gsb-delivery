@@ -1,0 +1,21 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+*.egg-info/
+docs/build/
+odmlib/build/
+dist/
+build/
+.idea/
+
+# Claude Code (local)
+.claude/*.json
+
+# Test / coverage artifacts
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
