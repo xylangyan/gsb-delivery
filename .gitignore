@@ -1,0 +1,13 @@
+*.pyc
+.DS_Store
+.ropeproject
+.idea
+.venv
+
+build/
+dist/
+doc/build/
+*.egg-info/
+
+# VSCode
+.vscode/
