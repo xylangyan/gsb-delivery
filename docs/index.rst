@@ -77,6 +77,7 @@ Contents
    usage
    storage
    etags
+   resume
    custom_heuristics
    tips
    security

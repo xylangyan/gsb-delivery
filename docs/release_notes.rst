@@ -7,6 +7,18 @@
  Release Notes
 ===============
 
+Unreleased
+==========
+
+* Add the opt-in :mod:`cachecontrol.resume` subpackage for resumable,
+  range-aware partial caching. It assembles one complete representation from
+  separately delivered ``206`` segments, joins segments only when a strong
+  ETag, total length and ``Content-Encoding`` all match, honours ``Vary``
+  (distinguishing missing from empty request headers), scopes ``304``
+  revalidation to the targeted generation, revokes sign-offs on incompatible
+  overlapping bytes, and reconciles header/body split writes after a crash.
+  The classic whole-response CacheControl code path is unchanged.
+
 0.15.0
 ======
 
