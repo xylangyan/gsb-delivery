@@ -1,0 +1,209 @@
+import gc
+import tracemalloc
+import unittest
+
+from sqlglot import exp, parse_one
+from sqlglot.dialects import Dialect, Dialects
+from sqlglot.errors import ErrorLevel, UnsupportedError
+from sqlglot.expressions import Expression, Func
+from sqlglot.generator import logger as generator_logger
+from sqlglot.parsers.snowflake import SnowflakeParser
+from tests.helpers import is_compiled
+
+import sqlglot.expressions.core as _core_module
+
+_EXPRESSION_IS_COMPILED = is_compiled(_core_module)
+
+
+class TestGenerator(unittest.TestCase):
+    def test_generator_memory(self):
+        for name in Dialects:
+            with self.subTest(dialect=name):
+                dialect = Dialect.get_or_raise(name)
+                for _ in range(100):
+                    dialect.generator()
+                gc.collect()
+
+                # The leaked SELECT_KINDS tuples are not tracked by gc after collection.
+                tracemalloc.start()
+                try:
+                    before = tracemalloc.get_traced_memory()[0]
+                    for _ in range(1000):
+                        dialect.generator()
+                    gc.collect()
+                    after = tracemalloc.get_traced_memory()[0]
+                finally:
+                    tracemalloc.stop()
+
+                self.assertLess(after - before, 1024)
+
+    def test_time_slice_origin(self):
+        for boundary, kind in (("", ""), (", FLOOR", ", 'START'"), (", CEIL", ", 'END'")):
+            expression = parse_one(
+                f"SELECT TIME_SLICE(dt, INTERVAL 7 DAY{boundary})", read="starrocks"
+            )
+            for dialect in ("postgres", "mysql", "bigquery"):
+                with self.subTest(boundary=boundary, dialect=dialect):
+                    self.assertEqual(
+                        expression.sql(dialect), f"SELECT TIME_SLICE(dt, 7, DAY{kind})"
+                    )
+
+    @unittest.skipIf(_EXPRESSION_IS_COMPILED, "mypyc compiled expressions cannot be subclassed")
+    def test_fallback_function_sql(self):
+        class SpecialUdf(Expression, Func):
+            arg_types = {"a": True, "b": False}
+
+        SnowflakeParser.FUNCTIONS["SPECIAL_UDF"] = SpecialUdf.from_arg_list
+        try:
+            sql = "SELECT SPECIAL_UDF(a) FROM x"
+            expression = parse_one(sql, dialect="snowflake")
+            self.assertEqual(expression.sql(), "SELECT SPECIAL_UDF(a) FROM x")
+        finally:
+            del SnowflakeParser.FUNCTIONS["SPECIAL_UDF"]
+
+    @unittest.skipIf(_EXPRESSION_IS_COMPILED, "mypyc compiled expressions cannot be subclassed")
+    def test_fallback_function_var_args_sql(self):
+        class SpecialUdf(Expression, Func):
+            arg_types = {"a": True, "expressions": False}
+            is_var_len_args = True
+
+        SnowflakeParser.FUNCTIONS["SPECIAL_UDF"] = SpecialUdf.from_arg_list
+        try:
+            sql = "SELECT SPECIAL_UDF(a, b, c, d + 1) FROM x"
+            expression = parse_one(sql, dialect="snowflake")
+            self.assertEqual(expression.sql(), sql)
+        finally:
+            del SnowflakeParser.FUNCTIONS["SPECIAL_UDF"]
+
+        self.assertEqual(
+            exp.DateTrunc(this=exp.to_column("event_date"), unit=exp.var("MONTH")).sql(),
+            "DATE_TRUNC('MONTH', event_date)",
+        )
+
+    def test_identify(self):
+        self.assertEqual(parse_one("x").sql(identify=True), '"x"')
+        self.assertEqual(parse_one("x").sql(identify=False), "x")
+        self.assertEqual(parse_one("X").sql(identify=True), '"X"')
+        self.assertEqual(parse_one('"x"').sql(identify=False), '"x"')
+        self.assertEqual(parse_one("x").sql(identify="safe"), '"x"')
+        self.assertEqual(parse_one("X").sql(identify="safe"), "X")
+        self.assertEqual(parse_one("x as 1").sql(identify="safe"), '"x" AS "1"')
+        self.assertEqual(parse_one("X as 1").sql(identify="safe"), 'X AS "1"')
+
+    def test_generate_nested_binary(self):
+        sql = "SELECT 'foo'" + (" || 'foo'" * 1000)
+        self.assertEqual(parse_one(sql).sql(copy=False), sql)
+
+    def test_overlap_operator(self):
+        for op in ("&<", "&>"):
+            with self.subTest(op=op):
+                input_sql = f"SELECT '[1,10]'::int4range {op} '[5,15]'::int4range"
+                expected_sql = (
+                    f"SELECT CAST('[1,10]' AS INT4RANGE) {op} CAST('[5,15]' AS INT4RANGE)"
+                )
+                ast = parse_one(input_sql, read="postgres")
+                self.assertEqual(ast.sql(), expected_sql)
+                self.assertEqual(ast.sql("postgres"), expected_sql)
+
+    def test_pretty_nested_types(self):
+        def assert_pretty_nested(
+            datatype: exp.DataType,
+            single_line: str,
+            pretty: str,
+            max_text_width: int = 10,
+            **kwargs,
+        ) -> None:
+            self.assertEqual(datatype.sql(), single_line)
+            self.assertEqual(
+                datatype.sql(pretty=True, max_text_width=max_text_width, **kwargs), pretty
+            )
+
+        # STRUCT
+        type_str = "STRUCT<a INT, b TEXT>"
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "STRUCT<\n  a INT,\n  b TEXT\n>",
+        )
+
+        # STRUCT - type def shorter than max text width so stays one line
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "STRUCT<a INT, b TEXT>",
+            max_text_width=50,
+        )
+
+        # STRUCT, leading_comma = True
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "STRUCT<\n  a INT\n  , b TEXT\n>",
+            leading_comma=True,
+        )
+
+        # ARRAY
+        type_str = "ARRAY<DECIMAL(38, 9)>"
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "ARRAY<\n  DECIMAL(38, 9)\n>",
+        )
+
+        # ARRAY nested STRUCT
+        type_str = "ARRAY<STRUCT<a INT, b TEXT>>"
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "ARRAY<\n  STRUCT<\n    a INT,\n    b TEXT\n  >\n>",
+        )
+
+        # RANGE
+        type_str = "RANGE<DECIMAL(38, 9)>"
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "RANGE<\n  DECIMAL(38, 9)\n>",
+        )
+
+        # LIST
+        type_str = "LIST<INT, INT, TEXT>"
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "LIST<\n  INT,\n  INT,\n  TEXT\n>",
+        )
+
+        # MAP
+        type_str = "MAP<INT, DECIMAL(38, 9)>"
+        assert_pretty_nested(
+            exp.DataType.build(type_str),
+            type_str,
+            "MAP<\n  INT,\n  DECIMAL(38, 9)\n>",
+        )
+
+    def test_unsupported_property_is_dropped(self):
+        expression = parse_one("CREATE TABLE t (a INT) ROW FORMAT SERDE 's'", read="athena")
+
+        with self.assertLogs(generator_logger, level="WARNING"):
+            self.assertEqual(expression.sql(dialect="postgres"), "CREATE TABLE t (a INT)")
+
+        with self.assertRaises(UnsupportedError):
+            expression.sql(dialect="postgres", unsupported_level=ErrorLevel.RAISE)
+
+    def test_unsupported_slice(self):
+        expression = parse_one("SELECT x[1:2] FROM t", read="duckdb")
+
+        for dialect in ("tsql", "fabric", "sqlite", "tableau", "exasol", "dax"):
+            with self.subTest(dialect=dialect):
+                with self.assertLogs(generator_logger, level="WARNING") as logs:
+                    self.assertEqual(expression.sql(dialect=dialect), "SELECT x[1:2] FROM t")
+                self.assertIn("Slices are not supported", logs.output[0])
+
+                with self.assertRaises(UnsupportedError):
+                    expression.sql(dialect=dialect, unsupported_level=ErrorLevel.RAISE)
+
+        self.assertEqual(
+            expression.sql(dialect="duckdb", unsupported_level=ErrorLevel.RAISE),
+            "SELECT x[1:2] FROM t",
+        )
