@@ -1,0 +1,19 @@
+require_relative "lib/rover/version"
+
+Gem::Specification.new do |spec|
+  spec.name          = "rover-df"
+  spec.version       = Rover::VERSION
+  spec.summary       = "Simple, powerful data frames for Ruby"
+  spec.homepage      = "https://github.com/ankane/rover"
+  spec.license       = "MIT"
+
+  spec.author        = "Andrew Kane"
+  spec.email         = "andrew@ankane.org"
+
+  spec.files         = Dir["*.{md,txt}", "{lib}/**/*"]
+  spec.require_path  = "lib"
+
+  spec.required_ruby_version = ">= 3.3"
+
+  spec.add_dependency "numo-narray-alt", ">= 0.10"
+end
