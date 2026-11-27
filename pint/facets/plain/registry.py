@@ -1,0 +1,1676 @@
+"""
+pint.facets.plain.registry
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:copyright: 2022 by Pint Authors, see AUTHORS for more details.
+:license: BSD, see LICENSE for more details.
+
+The registry contains the following important methods:
+
+- parse_unit_name: Parse a unit to identify prefix, unit name and suffix
+  by walking the list of prefix and suffix.
+  Result is cached: NO
+- parse_units: Parse a units expression and returns a UnitContainer with
+  the canonical names.
+  The expression can only contain products, ratios and powers of units;
+  prefixed units and pluralized units.
+  Result is cached: YES
+- parse_expression: Parse a mathematical expression including units and
+  return a quantity object.
+  Result is cached: NO
+
+"""
+
+from __future__ import annotations
+
+import copy
+import datetime
+import functools
+import inspect
+import itertools
+import pathlib
+import re
+from collections import defaultdict
+from collections.abc import Callable, Generator, Iterable, Iterator
+from decimal import Decimal
+from fractions import Fraction
+from math import isnan
+from numbers import Number
+from token import NAME, NUMBER
+from tokenize import TokenInfo
+from types import NotImplementedType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    cast,
+)
+
+if TYPE_CHECKING:
+    from ..context import Context
+
+    # from ..._typing import Quantity, Unit
+
+from typing import Self, TypeAlias
+
+import platformdirs
+
+from ... import pint_eval
+from ..._typing import (
+    Handler,
+    Magnitude,
+    QuantityArgument,
+    QuantityOrUnitLike,
+    Scalar,
+    UnitLike,
+)
+from ...compat import coerce_scalar, is_ndarray_or_duck
+from ...errors import (
+    DimensionalityError,
+    OffsetUnitCalculusError,
+    RedefinitionError,
+    UndefinedUnitError,
+)
+from ...pint_eval import _BINARY_OPERATOR_MAP, build_eval_tree
+from ...util import (
+    ParserHelper,
+    _clean_exponent,
+    _is_dim,
+    create_class_with_registry,
+    getattr_maybe_raise,
+    logger,
+    solve_dependencies,
+    string_preprocessor,
+    to_units_container,
+)
+from ...util import UnitsContainer as UnitsContainer
+from .definitions import (
+    AliasDefinition,
+    CommentDefinition,
+    DefaultsDefinition,
+    DerivedDimensionDefinition,
+    DimensionDefinition,
+    NamedDefinition,
+    PrefixDefinition,
+    UnitDefinition,
+)
+from .objects import PlainQuantity, PlainUnit
+
+_BLOCK_RE = re.compile(r"[ (]")
+
+
+@functools.lru_cache
+def pattern_to_regex(pattern: str | re.Pattern[str]) -> re.Pattern[str]:
+    # TODO: This has been changed during typing improvements.
+    # if hasattr(pattern, "finditer"):
+    if not isinstance(pattern, str):
+        pattern = pattern.pattern
+
+    # Replace "{unit_name}" match string with float regex with unit_name as group
+    pattern = re.sub(
+        r"{(\w+)}", r"(?P<\1>[+-]?[0-9]+(?:.[0-9]+)?(?:[Ee][+-]?[0-9]+)?)", pattern
+    )
+
+    return re.compile(pattern)
+
+
+NON_INT_TYPE = type[float | Decimal | Fraction]
+PreprocessorType = Callable[[str], str]
+
+
+class RegistryCache:
+    """Cache to speed up unit registries"""
+
+    def __init__(self) -> None:
+        #: Maps dimensionality (UnitsContainer) to Units (str)
+        self.dimensional_equivalents: dict[UnitsContainer, frozenset[str]] = {}
+
+        #: Maps dimensionality (UnitsContainer) to Dimensionality (UnitsContainer)
+        # TODO: this description is not right.
+        self.root_units: dict[UnitsContainer, tuple[Scalar, UnitsContainer]] = {}
+
+        #: Maps dimensionality (UnitsContainer) to Units (UnitsContainer)
+        self.dimensionality: dict[UnitsContainer, UnitsContainer] = {}
+
+        #: Cache the unit name associated to user input. ('mV' -> 'millivolt')
+        self.parse_unit: dict[tuple[str, bool], UnitsContainer] = {}
+
+        self.conversion_factor: dict[
+            tuple[UnitsContainer, UnitsContainer], Scalar | DimensionalityError
+        ] = {}
+
+    def __eq__(self, other: Any):
+        if not isinstance(other, self.__class__):
+            return False
+        attrs = (
+            "dimensional_equivalents",
+            "root_units",
+            "dimensionality",
+            "parse_unit",
+            "conversion_factor",
+        )
+        return all(getattr(self, attr) == getattr(other, attr) for attr in attrs)
+
+
+class RegistryMeta(type):
+    """This is just to call after_init at the right time
+    instead of asking the developer to do it when subclassing.
+    """
+
+    def __call__(self, *args: Any, **kwargs: Any):
+        obj = super().__call__(*args, **kwargs)
+        obj._after_init()
+        return obj
+
+
+class GenericPlainRegistry[QuantityT: PlainQuantity, UnitT: PlainUnit](
+    metaclass=RegistryMeta
+):
+    """Base class for all registries.
+
+    A registry is responsible for input normalization (including string parsing):
+    as a result, it is also the source of truth for unit definitions
+    and, more broadly, pint's configuration.
+
+    Therefore, every interaction between objects of different registries
+    is not intended to work and will result in an error.
+
+    Capabilities implemented here:
+
+    - Normalize magnitude values.
+    - Register units, prefixes, and dimensions, and their relations.
+    - Convert between units.
+    - Find dimensionality of a unit.
+    - Parse units with prefix and/or suffix.
+    - Parse expressions.
+    - Parse a definition file.
+    - Allow extending the definition file parser by registering :text:`@` directives.
+
+    Parameters
+    ----------
+    filename : str or None
+        path of the units definition file to load or line-iterable object.
+        Empty string to load the default definition file. (default)
+        None to leave the UnitRegistry empty.
+    force_ndarray : bool
+        convert any input, scalar or not to a numpy.ndarray.
+    force_ndarray_like : bool
+        convert all inputs other than duck arrays to a numpy.ndarray.
+    on_redefinition : str
+        action to take in case a unit is redefined: 'warn', 'raise', 'ignore'
+    auto_reduce_dimensions :
+        If True, reduce dimensionality on appropriate operations.
+    autoconvert_to_preferred :
+        If True, converts preferred units on appropriate operations.
+    preprocessors :
+        list of callables which are iteratively ran on any input expression or unit
+        string
+    fmt_locale :
+        locale identifier string, used in `format_babel`
+    non_int_type : type
+        numerical type used for non integer values. (Default: float)
+    case_sensitive : bool, optional
+        Control default case sensitivity of unit parsing. (Default: True)
+    cache_folder : str or pathlib.Path or None, optional
+        Specify the folder in which cache files are saved and loaded from.
+        If None, the cache is disabled. (default)
+    separate_format_defaults : bool, optional
+        Separate the default format into magnitude and unit formats as soon as
+        possible. The deprecated default is not to separate. This will change in a
+        future release.
+    """
+
+    Quantity: type[QuantityT]
+    Unit: type[UnitT]
+
+    _diskcache = None
+    _def_parser = None
+
+    def __init__(
+        self,
+        filename: Iterable[str] | str | pathlib.Path | None = "",
+        *,
+        force_ndarray: bool = False,
+        force_ndarray_like: bool = False,
+        on_redefinition: str = "warn",
+        auto_reduce_dimensions: bool = False,
+        autoconvert_to_preferred: bool = False,
+        preprocessors: list[PreprocessorType] | None = None,
+        fmt_locale: str | None = None,
+        non_int_type: NON_INT_TYPE = float,
+        case_sensitive: bool = True,
+        cache_folder: str | pathlib.Path | None = None,
+        separate_format_defaults: bool | None = None,
+        mpl_formatter: str = "{:P}",
+    ):
+        #: Map a definition class to a adder methods.
+        self._adders: Handler = {}
+        self._register_definition_adders()
+        self._init_dynamic_classes()
+
+        if cache_folder == ":auto:":
+            cache_folder = platformdirs.user_cache_path(appname="pint", appauthor=False)
+
+        from ... import delegates  # TODO: change this
+
+        if cache_folder is not None:
+            self._diskcache = delegates.build_disk_cache_class(non_int_type)(
+                cache_folder
+            )
+
+        self._def_parser = delegates.txt_defparser.DefParser(
+            delegates.ParserConfig(non_int_type), diskcache=self._diskcache
+        )
+        self._toml_parser = delegates.toml_defparser.TomlParser(
+            delegates.ParserConfig(non_int_type)
+        )
+
+        self.formatter = delegates.Formatter(self)
+        self._filename = filename
+        self.force_ndarray = force_ndarray
+        self.force_ndarray_like = force_ndarray_like
+        self.preprocessors = preprocessors or []
+        # use a default preprocessor to support "%"
+        self.preprocessors.insert(0, lambda string: string.replace("%", " percent "))
+
+        # use a default preprocessor to support permille "‰"
+        self.preprocessors.insert(0, lambda string: string.replace("‰", " permille "))
+
+        # use a default preprocessor to support multiplication sign "×"
+        self.preprocessors.insert(0, lambda string: string.replace("×", "*"))
+
+        #: mode used to fill in the format defaults
+        self.separate_format_defaults = separate_format_defaults
+
+        #: Action to take in case a unit is redefined. 'warn', 'raise', 'ignore'
+        self._on_redefinition = on_redefinition
+
+        #: Determines if dimensionality should be reduced on appropriate operations.
+        self.auto_reduce_dimensions = auto_reduce_dimensions
+
+        #: Determines if units will be converted to preffered on appropriate operations.
+        self.autoconvert_to_preferred = autoconvert_to_preferred
+
+        #: Default locale identifier string, used when calling format_babel without explicit locale.
+        self.formatter.set_locale(fmt_locale)
+
+        #: sets the formatter used when plotting with matplotlib
+        self.mpl_formatter = mpl_formatter
+
+        #: Numerical type used for non integer values.
+        self._non_int_type = non_int_type
+
+        #: Default unit case sensitivity
+        self.case_sensitive = case_sensitive
+
+        #: Map between name (string) and value (string) of defaults stored in the
+        #: definitions file.
+        self._defaults: dict[str, str] = {}
+
+        #: Map dimension name (string) to its definition (DimensionDefinition).
+        self._dimensions: dict[
+            str, DimensionDefinition | DerivedDimensionDefinition
+        ] = {}
+
+        #: Map unit name (string) to its definition (UnitDefinition).
+        #: Might contain prefixed units.
+        self._units: dict[str, UnitDefinition] = {}
+
+        #: List base unit names
+        self._base_units: list[str] = []
+
+        #: Map unit name in lower case (string) to a set of unit names with the right
+        #: case.
+        #: Does not contain prefixed units.
+        #: e.g: 'hz' - > set('Hz', )
+        self._units_casei: dict[str, set[str]] = defaultdict(set)
+
+        #: Map prefix name (string) to its definition (PrefixDefinition).
+        self._prefixes: dict[str, PrefixDefinition] = {"": PrefixDefinition("", 1)}
+
+        #: Map suffix name (string) to canonical , and unit alias to canonical unit name
+        self._suffixes: dict[str, str] = {"": "", "s": ""}
+
+        #: Map contexts to RegistryCache
+        self._cache = RegistryCache()
+
+        #: Set when a definition is overwritten after initialization.
+        self._cache_stale = False
+
+        self._initialized = False
+
+    def _init_dynamic_classes(self) -> None:
+        """Generate subclasses on the fly and attach them to self"""
+
+        self.Unit = create_class_with_registry(self, self.Unit)
+        self.Quantity = create_class_with_registry(self, self.Quantity)
+
+    def _after_init(self) -> None:
+        """This should be called after all __init__"""
+
+        if self._filename == "":
+            path = pathlib.Path(__file__).parent.parent.parent / "default_en.txt"
+            loaded_files = self.load_definitions(path, True)
+        elif self._filename is not None:
+            loaded_files = self.load_definitions(self._filename)
+        else:
+            loaded_files = None
+
+        self._build_cache(loaded_files)
+        self._initialized = True
+
+    def _register_adder[T](
+        self,
+        definition_class: type[T],
+        adder_func: Callable[[T], None],
+    ) -> None:
+        """Register a block definition."""
+        self._adders[definition_class] = adder_func
+
+    def _register_definition_adders(self) -> None:
+        self._register_adder(AliasDefinition, self._add_alias)
+        self._register_adder(DefaultsDefinition, self._add_defaults)
+        self._register_adder(CommentDefinition, lambda o: o)
+        self._register_adder(PrefixDefinition, self._add_prefix)
+        self._register_adder(UnitDefinition, self._add_unit)
+        self._register_adder(DimensionDefinition, self._add_dimension)
+        self._register_adder(DerivedDimensionDefinition, self._add_derived_dimension)
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        new = object.__new__(type(self))
+        new.__dict__ = copy.deepcopy(self.__dict__, memo)
+        new._init_dynamic_classes()
+        return new
+
+    def __getattr__(self, item: str, /) -> UnitT:
+        getattr_maybe_raise(self, item)
+
+        # self.Unit will call parse_units
+        return self.Unit(item)
+
+    def __contains__(self, item: str | UnitT, /) -> bool:
+        """Support checking prefixed units with the `in` operator."""
+        if isinstance(item, str):
+            try:
+                self.parse_units_as_container(item)
+                return True
+            except UndefinedUnitError:
+                return False
+        elif isinstance(item, self.Unit):
+            if item._REGISTRY is not self:
+                # maybe we can also raise an error here
+                return False
+            # NOTE: this is guaranteed by an invariant of Unit. See `self._into_unit()` for details
+            return True
+        else:
+            raise TypeError(
+                f"Unsupported operation: `UnitRegistry.__contains__(<instance of {type(item)}>)`."
+            )
+
+    def __dir__(self, /) -> list[str]:
+        #: Calling dir(registry) gives all units, methods, and attributes.
+        #: Also used for autocompletion in IPython.
+        return list(self._units.keys()) + list(object.__dir__(self))
+
+    def __iter__(self, /) -> Iterator[str]:
+        """Allows for listing all units in registry with `list(ureg)`.
+
+        Returns
+        -------
+        Iterator over names of all units in registry, ordered alphabetically.
+        """
+        return iter(sorted(self._units.keys()))
+
+    @property
+    def cache_folder(self, /) -> pathlib.Path | None:
+        if self._diskcache:
+            return self._diskcache.cache_folder
+        return None
+
+    ############
+    # Custom non-integer-type support
+    # - used when parsing decimals: "3.14" -> non_int_type("3.14")
+    # - used when dividing integers: 3/2 -> non_int_type(3)/non_int_type(2)
+    ############
+
+    @property
+    def non_int_type(self):
+        return self._non_int_type
+
+    ############
+    # Extending the registry with new unit definitions
+    ############
+
+    def define(self, definition: str | type, rebuild_cache: bool = True) -> None:
+        """Add unit to the registry.
+
+        Parameters
+        ----------
+        definition : str or Definition
+            a dimension, unit or prefix definition.
+        rebuild_cache : bool
+            if False, delay rebuilding the cache after a redefinition until the
+            next call to `define` or `load_definitions` that rebuilds it.
+            (Default value = True)
+        """
+
+        if isinstance(definition, str):
+            parsed_project = self._def_parser.parse_string(definition)
+
+            for definition in self._def_parser.iter_parsed_project(parsed_project):
+                self._helper_dispatch_adder(definition)
+        else:
+            self._helper_dispatch_adder(definition)
+
+        if rebuild_cache:
+            self._rebuild_cache_if_stale()
+
+    def _rebuild_cache_if_stale(self) -> None:
+        """Rebuild the cache if a definition was overwritten since it was built."""
+        if self._cache_stale:
+            self._cache_stale = False
+            self._build_cache()
+
+    ############
+    # Adders
+    # - we first provide some helpers that deal with repetitive task.
+    # - then we define specific adder for each definition class. :-D
+    ############
+
+    def _helper_dispatch_adder(self, definition: Any) -> None:
+        """Helper function to add a single definition,
+        choosing the appropiate method by class.
+        """
+        for cls in inspect.getmro(definition.__class__):
+            if cls in self._adders:
+                adder_func = self._adders[cls]
+                break
+        else:
+            raise TypeError(
+                f"No loader function defined for {definition.__class__.__name__}"
+            )
+
+        adder_func(definition)
+
+    def _helper_adder(
+        self,
+        definition: NamedDefinition,
+        target_dict: dict[str, Any],
+        casei_target_dict: dict[str, Any] | None,
+    ) -> None:
+        """Helper function to store a definition in the internal dictionaries.
+        It stores the definition under its name, symbol and aliases.
+        """
+        self._helper_single_adder(
+            definition.name, definition, target_dict, casei_target_dict
+        )
+
+        # TODO: Not sure why but using hasattr does not work here.
+        if getattr(definition, "has_symbol", ""):
+            self._helper_single_adder(
+                definition.symbol, definition, target_dict, casei_target_dict
+            )
+
+        for alias in getattr(definition, "aliases", ()):
+            if " " in alias:
+                logger.warn("Alias cannot contain a space: " + alias)
+
+            self._helper_single_adder(alias, definition, target_dict, casei_target_dict)
+
+    def _helper_single_adder(
+        self,
+        key: str,
+        value: NamedDefinition,
+        target_dict: dict[str, Any],
+        casei_target_dict: dict[str, Any] | None,
+    ) -> None:
+        """Helper function to store a definition in the internal dictionaries.
+
+        It warns or raise error on redefinition.
+        """
+        if key in target_dict:
+            if self._on_redefinition == "raise":
+                raise RedefinitionError(key, type(value))
+            elif self._on_redefinition == "warn":
+                logger.warning(f"Redefining '{key}' ({type(value)})")
+            if self._initialized:
+                self._cache_stale = True
+
+        target_dict[key] = value
+        if casei_target_dict is not None:
+            casei_target_dict[key.lower()].add(key)
+
+    def _add_defaults(self, defaults_definition: DefaultsDefinition) -> None:
+        for k, v in defaults_definition.items():
+            self._defaults[k] = v
+
+    def _add_alias(self, definition: AliasDefinition) -> None:
+        unit_dict = self._units
+        unit = unit_dict[self.get_name(definition.name)]
+        while not isinstance(unit, UnitDefinition):
+            unit = unit_dict[unit.name]
+        for alias in definition.aliases:
+            self._helper_single_adder(alias, unit, self._units, self._units_casei)
+
+    def _add_dimension(self, definition: DimensionDefinition) -> None:
+        self._helper_adder(definition, self._dimensions, None)
+
+    def _add_derived_dimension(self, definition: DerivedDimensionDefinition) -> None:
+        for dim_name in definition.reference.keys():
+            if dim_name not in self._dimensions:
+                self._add_dimension(DimensionDefinition(dim_name))
+        self._helper_adder(definition, self._dimensions, None)
+
+    def _add_prefix(self, definition: PrefixDefinition) -> None:
+        self._helper_adder(definition, self._prefixes, None)
+
+    def _add_unit(self, definition: UnitDefinition) -> None:
+        if definition.is_base:
+            self._base_units.append(definition.name)
+            for dim_name in definition.reference.keys():
+                if dim_name not in self._dimensions:
+                    self._add_dimension(DimensionDefinition(dim_name))
+
+        self._helper_adder(definition, self._units, self._units_casei)
+
+    def load_definitions(
+        self,
+        file: Iterable[str] | str | pathlib.Path,
+        is_resource: bool = False,
+        rebuild_cache: bool = True,
+    ):
+        """Add units and prefixes defined in a definition text file.
+
+        Parameters
+        ----------
+        file :
+            can be a filename or a line iterable.
+        is_resource :
+            used to indicate that the file is a resource file
+            and therefore should be loaded from the package. (Default value = False)
+        rebuild_cache :
+            if False, delay rebuilding the cache after a redefinition until the
+            next call to `define` or `load_definitions` that rebuilds it.
+            (Default value = True)
+        """
+
+        if isinstance(file, (list, tuple)):
+            # TODO: this hack was to keep it backwards compatible.
+            parsed_project = self._def_parser.parse_string("\n".join(file))
+            definitions = self._def_parser.iter_parsed_project(parsed_project)
+        elif str(file).lower().endswith(".toml"):
+            # the disk cache is keyed on parsed text files, so TOML skips it
+            parsed_project = None
+            definitions = self._toml_parser.parse_file(file)
+        else:
+            parsed_project = self._def_parser.parse_file(file)
+            definitions = self._def_parser.iter_parsed_project(parsed_project)
+
+        for definition in definitions:
+            self._helper_dispatch_adder(definition)
+
+        if rebuild_cache:
+            self._rebuild_cache_if_stale()
+
+        return parsed_project
+
+    def _build_cache(self, loaded_files=None) -> None:
+        """Build a cache of dimensionality and plain units."""
+
+        diskcache = self._diskcache
+        if loaded_files and diskcache:
+            cache, cache_basename = diskcache.load(loaded_files, "build_cache")
+            if cache is None:
+                self._build_cache()
+                diskcache.save(self._cache, loaded_files, "build_cache")
+            return
+
+        self._cache = RegistryCache()
+
+        deps: dict[str, set[str]] = {
+            name: set(definition.reference.keys()) if definition.reference else set()
+            for name, definition in self._units.items()
+        }
+
+        for unit_names in solve_dependencies(deps):
+            for unit_name in unit_names:
+                if "[" in unit_name:
+                    continue
+                parsed_names = self.parse_unit_name(unit_name)
+                if parsed_names:
+                    prefix, base_name, _ = parsed_names[0]
+                else:
+                    prefix, base_name = "", unit_name
+
+                try:
+                    uc = ParserHelper.from_word(base_name, self.non_int_type)
+
+                    bu = self._get_root_units(uc)
+                    di = self._get_dimensionality(uc)
+
+                    self._cache.root_units[uc] = bu
+                    self._cache.dimensionality[uc] = di
+
+                    if not prefix:
+                        dimeq_set = self._cache.dimensional_equivalents.setdefault(
+                            di, set()
+                        )
+                        dimeq_set.add(self._units[base_name].name)
+
+                except Exception as exc:
+                    logger.warning(f"Could not resolve {unit_name}: {exc!r}")
+        return self._cache
+
+    def get_name(self, name_or_alias: str, case_sensitive: bool | None = None) -> str:
+        """Return the canonical name of a unit."""
+
+        if name_or_alias == "dimensionless":
+            return ""
+
+        try:
+            return self._units[name_or_alias].name
+        except KeyError:
+            pass
+
+        candidates = self.parse_unit_name(name_or_alias, case_sensitive)
+        if not candidates:
+            raise UndefinedUnitError(name_or_alias)
+
+        prefix, unit_name, _ = candidates[0]
+        if len(candidates) > 1:
+            logger.warning(
+                f"Parsing {name_or_alias} yield multiple results. Options are: {candidates!r}"
+            )
+
+        if prefix:
+            if not self._units[unit_name].is_multiplicative:
+                raise OffsetUnitCalculusError(
+                    "Prefixing a unit requires multiplying the unit."
+                )
+
+            name = prefix + unit_name
+            symbol = self.get_symbol(name, case_sensitive)
+            prefix_def = self._prefixes[prefix]
+            self._units[name] = UnitDefinition(
+                name,
+                symbol,
+                tuple(),
+                prefix_def.converter,
+                self.UnitsContainer({unit_name: 1}),
+            )
+            return prefix + unit_name
+
+        return unit_name
+
+    def get_symbol(self, name_or_alias: str, case_sensitive: bool | None = None) -> str:
+        """Return the preferred alias for a unit."""
+        candidates = self.parse_unit_name(name_or_alias, case_sensitive)
+        if not candidates:
+            raise UndefinedUnitError(name_or_alias)
+
+        prefix, unit_name, _ = candidates[0]
+        if len(candidates) > 1:
+            logger.warning(
+                f"Parsing {name_or_alias} yield multiple results. Options are: {candidates!r}"
+            )
+
+        return self._prefixes[prefix].symbol + self._units[unit_name].symbol
+
+    def _get_symbol(self, name: str) -> str:
+        return self._units[name].symbol
+
+    def _apply_preprocessors(self, input_string: str) -> str:
+        """Apply the registry's preprocessors to a unit or expression string."""
+        for p in self.preprocessors:
+            input_string = p(input_string)
+        return input_string
+
+    def get_dimensionality(self, input_units: UnitLike) -> UnitsContainer:
+        """Convert unit or dict of units or dimensions to a dict of plain dimensions
+        dimensions
+        """
+
+        # TODO: This should be to_units_container(input_units, self)
+        # but this tries to reparse and fail for dimensions.
+        if isinstance(input_units, str):
+            input_units = self._apply_preprocessors(input_units)
+        input_units = to_units_container(input_units)
+
+        return self._get_dimensionality(input_units)
+
+    def _get_dimensionality(self, input_units: UnitsContainer | None) -> UnitsContainer:
+        """Convert a UnitsContainer to plain dimensions."""
+        if not input_units:
+            return self.UnitsContainer()
+
+        cache = self._cache.dimensionality
+
+        try:
+            return cache[input_units]
+        except KeyError:
+            pass
+
+        accumulator: dict[str, int] = defaultdict(int)
+        self._get_dimensionality_recurse(input_units, 1, accumulator)
+
+        if "[]" in accumulator:
+            del accumulator["[]"]
+
+        cleaned = {k: _clean_exponent(v) for k, v in accumulator.items()}
+        dims = self.UnitsContainer({k: v for k, v in cleaned.items() if v != 0})
+
+        cache[input_units] = dims
+
+        return dims
+
+    def _get_dimensionality_recurse(
+        self, ref: UnitsContainer, exp: Scalar, accumulator: dict[str, int]
+    ) -> None:
+        for key in ref:
+            exp2 = exp * ref[key]
+            if _is_dim(key):
+                try:
+                    reg = self._dimensions[key]
+                except KeyError:
+                    # "[]" is dimensionless even if no unit was defined as "= []".
+                    if key == "[]":
+                        continue
+                    raise ValueError(
+                        f"{key} is not defined as dimension in the pint UnitRegistry"
+                    )
+                if isinstance(reg, DerivedDimensionDefinition):
+                    self._get_dimensionality_recurse(reg.reference, exp2, accumulator)
+                else:
+                    # DimensionDefinition.
+                    accumulator[key] += exp2
+
+            else:
+                name = self.get_name(key)
+                if name == "":
+                    continue
+                reg = self._units[name]
+                if reg.reference is not None:
+                    self._get_dimensionality_recurse(reg.reference, exp2, accumulator)
+
+    def _get_dimensionality_ratio(
+        self, unit1: UnitLike, unit2: UnitLike
+    ) -> Scalar | None:
+        """Get the exponential ratio between two units, i.e. solve unit2 = unit1**x for x.
+
+        Parameters
+        ----------
+        unit1 : UnitsContainer compatible (str, Unit, UnitsContainer, dict)
+            first unit
+        unit2 : UnitsContainer compatible (str, Unit, UnitsContainer, dict)
+            second unit
+
+        Returns
+        -------
+        number or None
+            exponential proportionality or None if the units cannot be converted
+
+        """
+        # shortcut in case of equal units
+        if unit1 == unit2:
+            return 1
+
+        dim1, dim2 = (self.get_dimensionality(unit) for unit in (unit1, unit2))
+        if dim1 == dim2:
+            return 1
+        elif not dim1 or not dim2 or dim1.keys() != dim2.keys():  # not comparable
+            return None
+
+        ratios = (dim2[key] / val for key, val in dim1.items())
+        first = next(ratios)
+        if all(r == first for r in ratios):  # all are same, we're good
+            return first
+        return None
+
+    def get_root_units(
+        self, input_units: UnitLike, check_nonmult: bool = True
+    ) -> tuple[Scalar, UnitT]:
+        """Convert unit or dict of units to the root units.
+
+        If any unit is non multiplicative and check_converter is True,
+        then None is returned as the multiplicative factor.
+
+        Parameters
+        ----------
+        input_units : UnitsContainer or str
+            units
+        check_nonmult : bool
+            if True, None will be returned as the
+            multiplicative factor if a non-multiplicative
+            units is found in the final Units. (Default value = True)
+
+        Returns
+        -------
+        Number, pint.Unit
+            multiplicative factor, plain units
+
+        """
+        input_units = to_units_container(input_units, self)
+
+        f, units = self._get_root_units(input_units, check_nonmult)
+
+        return f, self.Unit(units)
+
+    def _get_conversion_factor(
+        self, src: UnitsContainer, dst: UnitsContainer
+    ) -> Scalar | DimensionalityError:
+        """Get conversion factor in non-multiplicative units.
+
+        Parameters
+        ----------
+        src
+            Source units
+        dst
+            Target units
+
+        Returns
+        -------
+            Conversion factor or DimensionalityError
+        """
+        cache = self._cache.conversion_factor
+        try:
+            return cache[(src, dst)]
+        except KeyError:
+            pass
+
+        src_dim = self._get_dimensionality(src)
+        dst_dim = self._get_dimensionality(dst)
+
+        # If the source and destination dimensionality are different,
+        # then the conversion cannot be performed.
+        if src_dim != dst_dim:
+            return DimensionalityError(src, dst, src_dim, dst_dim)
+
+        # Here src and dst have only multiplicative units left. Thus we can
+        # convert with a factor.
+        factor, _ = self._get_root_units(src / dst)
+
+        cache[(src, dst)] = factor
+        return factor
+
+    def _get_root_units(
+        self, input_units: UnitsContainer, check_nonmult: bool = True
+    ) -> tuple[Scalar, UnitsContainer]:
+        """Convert unit or dict of units to the root units.
+
+        If any unit is non multiplicative and check_converter is True,
+        then None is returned as the multiplicative factor.
+
+        Parameters
+        ----------
+        input_units : UnitsContainer or dict
+            units
+        check_nonmult : bool
+            if True, None will be returned as the
+            multiplicative factor if a non-multiplicative
+            units is found in the final Units. (Default value = True)
+
+        Returns
+        -------
+        number, Unit
+            multiplicative factor, plain units
+
+        """
+        if not input_units:
+            return 1, self.UnitsContainer()
+
+        cache = self._cache.root_units
+        try:
+            return cache[input_units]
+        except KeyError:
+            pass
+
+        accumulators: dict[str | None, int] = defaultdict(int)
+        fraction: dict[str, dict[Decimal | float, Decimal | int]] = dict(
+            numerator=dict(), denominator=dict()
+        )
+        self._get_root_units_recurse(input_units, 1, accumulators, fraction)
+
+        # Identify if terms appear in both numerator and denominator
+        def terms_are_unique(fraction):
+            for n_factor, n_exp in fraction["numerator"].items():
+                if n_factor in fraction["denominator"]:
+                    return False
+            return True
+
+        # Cancel out terms where factor matches
+        while not terms_are_unique(fraction):
+            for n_factor, n_exponent in fraction["numerator"].items():
+                if n_factor in fraction["denominator"]:
+                    if n_exponent >= fraction["denominator"][n_factor]:
+                        fraction["numerator"][n_factor] -= fraction["denominator"][
+                            n_factor
+                        ]
+                        del fraction["denominator"][n_factor]
+                        continue
+            for d_factor, d_exponent in fraction["denominator"].items():
+                if d_factor in fraction["numerator"]:
+                    if d_exponent >= fraction["numerator"][d_factor]:
+                        fraction["denominator"][d_factor] -= fraction["numerator"][
+                            d_factor
+                        ]
+                        del fraction["numerator"][d_factor]
+                        continue
+
+        factor = 1
+        for n_factor, n_exponent in fraction["numerator"].copy().items():
+            if n_exponent == 0:
+                del fraction["numerator"][n_factor]
+            elif isinstance(n_factor, tuple):
+                # Uncancelled NaN factor: result is NaN
+                factor = float("nan")
+            else:
+                factor *= n_factor**n_exponent
+        for d_factor, d_exponent in fraction["denominator"].copy().items():
+            if d_exponent == 0:
+                del fraction["denominator"][d_factor]
+            elif isinstance(d_factor, tuple):
+                # Uncancelled NaN factor: result is NaN
+                factor = float("nan")
+            else:
+                factor *= d_factor**-d_exponent
+
+        units = self.UnitsContainer(
+            {k: v for k, v in accumulators.items() if k is not None and v != 0}
+        )
+
+        # Check if any of the final units is non multiplicative and return None instead.
+        if check_nonmult:
+            if any(not self._units[unit].converter.is_multiplicative for unit in units):
+                factor = None
+
+        cache[input_units] = factor, units
+        return factor, units
+
+    def get_base_units(
+        self,
+        input_units: UnitsContainer | str,
+        check_nonmult: bool = True,
+        system=None,
+    ) -> tuple[Scalar, UnitT]:
+        """Convert unit or dict of units to the plain units.
+
+        If any unit is non multiplicative and check_converter is True,
+        then None is returned as the multiplicative factor.
+
+        Parameters
+        ----------
+        input_units : UnitsContainer or str
+            units
+        check_nonmult : bool
+            If True, None will be returned as the multiplicative factor if
+            non-multiplicative units are found in the final Units.
+            (Default value = True)
+        system :
+             (Default value = None)
+
+        Returns
+        -------
+        Number, pint.Unit
+            multiplicative factor, plain units
+
+        """
+
+        return self.get_root_units(input_units, check_nonmult)
+
+    # TODO: accumulators breaks typing list[int, dict[str, int]]
+    # So we have changed the behavior here
+    def _get_root_units_recurse(
+        self,
+        ref: UnitsContainer,
+        exp: Scalar,
+        accumulators: dict[str | None, int],
+        fraction: dict[str, dict[Decimal | float, Decimal | int]],
+    ) -> None:
+        """
+
+        accumulators None keeps the scalar prefactor not associated with a specific unit.
+
+        """
+        for key in ref:
+            exp2 = exp * ref[key]
+            key = self.get_name(key)
+            if key == "":
+                continue
+            reg = self._units[key]
+            if reg.is_base:
+                accumulators[key] += exp2
+            else:
+                # Build numerator and denominator.
+                # For NaN scales, use a unit-specific key so that NaN factors
+                # from different units don't incorrectly cancel each other,
+                # while NaN factors from the same unit (e.g. truckload appearing
+                # via kilotruckload) can still cancel correctly.
+                scale_key = (
+                    (key, "nan") if isnan(reg.converter.scale) else reg.converter.scale
+                )
+                if exp2 < 0:
+                    fraction["denominator"][scale_key] = (
+                        fraction["denominator"].get(scale_key, 0) - exp2
+                    )
+                else:
+                    fraction["numerator"][scale_key] = (
+                        fraction["numerator"].get(scale_key, 0) + exp2
+                    )
+                if reg.reference is not None:
+                    self._get_root_units_recurse(
+                        reg.reference, exp2, accumulators, fraction
+                    )
+
+    def get_compatible_units(self, input_units: QuantityOrUnitLike) -> frozenset[UnitT]:
+        """ """
+        input_units = to_units_container(input_units)
+
+        equiv = self._get_compatible_units(input_units)
+
+        return frozenset(self.Unit(eq) for eq in equiv)
+
+    def _get_compatible_units(
+        self, input_units: UnitsContainer, *args, **kwargs
+    ) -> frozenset[str]:
+        """ """
+        if not input_units:
+            return frozenset()
+
+        src_dim = self._get_dimensionality(input_units)
+        return self._cache.dimensional_equivalents.setdefault(src_dim, frozenset())
+
+    # TODO: remove context from here
+    def is_compatible_with(
+        self, obj1: Any, obj2: Any, *contexts: str | Context, **ctx_kwargs
+    ) -> bool:
+        """check if the other object is compatible
+
+        Parameters
+        ----------
+        obj1, obj2
+            The objects to check against each other. Treated as
+            dimensionless if not a Quantity, Unit or str.
+        *contexts : str or pint.Context
+            Contexts to use in the transformation.
+        **ctx_kwargs :
+            Values for the Context/s
+
+        Returns
+        -------
+        bool
+        """
+        if isinstance(obj1, (self.Quantity, self.Unit)):
+            return obj1.is_compatible_with(obj2, *contexts, **ctx_kwargs)
+
+        if isinstance(obj1, str):
+            return self.parse_expression(obj1).is_compatible_with(
+                obj2, *contexts, **ctx_kwargs
+            )
+
+        if isinstance(obj2, (self.Quantity, self.Unit, str)):
+            return self.is_compatible_with(obj2, obj1, *contexts, **ctx_kwargs)
+
+        # neither obj1 nor obj2 is a Quantity, Unit or str, so both are
+        # treated as dimensionless and are therefore compatible.
+        return True
+
+    def convert[T](
+        self,
+        value: T,
+        src: QuantityOrUnitLike,
+        dst: QuantityOrUnitLike,
+        inplace: bool = False,
+        **ctx_kwargs,
+    ) -> T:
+        """Convert value from some source to destination units.
+
+        Parameters
+        ----------
+        value :
+            value
+        src : pint.Quantity or str
+            source units.
+        dst : pint.Quantity or str
+            destination units.
+        inplace :
+             (Default value = False)
+
+        Returns
+        -------
+        type
+            converted value
+
+        """
+        src = to_units_container(src, self)
+
+        dst = to_units_container(dst, self)
+
+        if src == dst:
+            return value
+
+        return self._convert(value, src, dst, inplace, **ctx_kwargs)
+
+    def _convert[T](
+        self,
+        value: T,
+        src: UnitsContainer,
+        dst: UnitsContainer,
+        inplace: bool = False,
+        check_dimensionality: bool = True,
+    ) -> T:
+        """Convert value from some source to destination units.
+
+        Parameters
+        ----------
+        value :
+            value
+        src : UnitsContainer
+            source units.
+        dst : UnitsContainer
+            destination units.
+        inplace :
+             (Default value = False)
+        check_dimensionality :
+             (Default value = True)
+
+        Returns
+        -------
+        type
+            converted value
+
+        """
+
+        factor = self._get_conversion_factor(src, dst)
+
+        if isinstance(factor, DimensionalityError):
+            raise factor
+
+        # Decimal/Fraction magnitudes can't mix with float — coerce to match.
+        factor = coerce_scalar(value, factor)
+
+        if inplace:
+            value *= factor
+        else:
+            value = value * factor
+
+        return value
+
+    ############
+    # Parsing
+    ############
+
+    def parse_unit_name(
+        self, unit_name: str, case_sensitive: bool | None = None
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Parse a unit to identify prefix, unit name and suffix
+        by walking the list of prefix and suffix.
+        In case of equivalent combinations (e.g. ('kilo', 'gram', '') and
+        ('', 'kilogram', ''), prefer those with prefix.
+
+        Parameters
+        ----------
+        unit_name :
+
+        case_sensitive : bool or None
+            Control if unit lookup is case sensitive. Defaults to None, which uses the
+            registry's case_sensitive setting
+
+        Returns
+        -------
+        tuple of tuples (str, str, str)
+            all non-equivalent combinations of (prefix, unit name, suffix)
+        """
+
+        case_sensitive = (
+            self.case_sensitive if case_sensitive is None else case_sensitive
+        )
+        return self._dedup_candidates(
+            self._yield_unit_triplets(unit_name, case_sensitive)
+        )
+
+    def _yield_unit_triplets(
+        self, unit_name: str, case_sensitive: bool
+    ) -> Generator[tuple[str, str, str]]:
+        """Helper of parse_unit_name."""
+
+        stw = unit_name.startswith
+        edw = unit_name.endswith
+        for suffix, prefix in itertools.product(self._suffixes, self._prefixes):
+            if stw(prefix) and edw(suffix):
+                name = unit_name[len(prefix) :]
+                if suffix:
+                    name = name[: -len(suffix)]
+                    if len(name) == 1:
+                        continue
+                if case_sensitive:
+                    if name in self._units:
+                        yield (
+                            self._prefixes[prefix].name,
+                            self._units[name].name,
+                            self._suffixes[suffix],
+                        )
+                else:
+                    for real_name in self._units_casei.get(name.lower(), ()):
+                        yield (
+                            self._prefixes[prefix].name,
+                            self._units[real_name].name,
+                            self._suffixes[suffix],
+                        )
+
+    # TODO: keep this for backward compatibility
+    _parse_unit_name = _yield_unit_triplets
+
+    @staticmethod
+    def _dedup_candidates(
+        candidates: Iterable[tuple[str, str, str]],
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Helper of parse_unit_name.
+
+        Given an iterable of unit triplets (prefix, name, suffix), remove those with
+        different names but equal value, preferring those with a prefix.
+
+        e.g. ('kilo', 'gram', '') and ('', 'kilogram', '')
+        """
+        candidates = dict.fromkeys(candidates)  # ordered set
+        for cp, cu, cs in list(candidates):
+            assert isinstance(cp, str)
+            assert isinstance(cu, str)
+            if cs != "":
+                raise NotImplementedError("non-empty suffix")
+            if cp:
+                candidates.pop(("", cp + cu, ""), None)
+        return tuple(candidates)
+
+    def parse_units(
+        self,
+        input_string: str,
+        as_delta: bool | None = None,
+        case_sensitive: bool | None = None,
+    ) -> UnitT:
+        """Parse a units expression and returns a UnitContainer with
+        the canonical names.
+
+        The expression can only contain products, ratios and powers of units.
+
+        Parameters
+        ----------
+        input_string : str
+        as_delta : bool or None
+            if the expression has multiple units, the parser will
+            interpret non multiplicative units as their `delta_` counterparts. (Default value = None)
+        case_sensitive : bool or None
+            Control if unit parsing is case sensitive. Defaults to None, which uses the
+            registry's setting.
+
+        Returns
+        -------
+            pint.Unit
+
+        """
+
+        return self.Unit(
+            self.parse_units_as_container(input_string, as_delta, case_sensitive)
+        )
+
+    def parse_units_as_container(
+        self,
+        input_string: str,
+        as_delta: bool | None = None,
+        case_sensitive: bool | None = None,
+    ) -> UnitsContainer:
+        as_delta = (
+            as_delta if as_delta is not None else True
+        )  # TODO This only exists in nonmultiplicative
+        case_sensitive = (
+            case_sensitive if case_sensitive is not None else self.case_sensitive
+        )
+        return self._parse_units_as_container(input_string, as_delta, case_sensitive)
+
+    def _parse_units_as_container(
+        self,
+        input_string: str,
+        as_delta: bool = True,
+        case_sensitive: bool = True,
+    ) -> UnitsContainer:
+        """Parse a units expression and returns a UnitContainer with
+        the canonical names.
+        """
+
+        cache = self._cache.parse_unit
+        # Issue #1097: it is possible, when a unit was defined while a different context
+        # was active, that the unit is in self._cache.parse_unit but not in self._units.
+        # If this is the case, force self._units to be repopulated.
+        if as_delta and (input_string, case_sensitive) in cache:
+            cached = cache[input_string, case_sensitive]
+            if all(name in self._units for name in cached):
+                return cached
+
+        input_string = self._apply_preprocessors(input_string)
+
+        if not input_string:
+            return self.UnitsContainer()
+
+        # Sanitize input_string with whitespaces.
+        input_string = input_string.strip()
+
+        units = ParserHelper.from_string(input_string, self.non_int_type)
+        if units.scale != 1:
+            raise ValueError("Unit expression cannot have a scaling factor.")
+
+        ret = self.UnitsContainer({})
+        many = len(units) > 1
+        for name in units:
+            cname = self.get_name(name, case_sensitive=case_sensitive)
+            value = units[name]
+            if not cname:
+                continue
+            if as_delta and (many or value != 1):
+                definition = self._units[cname]
+                # Logarithmic units have no delta counterpart.
+                if not (definition.is_multiplicative or definition.is_logarithmic):
+                    cname = "delta_" + cname
+            ret = ret.add(cname, value)
+
+        if as_delta:
+            cache[input_string, case_sensitive] = ret
+
+        return ret
+
+    def _eval_token(
+        self,
+        token: TokenInfo,
+        case_sensitive: bool | None = None,
+        **values: QuantityArgument,
+    ):
+        """Evaluate a single token using the following rules:
+
+        1. numerical values as strings are replaced by their numeric counterparts
+            - integers are parsed as integers
+            - other numeric values are parses of non_int_type
+        2. strings in (inf, infinity, nan, dimensionless) with their numerical value.
+        3. strings in values.keys() are replaced by Quantity(values[key])
+        4. in other cases, the values are parsed as units and replaced by their canonical name.
+
+        Parameters
+        ----------
+        token
+            Token to evaluate.
+        case_sensitive, optional
+            If true, a case sensitive matching of the unit name will be done in the registry.
+            If false, a case INsensitive matching of the unit name will be done in the registry.
+            (Default value = None, which uses registry setting)
+        **values
+            Other string that will be parsed using the Quantity constructor on their corresponding value.
+        """
+        token_type = token[0]
+        token_text = token[1]
+        if token_type == NAME:
+            if token_text == "dimensionless":
+                return self.Quantity(1)
+            elif token_text.lower() in ("inf", "infinity"):
+                return self.non_int_type("inf")
+            elif token_text.lower() == "nan":
+                return self.non_int_type("nan")
+            elif token_text in values:
+                return self.Quantity(values[token_text])
+            else:
+                return self.Quantity(
+                    1,
+                    self.UnitsContainer(
+                        {self.get_name(token_text, case_sensitive=case_sensitive): 1}
+                    ),
+                )
+        elif token_type == NUMBER:
+            return ParserHelper.eval_token(token, non_int_type=self.non_int_type)
+        else:
+            raise Exception("unknown token type")
+
+    def parse_pattern(
+        self,
+        input_string: str,
+        pattern: str,
+        case_sensitive: bool | None = None,
+        many: bool = False,
+    ) -> list[str] | str | None:
+        """Parse a string with a given regex pattern and returns result.
+
+        Parameters
+        ----------
+        input_string
+            The string to parse.
+        pattern
+            The regex parse string
+        case_sensitive, optional
+            If true, a case sensitive matching of the unit name will be done in the registry.
+            If false, a case INsensitive matching of the unit name will be done in the registry.
+            (Default value = None, which uses registry setting)
+        many, optional
+             Match many results
+             (Default value = False)
+        """
+
+        if not input_string:
+            return [] if many else None
+
+        # Parse string
+        regex = pattern_to_regex(pattern)
+        matched = re.finditer(regex, input_string)
+
+        # Extract result(s)
+        results = []
+        for match in matched:
+            # Extract units from result
+            match = match.groupdict()
+
+            # Parse units
+            units = [
+                float(value) * self.parse_expression(unit, case_sensitive)
+                for unit, value in match.items()
+            ]
+
+            # Add to results
+            results.append(units)
+
+            # Return first match only
+            if not many:
+                return results[0]
+
+        return results
+
+    def parse_expression(
+        self,
+        input_string: str,
+        case_sensitive: bool | None = None,
+        **values: QuantityArgument,
+    ) -> QuantityT:
+        """Parse a mathematical expression including units and return a quantity object.
+
+        Numerical constants can be specified as keyword arguments and will take precedence
+        over the names defined in the registry.
+
+        Parameters
+        ----------
+        input_string
+
+        case_sensitive, optional
+            If true, a case sensitive matching of the unit name will be done in the registry.
+            If false, a case INsensitive matching of the unit name will be done in the registry.
+            (Default value = None, which uses registry setting)
+        **values
+            Other string that will be parsed using the Quantity constructor on their corresponding value.
+        """
+        if not input_string:
+            return self.Quantity(1)
+
+        input_string = self._apply_preprocessors(input_string)
+        input_string = string_preprocessor(input_string)
+        gen = pint_eval.tokenizer(input_string)
+
+        def _define_op(s: str):
+            return self._eval_token(s, case_sensitive=case_sensitive, **values)
+
+        def _eval_implicit_mul(left, right):
+            if isinstance(left, self.Quantity):
+                return left * right
+            if isinstance(right, self.Quantity):
+                return self.Quantity(left, right)
+            return left * right
+
+        # replace implicit multiplication with self._eval_implicit_mul
+        bin_op = {**_BINARY_OPERATOR_MAP, "": _eval_implicit_mul}
+        result = build_eval_tree(gen).evaluate(_define_op, bin_op=bin_op)
+
+        if not isinstance(result, self.Quantity):
+            return self.Quantity(result)
+        return result
+
+    ############
+    # Conversion methods (object -> magnitude or unit):
+    # - intended to be extended by registry subclasses that wish to support more objects
+    # - intended to only be used by the `Unit`/`Quantity` constructors
+    ############
+
+    def _into_units(
+        self, units: UnitLike | None, /, *, target_class_name: str | None = None
+    ) -> UnitsContainer:
+        """Convenience method that converts the argument into units.
+
+        Intended for use by the `Unit` and `Quantity` constructors.
+
+        This function's return value is guaranteed to only contain units that are registered in `self`.
+        """
+        if units is None:
+            return self.UnitsContainer()
+        elif isinstance(units, PlainUnit):
+            if units._REGISTRY is not self:
+                raise ValueError(
+                    "Pint explicitly disallows mixing units from different registries, "
+                    "because they are not guaranteed to have the same meaning."
+                )
+            # NOTE: since it's a PlainUnit invariant, we know these units are valid for this registry,
+            #   so we can return them as-is without further validation.
+            return units._units
+        elif isinstance(units, UnitsContainer):
+            for u in units:
+                # this will raise `UndefinedUnitError` if the unit is not defined here
+                self.get_name(u)
+            return units
+        elif isinstance(units, str):
+            return self.parse_units_as_container(units)
+        elif isinstance(units, PlainQuantity):
+            if units._REGISTRY is not self:
+                raise ValueError(
+                    "Pint explicitly disallows mixing units from different registries, "
+                    "because they are not guaranteed to have the same meaning."
+                )
+            if units.magnitude != 1:
+                logger.warning(
+                    "Treating a non-unity quantity as pure units: the magnitude has been ignored!"
+                    # specialized warning message for maintaining backwards compatibility
+                    if target_class_name is None
+                    else f"Creating new {target_class_name} using a non unity PlainQuantity as units."
+                )
+            return units._units
+        else:
+            raise TypeError(
+                f"units must be of type str, Unit or UnitsContainer; not {type(units)}."
+            )
+
+    def _into_magnitude(
+        self,
+        value: object,
+        /,
+        units: UnitsContainer | None = None,
+        *,
+        parse_strings: bool = False,
+    ) -> Magnitude:
+        """Convenience method that converts the value into a supported magnitude.
+
+        Intended to be used by `Quantity` and `Unit` methods.
+        The `units` argument is the target unit, required when `value` is a `PlainQuantity`.
+        """
+        if isinstance(value, PlainQuantity):
+            if units is None:
+                raise TypeError("Expected a bare magnitude, found a quantity.")
+            return value.to(units)._magnitude
+        elif isinstance(value, PlainUnit):
+            if units is None:
+                raise TypeError("Expected a magnitude, found a unit.")
+            return (1 * value).to(units)._magnitude
+        elif isinstance(value, str):
+            if not parse_strings:
+                raise TypeError(
+                    "This operation does not support automatically parsing strings."
+                    " Please convert the operand to a quantity before proceeding."
+                )
+            if value == "":
+                raise ValueError("magnitude cannot be an empty string.")
+            parsed = ParserHelper.from_string(value, self.non_int_type)
+            if parsed:
+                # NOTE: we're calling this function again in order to consistently handle all cases
+                #   (including when `parsed` also has units and is not just a scale/magnitude).
+                quantity = self.Quantity(parsed.scale, self.UnitsContainer(parsed))
+                return self._into_magnitude(quantity, units=units)
+            else:
+                return parsed.scale
+        # we can finally convert the magnitude the way we wish
+        magnitude = self._normalize_magnitude(value)
+        if magnitude is NotImplemented:
+            return cast(Magnitude, value)  # will be treated as a scalar
+        return magnitude
+
+    def _normalize_magnitude(self, value: object, /) -> Magnitude | NotImplementedType:
+        """Try and convert the given value as a pure magnitude.
+
+        This method should be implemented by subclasses that wish to extend pint's magnitude normalization,
+        according to the following behavioral assumptions:
+        - if the value is unknown to the implementer, this method should return :class:`NotImplementedType`:
+            this is faster than an exception and allows other subclasses to handle the same value;
+        - if the value is not interpretable as a magnitude, this method should raise `TypeError`;
+        - if the value is malformed or invalid, this method should raise any other error (e.g. `ValueError`).
+
+        The implementation should call `value = super()._normalize_magnitude(value)` for the unhandled cases,
+          so that all subclasses get a chance of handling the value.
+        """
+        if isinstance(value, bool):
+            raise TypeError(
+                "Pint does not support boolean magnitudes because they are confusing: "
+                "please call `int()` or `float()` before interpreting the value as a magnitude."
+            )
+        elif isinstance(value, Number) or is_ndarray_or_duck(value):
+            return cast(Magnitude, value)
+        # handle clearly meaningless or unintended values
+        elif isinstance(value, (dict, set, datetime.datetime, datetime.timedelta)):
+            raise TypeError(
+                f"Pint explicitly does not support {type(value)} magnitudes."
+            )
+        elif value is None:
+            raise TypeError(
+                "Pint attempted to construct a quantity with `None` as a magnitude! "
+                "This is likely unintentional, please double-check your code and make sure "
+                "you are not passing `None` as a magnitude, either directly to the `Quantity` "
+                "constructor or as an operand of an arithmetic operation."
+            )
+        return NotImplemented
+
+    def _as_magnitude_and_units(self, value: object) -> tuple[object, str] | None:
+        """Return the magnitude and units of a value that carries its own units
+        (e.g. a timedelta), or None for any other value."""
+        if isinstance(value, datetime.timedelta):
+            return value.total_seconds(), "seconds"
+        return None
+
+    ############
+    # Other utilities
+    ############
+
+    # We put this last to avoid overriding UnitsContainer and I (@hgrecco) do not want to rename it.
+    # TODO: Maybe in the future we need to change it to a more meaningful non-colliding name.
+    def UnitsContainer(self, *args: Any, **kwargs: Any) -> UnitsContainer:
+        return UnitsContainer(*args, non_int_type=self.non_int_type, **kwargs)
+
+    __call__ = parse_expression
+
+
+class PlainRegistry(GenericPlainRegistry[PlainQuantity, PlainUnit]):
+    Quantity: TypeAlias = PlainQuantity
+    Unit: TypeAlias = PlainUnit

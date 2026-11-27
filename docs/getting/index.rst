@@ -1,0 +1,59 @@
+Getting Started
+===============
+
+The getting started guide aims to get you using pint productively as quickly as possible.
+
+Want to try it before installing anything? Head over to
+:doc:`/try-in-browser` to run Pint directly in your browser.
+
+
+Installation
+------------
+
+Pint runs on Python 3.13+.
+It only depends on a couple small packages for its core functionality:
+- :code:`flexparser` and :code:`flexcache` for parsing unit definition files
+- :code:`platformdirs` for finding platform-dependent cache paths
+
+Beyond this minimal setup, pint supports interoperability with other libraries, such as
+numpy and uncertainties, that are considered optional dependencies.
+
+.. grid:: 2
+
+    .. grid-item-card::  Prefer pip?
+
+        **pint** can be installed via pip from `PyPI <https://pypi.org/project/pint>`__.
+
+        ++++++++++++++++++++++
+
+        .. code-block:: bash
+
+            pip install pint
+
+    .. grid-item-card::  Working with conda?
+
+        **pint** is part of the `Conda-Forge <https://conda-forge.org//>`__
+        channel and can be installed with Anaconda or Miniconda:
+
+        ++++++++++++++++++++++
+
+        .. code-block:: bash
+
+            conda install -c conda-forge pint
+
+
+That's all! You can check that Pint is correctly installed by starting up python, and importing Pint:
+
+.. code-block:: python
+
+    >>> import pint
+    >>> pint.__version__  # doctest: +SKIP
+
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+
+    overview
+    tutorial
+    pint-in-your-projects
+    faq
