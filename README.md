@@ -92,6 +92,54 @@ urlretrieve(paper.pdf_url, "paper.pdf")
 urlretrieve(paper.source_url(), "paper.tar.gz")
 ```
 
+#### Rebuilding a ranking offline
+
+A weekly collection run issues overlapping paged requests and may retain several
+successful raw Atom responses for the same request window. Given the stored
+response bodies, a ranking over a zero-based rank range can be rebuilt with no
+network access via `Client.offline_board` (or the `Search.offline_board`
+convenience). Each window is a `RequestWindow` (or a `(start, end)` tuple) aligned
+with the list of response bodies collected for it.
+
+```python
+import arxiv
+
+search = arxiv.Search(query="quantum", max_results=5)
+windows = [arxiv.RequestWindow(0, 3), arxiv.RequestWindow(1, 4), arxiv.RequestWindow(3, 5)]
+responses = [
+    [window_one_first_attempt, window_one_retry],  # raw Atom bytes per window
+    [window_two_response],
+    [window_three_response],
+]
+
+reconstruction = arxiv.Client().offline_board(search, 0, 5, windows, responses)
+if reconstruction.published:
+    for entry in reconstruction.board:
+        print(entry.rank, entry.version_id, entry.title, entry.updated)
+        for evidence in entry.evidence:
+            print("  window", evidence.window_index,
+                  "response", evidence.response_index,
+                  "position", evidence.position)
+else:
+    # The previously published board is retained; reasons explain the conflicts.
+    for reason in reconstruction.reasons:
+        print(reason)
+```
+
+A board is published only when one *complete* response can be selected per window
+(`startIndex`, `itemsPerPage` and entry count match the window), the selected
+responses share one `totalResults` that covers the rank range, overlapping entries
+carry the same version, readable records agree on UTC `updated` and normalized
+title, and no versioned short id occupies two ranks. A versioned entry whose
+timestamp cannot be parsed still holds its rank and may only be completed by a
+readable record for the same version at the same rank from another selected
+overlapping response; entries without a reliable version id never serve as
+evidence. When multiple distinct complete boards remain possible, the previous
+reconstruction (passed as `previous`) is retained and `uncertain_ranks` plus
+`candidates` describe every viable record; candidates only include records that
+actually occur in a complete board. The result is independent of the order in
+which windows and responses are supplied.
+
 #### Logging
 
 To inspect this package's network behavior and API logic, configure a `DEBUG`-level logger.

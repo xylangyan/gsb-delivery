@@ -17,6 +17,14 @@ from typing import Generator, Iterator
 
 from . import _feed
 from ._feed import ParsedFeed
+from . import _offline
+from ._offline import (
+    BoardEntry as BoardEntry,
+    Evidence as Evidence,
+    RankCandidate as RankCandidate,
+    Reconstruction as Reconstruction,
+    RequestWindow as RequestWindow,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -406,6 +414,30 @@ class Search:
             "sortOrder": self.sort_order.value,
         }
 
+    def offline_board(
+        self,
+        rank_start: int,
+        rank_end: int,
+        windows: list[_offline.RequestWindow | tuple[int, int]],
+        responses: list[list[bytes]],
+        previous: Reconstruction | None = None,
+    ) -> Reconstruction:
+        """
+        Rebuilds a ranking for this search offline from retained Atom responses.
+
+        Thin convenience wrapper around `Client.offline_board` using a default
+        `Client`. See `reconstruct_board` for the reconstruction rules and the
+        meaning of `windows`, `responses` and `previous`.
+        """
+        return Client().offline_board(
+            search=self,
+            rank_start=rank_start,
+            rank_end=rank_end,
+            windows=windows,
+            responses=responses,
+            previous=previous,
+        )
+
 
 class Client:
     """
@@ -579,6 +611,37 @@ class Client:
             logger.warning("Malformed feed; consider handling: %s", feed.error)
 
         return feed
+
+    def offline_board(
+        self,
+        search: Search,
+        rank_start: int,
+        rank_end: int,
+        windows: list[_offline.RequestWindow | tuple[int, int]],
+        responses: list[list[bytes]],
+        previous: Reconstruction | None = None,
+    ) -> Reconstruction:
+        """
+        Reconstructs a ranking for `search` entirely from retained Atom responses.
+
+        No network requests are made. `windows` and `responses` are aligned:
+        each window is a `RequestWindow` (or a ``(start, end)`` tuple) and the
+        matching entry holds every successful raw response body retained for
+        that window. `rank_start`/`rank_end` delimit the zero-based,
+        half-open rank range to publish. When the stored pages cannot support
+        a unique new board, the `previous` reconstruction is retained and the
+        returned `Reconstruction` explains why; pass the prior result there.
+
+        See `arxiv._offline.reconstruct_board` for the full validation rules.
+        """
+        return _offline.reconstruct_board(
+            search=search,
+            rank_start=rank_start,
+            rank_end=rank_end,
+            windows=windows,
+            responses=responses,
+            previous=previous,
+        )
 
 
 class ArxivError(Exception):
