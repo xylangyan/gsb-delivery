@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyfakefs"
+description = "Implements a fake file system that mocks the Python file system modules."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["COPYING"]
+authors = [
+    { name = "Google", email = "google-pyfakefs@google.com" },
+    { name = "John McGehee", email = "pyfakefs@johnnado.com" }
+]
+maintainers = [
+    { name = "mrbean-bremen", email = "hansemrbean@googlemail.com" }
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Filesystems",
+    "Framework :: Pytest",
+]
+keywords = [
+    "testing",
+    "filesystem",
+    "mocking",
+    "unittest",
+    "pytest",
+]
+requires-python = ">=3.10"
+dynamic = ["version"]
+entry-points.pytest11.fakefs = "pyfakefs.pytest_plugin"
+
+[project.urls]
+documentation = "https://pytest-pyfakefs.readthedocs.io/"
+homepage = "https://github.com/pytest-dev/pyfakefs"
+repository = "https://github.com/pytest-dev/pyfakefs"
+changelog = "https://github.com/pytest-dev/pyfakefs/blob/main/CHANGES.md"
+
+[dependency-groups]
+dev = [
+    "pytest>=6.2.5",
+    "pre-commit>=4.1.4",
+]
+extra = [
+    "pandas==2.3.3",
+    "xlrd==2.0.2",
+    "openpyxl==3.1.5",
+]
+
+[project.optional-dependencies]
+doc = [
+    "sphinx>=7.0.0",
+    "furo>=2025.12.19",
+    "myst-parser>=5.0.0"
+]
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+    "pyfakefs",
+    "pyfakefs.tests",
+    "pyfakefs.tests.fixtures",
+    "pyfakefs.pytest_tests",
+    "pyfakefs.pytest_tests.hook_test",
+    "pyfakefs.pytest_tests.ns_package.test",
+    "pyfakefs.pytest_tests.ns_package.test.ns_package.test",
+]
+
+[tool.setuptools.package-data]
+where = ["pyfakefs"]
+pyfakefs = ["py.typed", "**/*.parquet", "**/*.xlsx"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pyfakefs.__version__" }
+
+[tool.tox]
+requires = ["tox>=4.22"]
+env_list = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "pypy3.10"]
+
+[tool.tox.env_run_base]
+description = "Run test under {base_python}"
+dependency_groups = [
+    "dev", "extra"
+]
+pass_env = ["HOME", "USERPROFILE"]
+commands = [
+    ["python", "-m", "pyfakefs.tests.all_tests"],
+    ["python", "-m", "pytest", "pyfakefs/pytest_tests/pytest_plugin_test.py"]
+]
