@@ -1,0 +1,2 @@
+benchmark/results/*.png binary
+benchmark/results/*.gz binary
