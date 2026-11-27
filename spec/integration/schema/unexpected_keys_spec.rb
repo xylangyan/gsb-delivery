@@ -1,0 +1,371 @@
+# frozen_string_literal: true
+
+RSpec.describe Dry::Schema, "unexpected keys" do
+  subject(:schema) do
+    Dry::Schema.define do
+      config.validate_keys = true
+
+      required(:name).filled(:string)
+      required(:ids).filled(:array).each(:integer)
+
+      required(:address).hash do
+        required(:city).filled(:string)
+        required(:zipcode).filled(:string)
+      end
+
+      required(:roles).array(:hash) do
+        required(:name).filled(:string)
+        required(:expires_at).value(:date)
+      end
+    end
+  end
+
+  it "adds error messages about unexpected keys" do
+    input = {
+      foo: "unexpected",
+      name: "Jane",
+      ids: [1, 2, 3, 4],
+      qux: [],
+      quux: [{}],
+      hoge: {},
+      address: {bar: "unexpected", baz: [1], city: "NYC", zipcode: "1234"},
+      roles: [
+        {name: "admin", expires_at: Date.today},
+        {name: "editor", foo: "unexpected", expires_at: Date.today}
+      ],
+      am: "John",
+      city: "LA"
+    }
+
+    expect(schema.(input).errors.to_h)
+      .to eql(
+        foo: ["is not allowed"],
+        qux: ["is not allowed"],
+        quux: ["is not allowed"],
+        hoge: ["is not allowed"],
+        address: {bar: ["is not allowed"], baz: ["is not allowed"]},
+        roles: {1 => {foo: ["is not allowed"]}},
+        am: ["is not allowed"],
+        city: ["is not allowed"]
+      )
+  end
+
+  it "reports correct index for arrays with more than 10 elements" do
+    roles = (0..20).map { |i| {name: "role-#{i}", expires_at: Date.today} }
+    roles[17][:foo] = "unexpected"
+
+    input = {
+      name: "Jane",
+      ids: [1],
+      address: {city: "Yokohama", zipcode: "00987"},
+      roles: roles
+    }
+
+    expect(schema.(input).errors.to_h).to eql(
+      roles: {17 => {foo: ["is not allowed"]}}
+    )
+  end
+
+  it "is treated as a failure when passed unexpected keys" do
+    input = {
+      foo: "unexpected",
+      name: "Jane",
+      ids: [1, 2, 3, 4],
+      address: {bar: "unexpected", city: "NYC", zipcode: "1234"},
+      roles: [
+        {name: "admin", expires_at: Date.today},
+        {name: "editor", foo: "unexpected", expires_at: Date.today}
+      ]
+    }
+
+    expect(schema.(input)).to be_failure
+  end
+
+  it "supports meta tags" do
+    schema = Dry::Schema.define do
+      config.validate_keys = true
+      config.messages.load_paths << "#{SPEC_ROOT}/fixtures/locales/pl.yml"
+      config.messages.default_locale = :pl
+
+      required(:title).filled
+    end
+
+    expect(schema.(wrong_key: nil).errors(full: true).to_h)
+      .to eq({wrong_key: [{code: "nieoczekiwany_klucz", text: "wrong_key Podano nieoczekiwany klucz"}],
+              title: [code: "brak_klucza", text: "title nie został podany"]})
+  end
+
+  context "with an array validation" do
+    subject(:schema) do
+      Dry::Schema.define do
+        config.validate_keys = true
+
+        required(:name).filled(:string)
+        optional(:tags).array(:string)
+      end
+    end
+
+    it "adds error messages" do
+      input = {name: "", tags: ["red", 123]}
+      expect(schema.(input).errors.to_h)
+        .to eql(
+          name: ["must be filled"],
+          tags: {1 => ["must be a string"]}
+        )
+    end
+
+    it "doesn't add the unexpected key error message when the type is wrong" do
+      schema = Dry::Schema.define do
+        config.validate_keys = true
+
+        required(:pets).array(:hash) do
+          required(:name).filled(:string)
+        end
+      end
+
+      expect(schema.(foo: "unexpected", pets: "a string").errors.to_h)
+        .to eql(
+          foo: ["is not allowed"],
+          pets: ["must be an array"]
+        )
+    end
+
+    context "with a nested maybe hash validator" do
+      subject(:schema) do
+        Dry::Schema.define do
+          config.validate_keys = true
+
+          required(:locations).array(:hash) do
+            required(:feedback_location).maybe(:hash) do
+              required(:lat).filled(:float)
+              required(:lng).filled(:float)
+            end
+          end
+        end
+      end
+
+      it "doesn't add error messages when there are no unexpected keys" do
+        expect(schema.(locations: [{feedback_location: nil}]).errors.to_h).to eq({})
+      end
+    end
+
+    context "with a nested array of hashes validator" do
+      subject(:schema) do
+        Dry::Schema.define do
+          config.validate_keys = true
+          required(:stringkey).filled(:string)
+          required(:harray).value(:array, size?: 2).each do
+            hash do
+              required(:foo).filled(:string)
+              required(:bar).filled(:integer)
+            end
+          end
+          required(:matrix).value(:array, size?: 2).each do
+            value(:array, size?: 3).each do
+              hash do
+                optional(:fzz).filled(:string)
+                optional(:bzz).filled(:integer)
+                optional(:grr).filled(:integer)
+              end
+            end
+          end
+        end
+      end
+
+      it "doesn't add error messages when there are no unexpected keys" do
+        array = [
+          {foo: "a", bar: 1},
+          {foo: "b", bar: 2}
+        ]
+        matrix = [
+          [{fzz: "a", bzz: 1, grr: 3}, {fzz: "b", bzz: 2, grr: 4}, {fzz: "c", bzz: 3, grr: 5}],
+          [{fzz: "a", bzz: 1}, {fzz: "b", bzz: 2}, {fzz: "c", bzz: 3}]
+        ]
+        expect(schema.(stringkey: "toto", harray: array, matrix: matrix).errors.to_h).to eq({})
+      end
+
+      it "adds error messages when matrix has wrong type members" do
+        array = [
+          {foo: "a", bar: 1},
+          {foo: "b", bar: 2}
+        ]
+        matrix = [
+          [{fzz: 1, bzz: "a"}, {fzz: "b", bzz: 2}, {fzz: "c", bzz: 3}],
+          [{fzz: "a", bzz: 1}, {fzz: 2, bzz: "b"}, {fzz: "c", bzz: 3}]
+        ]
+        expect(schema.(stringkey: "toto", harray: array, matrix: matrix).errors.to_h)
+          .to eq(
+            {
+              matrix: {
+                0 => {0 => {fzz: ["must be a string"], bzz: ["must be an integer"]}},
+                1 => {1 => {fzz: ["must be a string"], bzz: ["must be an integer"]}}
+              }
+            }
+          )
+      end
+
+      it "adds error messages when matrix has wrong dimensions" do
+        array = [
+          {foo: "a", bar: 1},
+          {foo: "b", bar: 2}
+        ]
+        matrix = [
+          [{fzz: "a", bzz: 1}, {fzz: "b", bzz: 2}, {fzz: "c", bzz: 3}],
+          [{fzz: "a", bzz: 1}, {fzz: "c", bzz: 3}],
+          [{fzz: "a", bzz: 1}, {fzz: "c", bzz: 3}]
+        ]
+        expect(schema.(stringkey: "toto", harray: array, matrix: matrix).errors.to_h)
+          .to eq(
+            {
+              matrix: ["size must be 2"]
+            }
+          )
+      end
+
+      it "adds error messages when matrix has wrong nested dimensions" do
+        array = [
+          {foo: "a", bar: 1},
+          {foo: "b", bar: 2}
+        ]
+        matrix = [
+          [{fzz: "a", bzz: 1}, {fzz: "b", bzz: 2}, {fzz: "c", bzz: 3}],
+          [{fzz: "a", bzz: 1}, {fzz: "c", bzz: 3}]
+        ]
+        expect(schema.(stringkey: "toto", harray: array, matrix: matrix).errors.to_h)
+          .to eq(
+            {
+              matrix: {1 => ["size must be 3"]}
+            }
+          )
+      end
+
+      it "adds error messages when there are unexpected array elements" do
+        array = [
+          {foo: "a", bar: 1, baz: "unexpected"},
+          {foo: "b", bar: 2}
+        ]
+        matrix = [
+          [{title: "a", bzz: 1}, {fzz: "b", bzz: 2}, {fzz: "c", bzz: 3}],
+          [{fzz: "a", bzz: 1}, {fzz: "b", bzz: 2}, {name: "c", bzz: 3}]
+        ]
+        expect(schema.(stringkey: "toto", harray: array, matrix: matrix).errors.to_h)
+          .to eq(
+            harray: {0 => {baz: ["is not allowed"]}},
+            matrix: {
+              0 => {0 => {title: ["is not allowed"]}},
+              1 => {2 => {name: ["is not allowed"]}}
+            }
+          )
+      end
+    end
+
+    context "with a nested array of strings" do
+      subject(:schema) do
+        Dry::Schema.define do
+          config.validate_keys = true
+          required(:matrix).value(:array, size?: 2).each do
+            value(:array, size?: 3).each do
+              value(:string, size?: 1)
+            end
+          end
+        end
+      end
+
+      it "doesn't add error messages when there are no unexpected keys" do
+        matrix = [
+          %w[a b c],
+          %w[d e f]
+        ]
+        expect(schema.(matrix: matrix).errors.to_h).to eq({})
+      end
+
+      it "adds error messages when matrix has wrong type members" do
+        matrix = [
+          ["a", 1, "c"],
+          %w[d e f]
+        ]
+        expect(schema.(matrix: matrix).errors.to_h).to eq(
+          {
+            matrix: {
+              0 => {1 => ["must be a string"]}
+            }
+          }
+        )
+      end
+
+      it "adds error messages when matrix has wrong dimensions" do
+        matrix = [
+          %w[a b c],
+          %w[d e f],
+          %w[g h i]
+        ]
+        expect(schema.(matrix: matrix).errors.to_h)
+          .to eq(
+            {
+              matrix: ["size must be 2"]
+            }
+          )
+      end
+
+      it "adds error messages when matrix has wrong nested dimensions" do
+        matrix = [
+          %w[a b c],
+          %w[d e f g]
+        ]
+        expect(schema.(matrix: matrix).errors.to_h)
+          .to eq(
+            {
+              matrix: {1 => ["size must be 3"]}
+            }
+          )
+      end
+
+      it "adds error messages when there are unexpected array elements" do
+        matrix = [
+          %w[a b c],
+          ["d", {foo: "unexpected"}, "f"]
+        ]
+        expect(schema.(matrix: matrix).errors.to_h)
+          .to eq(
+            matrix: {
+              1 => {1 => {foo: ["is not allowed"]}}
+            }
+          )
+      end
+    end
+
+    context "with a non-nested maybe hash validator" do
+      subject(:schema) do
+        Dry::Schema.define do
+          config.validate_keys = true
+
+          required(:feedback_location).maybe(:hash) do
+            required(:lat).filled(:float)
+            required(:lon).filled(:float)
+          end
+        end
+      end
+
+      it "doesn't add error messages when there are no unexpected keys" do
+        expect(schema.(feedback_location: nil).errors.to_h).to eq({})
+      end
+    end
+  end
+
+  context "with an inherited params" do
+    it "copies key map from the parent and includes new keys from child" do
+      parent = Dry::Schema.Params do
+        config.validate_keys = true
+
+        required(:name).filled(:string)
+      end
+
+      child = Dry::Schema.Params(parent: parent) do
+        required(:email).filled(:string)
+      end
+
+      expect(child.(name: "Jane", email: "jane@doe.org", unexpected_key: "boo!").errors.to_h)
+        .to eql({unexpected_key: ["is not allowed"]})
+    end
+  end
+end
