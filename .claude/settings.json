@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(.pre-commit-config.yaml)",
+      "Edit(.github/workflows/benchmark.yml)",
+      "Edit(.github/workflows/labeler.yml)",
+      "Edit(.github/workflows/main.yml)",
+      "Edit(.github/workflows/master-merge.yml)",
+      "Edit(.github/workflows/release.yml)",
+      "Edit(.github/update_deps.yml)"
+    ]
+  }
+}

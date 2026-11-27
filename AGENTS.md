@@ -1,0 +1,333 @@
+# LLM Assistant Guide for `exchange-calendars` package
+This file provides context for LLM assistants (Claude Code and similar tools) working in this repository.
+
+In all context files, a '@' prefixing a path indicates that the path is defined relative to the project root in which this `AGENTS.md` file is located.
+
+## Skills
+
+Identify all available skills in the @.agents\skills directory
+
+## LLM context
+
+Add the 'agents' label to any PR that amends:
+- this @AGENTS.md
+- any SKILL.md file
+
+## Project Overview
+
+**exchange_calendars** is a Python package offering calendars for various securities exchanges. Each calendar provides information including:
+- trading minutes (minutes when the exchange is open)
+- trading sessions, and for each session the time of:
+  - session open
+  - session break start (if applicable)
+  - session break end (if applicable)
+  - session close
+- holidays
+
+NOTE: the package is a fork of the now unmaintained repo `trading_calendars` by quantopian.
+
+See @pyproject.toml for project metadata and dependencies.
+
+### Repository Layout
+
+```
+exchange_calendars_fork/
+├── .agents/                                # instructions for LLM coding agents
+│   └── skills/                             # skills for LLM coding agents
+│       ├── dependencies-management/
+│       │   └── SKILL.md
+│       ├── update-agents-md/
+│       │   └── SKILL.md
+│       └── writing-documentation/
+│           └── SKILL.md
+├── .devcontainer/
+│   ├── library-scripts/
+│   │   ├── common-debian.sh
+│   │   ├── node-debian.sh
+│   │   └── python-debian.sh
+│   ├── base.Dockerfile
+│   ├── devcontainer.json
+│   └── Dockerfile
+├── .github/
+│   ├── workflows/
+│   │   ├── benchmark.yml
+│   │   ├── labeler.yml
+│   │   ├── main.yml                        # build and run full test suite
+│   │   ├── master-merge.yml
+│   │   ├── release.yml
+│   │   └── update_deps.yml
+│   ├── dependabot.yml
+│   ├── pull_request_template.md
+│   └── release-drafter-config.yml
+├── docs/
+│   ├── dev/
+│   │   └── depenencies_update.md
+│   ├── tutorials/
+│   │   ├── calendar_methods.ipynb
+│   │   ├── calendar_properties.ipynb
+│   │   ├── minutes.ipynb
+│   │   ├── sessions.ipynb
+│   │   └── trading_index.ipynb
+│   └── changes_archive.md
+├── etc/                                    # developer scripts and reference materials
+│   ├── ecal/                               # show holiday calendar in the terminal
+│   ├── lunisolar/
+│   ├── NYSE-Historical-Closings.pdf
+│   ├── bench.py
+│   ├── check_holidays.py
+│   ├── factory_bounds.py                   # explore bounds of a calendar factory
+│   ├── make_exchange_calendar_test_csv.py  # create an answers .csv file for a calendar
+│   └── update_xkrx_holidays.py
+├── exchange_calendars/
+│   ├── pandas_extensions/
+│   │   ├── holiday.py
+│   │   ├── korean_holiday.py
+│   │   └── offsets.py
+│   ├── utils/
+│   │   └── pandas_utils.py
+│   ├── always_open.py
+│   ├── calendar_helpers.py
+│   ├── calendar_utils.py                    # calendar registry and dispatch
+│   ├── common_holidays.py
+│   ├── ecal.py                              # show holiday calendar in the terminal
+│   ├── errors.py
+│   ├── exchange_calendar.py                 # includes base ExchangeCalendar class
+│   ├── exchange_calendar_<code>.py          # calendars for each exchange
+│   ├── lunisolar_holidays.py
+│   ├── precomputed_exchange_calendar.py
+│   ├── tase_holidays.py
+│   ├── us_futures_calendar.py
+│   ├── us_holidays.py
+│   ├── weekday_calendar.py
+│   ├── xbkk_holidays.py
+│   ├── xkls_holidays.py
+│   ├── xkrx_holidays.py
+│   └── xtks_holidays.py
+├── tests/
+│   ├── resources/                           # .csv answer files for each calendar
+│   └── test_<code>_calendar.py              # test file for each calendar
+├── .pre-commit-config.yaml
+├── .python-version
+├── AGENTS.md
+├── CLAUDE.md
+├── LICENSE
+├── MANIFEST.in
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+├── ruff.toml
+└── uv.lock
+```
+
+## Technology Stack
+
+| Category | Tools |
+|---|---|
+| Python | 3.10–3.14 (`.python-version` pins 3.10) |
+| Package manager | `uv` |
+| Build backend | `setuptools` + `setuptools_scm` |
+| Testing | `pytest` |
+| Linting/formatting | `ruff` |
+| Type checking | `mypy` |
+| Git hooks | `pre-commit` |
+| Data Manipulation | `pandas`, `numpy` |
+
+The current project version is managed by `setuptools_scm` and written to `exchange_calendars/_version.py`.
+IMPORTANT: `exchange_calendars/_version.py` is auto-generated and you should not edit it.
+
+## Development Workflows
+
+### Setup
+
+```bash
+# Install dependencies using uv
+uv sync
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+### Testing
+
+- tests are in @tests/.
+- doctests are included to some methods/functions.
+- test with `pytest`.
+- see the `[tool.pytest.ini_options]` table of @pyproject.toml for configuration; options are applied automatically via `addopts`.
+
+Commands to run tests:
+```bash
+# All tests (including doctests in exchange_calendars/utils/pandas_utils.py)
+pytest
+
+# Tests in specific file
+pytest tests/test_module.py
+
+# Specific test
+pytest tests/test_module.py::test_name
+
+# With verbose output
+pytest -v
+```
+
+#### Testing Architecture
+Each calendar has a dedicated test file containing a dedicated test suite defined on a subclass of the common base class `ExchangeCalendarTestBase` (in @tests\test_exchange_calendar.py).
+
+Expected sessions and times for each calendar are stored in a .csv file in @tests\resources. During testing the contents of a .csv file are stored by an instance of the `Answers` class (of @tests\test_exchange_calendar.py). Tests then call the methods of the `Answers` class to access expected values.
+
+### Pre-commit Hooks
+
+See @.pre-commit-config.yaml for pre-commit implementation.
+
+Pre-commit runs automatically on `git commit`.
+
+To run manually:
+```bash
+pre-commit run --all-files
+```
+
+---
+
+### Continuous Integration
+
+GitHub Actions is used for CI. Defined workflows include:
+- @.github/workflows/main.yml - runs full test suite on matrix of platforms and python versions.
+- @.github/workflows/release.yml - releases a new version to PyPI.
+
+## Code Conventions
+
+### Architecture
+
+Each calendar is defined as a subclass of the common base class `ExchangeCalendar` in @exchange_calendars/exchange_calendar.py.
+
+### Formatting
+
+- format to `ruff` (Black compatible).
+- see @ruff.toml for configuration.
+
+```bash
+# Format code
+ruff format .
+```
+
+### Linting
+
+- lint with `ruff`.
+- See lint sections of @ruff.toml for configuration (includes excluded files).
+- type check with `mypy`.
+
+```bash
+# Check lint issues
+ruff check .
+
+# Type checking
+uv run mypy exchange_calendars/
+```
+
+### Imports
+
+- No wildcard imports (i.e. no `from x import *`).
+
+### Type Annotations
+
+- Type annotations are required on all public functions and methods.
+
+### Docstrings
+
+Public modules, classes, and functions MUST all have docstrings.
+
+Docstrings should follow **NumPy convention**. Familiarise yourself with this as described at https://numpydoc.readthedocs.io/en/latest/format.html. That said, the following should always be adhered to and allowed to override any NumPy convention:
+- 75 character line limit for public documentation
+- 88 character line limit for private documentation
+- formatted to ruff
+- parameter types should not be included to the docstring unless this provides useful information that users could not otherwise ascertain from the typed function signature.
+- default values should only be noted in function/module docstrings if not defined in the signature - for example if the parameter's default value is None and when received as None the default takes a concrete dynamically evaluated default value. When a default value is included to the parameter documentation it should be defined after a comma at the end of the parameter description, for example:
+    - description of parameter 'whatever', defaults to 0.
+- **subclasses** documentation should:
+    - list only methods and attributes added by the subclass. A note should be included referring users to documentation of base classes for the methods and attributes defined there.
+    - include a NOTES section documenting how to implement the subclass (only if not trivial).
+- documentation of **subclass methods that extend methods of a base class** should only include any parameters added by the extension. With respect to undocumented parameters a note should be included to refer the user to the corresponding 'super' method(s)' documentation on the corresponding base class or classes.
+- **documentation of exceptions and warnings** should be limited to only **unusual** exceptions and warnings that are raised directly by the function/method itself or by any private function/method that is called directly or indirectly by the function/method.
+- summary line should be in the imperative mood only when sensical to do so.
+- **DO NOT BLOAT documentation**. Focus on the code being documented; **avoid comment on other parts of the codebase** unless specifically warranted.
+- magic methods do not require documentation if their functionality is fully implied by the method name.
+- unit tests do not require docstrings.
+
+Example documentation:
+```python
+def my_func(param1: int, param2: str = "default", param3: None | str = None) -> bool:
+    """Short summary line.
+
+    Extended description if needed.
+
+    Parameters
+    ----------
+    param1
+        Description of param1.
+    param2
+        Description of param2.
+    param3
+        Description of param3, defaults to value of `param2`.
+
+    Returns
+    -------
+    bool
+        Description of return value.
+    """
+```
+
+#### Documentation content
+
+- when **revising documentation to reflect changes in implementation**, do NOT fall into the trap of documenting what's 'not the case' in the context of the previous implementation. Rather, just document what *is* the case, in the context of the revised implementation. Documentation that describes what the implementation does NOT do, in terms of a prior or erroneous implementation, is irrelevant and obfuscating to a reader who never knew of that prior implementation. Only ever make comparisons to erroneous or prior implementations if there is GOOD REASON to fear regression!
+
+#### Prose style
+
+All documentation (docstrings, comments and markdown files, tests' included) is written
+to be understood on a single reading. The 'writing-documentation' skill defines the
+style that serves this aim. The skill holds core rules and guidance. The core rules
+apply to all new and revised text, whereas the guidance is applied only to new text.
+The core rules are:
+1. Give every claim its own verb.
+2. Carry no reason or fact in an absolute construction (a noun with a participle of its
+   own) or in a participial phrase whose subject is not the subject of the main clause.
+3. Write no reference that a reader could take two ways.
+4. Never introduce a purpose with ", such that".
+5. Never introduce a condition on a particular thing with "where".
+6. Never split the main clause with an aside that holds a clause.
+7. Never introduce a reason with ", as".
+
+These are the names of the core rules only. The skill gives each rule's limits, the test
+for rule 4, and the guidance. Read the skill before writing or revising any
+documentation.
+
+'DO NOT BLOAT' (above) concerns what is documented, not how it is written. It does not
+license compression: do not add content, but where making the structure of a sentence
+explicit takes more words, use more words.
+
+### Comments
+
+- pay particular attention to comments starting with:
+    - 'NOTE'
+    - 'TODO'
+    - 'AIDEV-NOTE' - these comments are specifically addressed to you.
+    - 'AIDEV-TODO' - these comments are specifically requesting you do something.
+    - 'AIDEV-QUESTION' - these comments are asking a question for specifically you to answer.
+
+---
+
+## Important Notes for AI Agents
+
+1. **NEVER DO RULES**:
+    - NEVER schedule a check-in unless specifically asked to.
+    - Never edit the file `exchange_calendars/_version.py` - this is auto-generated by the build process.
+
+2. **Do not assume that the package is coherent or free of bugs**, or that tests or documentation or any plans should be treated as gospel. If you come across a contradiction or a conflict or what you believe to be a bug, then say so.
+
+3. **Do not assume that the code structure is sensible or as required**. If you come across existing or planned code that you believe to be poorly structured, then say so.
+
+4. **NumPy docstring style** — all new public functions/classes must use NumPy-convention docstrings and rules as defined under Docstrings section of this @AGENTS.md file.
+
+5. **Branch naming** — feature branches should follow the `<agent-name>/<description>` pattern with the following substitutions:
+    - `<agent-name>` -> your name
+    - `<description>` -> very short description of changes
+
+6. **Typos** — do not report typos when reviewing code, rather just plan to fix them in the next commit (regardless of whether that next commit is related to the typos or not). If the user indicates that the session will end without you making any further commits (for example by requesting that the PR body be updated to reflect the changes) then advise of any outstanding typos to be fixed; do not list them; do not advise of the negative situation, i.e. if there are no outstanding typo fixes.
