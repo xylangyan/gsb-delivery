@@ -1,0 +1,235 @@
+[build-system]
+build-backend = 'uv_build'
+requires = ['uv_build>=0.11,<1']
+
+[project]
+name = 'portalocker'
+version = '4.4.2'
+dynamic = []
+description = 'Cross-platform file locking, with Redis, PID-file and bounded-semaphore locks'
+readme = 'README.md'
+requires-python = '>=3.10'
+license = 'BSD-3-Clause'
+license-files = ['LICENSE']
+authors = [{ name = 'Rick van Hattem', email = 'wolph@wol.ph' }]
+keywords = ['locking', 'locks', 'with', 'statement', 'windows', 'linux', 'unix']
+classifiers = [
+    'Development Status :: 6 - Mature',
+    'Intended Audience :: Developers',
+    'Intended Audience :: Information Technology',
+    'Intended Audience :: System Administrators',
+    'Natural Language :: English',
+    'Operating System :: MacOS',
+    'Operating System :: MacOS :: MacOS X',
+    'Operating System :: Microsoft',
+    'Operating System :: Microsoft :: Windows',
+    'Operating System :: POSIX',
+    'Operating System :: POSIX :: BSD',
+    'Operating System :: POSIX :: BSD :: FreeBSD',
+    'Operating System :: POSIX :: BSD :: NetBSD',
+    'Operating System :: POSIX :: BSD :: OpenBSD',
+    'Operating System :: POSIX :: Linux',
+    'Operating System :: POSIX :: SunOS/Solaris',
+    'Operating System :: Unix',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3 :: Only',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3.14',
+    'Programming Language :: Python :: Implementation',
+    'Programming Language :: Python :: Implementation :: CPython',
+    'Programming Language :: Python :: Implementation :: PyPy',
+    'Topic :: Software Development :: Libraries',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+    'Topic :: System',
+    'Topic :: System :: Distributed Computing',
+    'Topic :: System :: Filesystems',
+    'Topic :: System :: Monitoring',
+    'Typing :: Typed',
+]
+dependencies = []
+
+[project.urls]
+homepage = 'https://github.com/wolph/portalocker/'
+documentation = 'https://portalocker.readthedocs.io/en/latest/'
+repository = 'https://github.com/wolph/portalocker/'
+Funding = 'https://github.com/sponsors/wolph'
+Issues = 'https://github.com/wolph/portalocker/issues'
+Changelog = 'https://github.com/wolph/portalocker/releases'
+
+[project.optional-dependencies]
+# redis-py has shipped inline type hints (py.typed) since 5.0, which
+# replaced the external types-redis stubs this package used to depend on.
+redis = ['redis>=5.0']
+win32 = ["pywin32>=226; platform_system == 'Windows'"]
+tests = [
+    'coverage-conditional-plugin>=0.9',
+    'fakeredis>=2.31.0',
+    'portalocker[redis]',
+    'pytest-cov>=2.8.1',
+    'pytest-rerunfailures>=15.1',
+    'pytest-timeout>=2.1.0',
+    'pytest>=5.4.1',
+    'types-pywin32>=310.0.0.20250429',
+    # runtime `assert_type` for the typing regression tests on 3.10,
+    # where `typing.assert_type` does not exist yet
+    'typing_extensions>=4.4',
+]
+docs = [
+    'furo',
+    'sphinx>=7',
+]
+
+[dependency-groups]
+dev = [
+    'basedpyright',
+    'codespell',
+    'mypy',
+    'portalocker[tests,docs]',
+    'pyrefly',
+    'ruff',
+    'tox-uv',
+    'tox>=4.21',
+    'ty',
+]
+
+[tool.uv.build-backend]
+module-name = 'portalocker'
+module-root = ''
+source-include = [
+    'CHANGELOG.rst', 'CONTRIBUTING.md', 'portalocker_tests/**',
+    'conftest.py', 'build_extra.py', 'docs/**', 'scripts/**',
+    'tox.toml', 'ruff.toml',
+]
+source-exclude = ['docs/_build/**', 'docs/superpowers/**']
+
+[tool.codespell]
+skip = '*.css,*.js,*.lock,./docs/_build,./htmlcov,./.git,./.tox,./.venv'
+
+[tool.repo-review]
+ignore = [
+    'PY004', # no /docs with markdown - we use RST
+    'PY005', # tests folder is portalocker_tests (public import path for downstream)
+    'PC110', # no black, we use ruff
+    'PC111', # no blacken-docs, we use ruff
+    'PC140', # manual mypy instead of pre-commit
+    'PC160', # manual codespell instead of pre-commit
+    'PC170', # no pygrep
+    'PC180', # no css/js to format
+    'PC190', # manual ruff instead of pre-commit
+    'PC901', # no pre-commit CI; lefthook is used instead
+    'PY006', # no pre-commit config; lefthook is used instead
+    'MY103', # mypy strict = true is set in [tool.mypy]
+]
+
+[tool.pytest.ini_options]
+minversion = '6.0'
+addopts = [
+    '--doctest-modules',
+    '--doctest-glob=*.rst',
+    '--cov=portalocker',
+    '--cov-report=term-missing',
+    '--cov-fail-under=100',
+    '--timeout=20',
+    '--strict-config',
+    '--strict-markers',
+    '-ra',
+    '-p', 'no:cacheprovider',
+]
+log_level = 'INFO'
+xfail_strict = true
+testpaths = ['portalocker', 'portalocker_tests', 'docs']
+doctest_optionflags = ['ELLIPSIS']
+norecursedirs = ['_build', '_theme']
+filterwarnings = [
+    'error',
+    'ignore::DeprecationWarning',
+    'ignore::PendingDeprecationWarning',
+    'ignore::ImportWarning',
+    'ignore::ResourceWarning',
+    # CPython's multiprocessing resource tracker warns (and, escalated to an
+    # error inside a finalizer, fails tests as an unraisable exception) when
+    # garbage collection makes it clean up a semaphore reentrantly. The
+    # timing is interpreter-internal and unrelated to the code under test.
+    'ignore:ResourceTracker called reentrantly:UserWarning',
+]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ['portalocker', 'portalocker_tests']
+plugins = ['coverage_conditional_plugin']
+
+# `coverage combine` merges the CI matrix data files on Linux, so the
+# Windows cells arrive with backslash-separated relative paths. These
+# aliases fold both spellings onto the checked-out tree; without them the
+# same module counts as two files and the combined report goes wrong.
+[tool.coverage.paths]
+source = ['portalocker', '*/portalocker', '*\portalocker']
+tests = ['portalocker_tests', '*/portalocker_tests', '*\portalocker_tests']
+
+[tool.coverage.report]
+fail_under = 100
+ignore_errors = true
+# Only constructs that cannot execute at runtime are excluded by policy:
+# type-only blocks, the CLI entry-point guard and Protocol stub bodies.
+# Guard raises (AssertionError / NotImplementedError), ImportError
+# fallbacks and debug branches are measured like any other code and need
+# either a test or an explicit per-line pragma naming the reason.
+exclude_also = [
+    'pragma: no cover',
+    'if typing.TYPE_CHECKING:',
+    'if TYPE_CHECKING:',
+    '@(typing\.)?overload',
+    'if __name__ == .__main__.:', # CLI entry-point guard, not exercised by imports
+    'typing.Protocol',
+]
+
+# The `not-nt` / `not-posix` / `nt-no-pywin32` / `nt-or-posix` pragmas are
+# resolved
+# per-OS by coverage-conditional-plugin (see rules below) rather than the
+# static `exclude_also` list, so a POSIX-only branch stays *measured* on POSIX
+# (and is only excluded on the platforms where it cannot run) instead of being
+# hidden everywhere. `os_name` is `os.name`; `is_installed` probes the optional
+# pywin32 extra so the Win32-only dispatch paths are excluded on the
+# pywin32-less Windows cells where they are unreachable.
+[tool.coverage.coverage_conditional_plugin.rules]
+not-nt = "os_name != 'nt'"
+not-posix = "os_name != 'posix'"
+nt-no-pywin32 = "os_name == 'nt' and not is_installed('win32file')"
+nt-or-posix = "os_name in ('nt', 'posix')"
+
+[tool.mypy]
+python_version = '3.10'
+strict = true
+warn_unreachable = true
+enable_error_code = ['ignore-without-code', 'truthy-bool', 'redundant-expr']
+packages = ['portalocker', 'portalocker_tests']
+
+[[tool.mypy.overrides]]
+module = 'portalocker_tests.*'
+disallow_untyped_defs = false
+
+[tool.pyright]
+pythonVersion = '3.10'
+typeCheckingMode = 'standard'
+strict = ['portalocker']
+include = ['portalocker', 'portalocker_tests']
+exclude = ['.venv', '.tox', 'build', 'dist', 'docs']
+
+[tool.pyrefly]
+project-includes = ['portalocker', 'portalocker_tests']
+project-excludes = ['.venv', '.tox', 'build', 'dist']
+python-version = '3.10'
+
+[tool.ty.environment]
+python-version = '3.10'
+
+[tool.ty.src]
+include = ['portalocker', 'portalocker_tests']
+
+[tool.uv]
+exclude-newer = "14 days"
