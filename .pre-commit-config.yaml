@@ -1,0 +1,81 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  - repo: meta
+    hooks:
+      - id: check-useless-excludes
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-json
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: fa93bc3224c614a0e9786d3e2d3d48edcca246eb  # frozen: v0.15.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/asottile/pyupgrade
+    rev: 75992aaa40730136014f34227e0135f63fc951b4  # frozen: v3.21.2
+    hooks:
+      - id: pyupgrade
+        args:
+          - --py310-plus
+  - repo: https://github.com/jackdewinter/pymarkdown
+    rev: c5755e272a13da06be38d74052658af46c1ee447  # frozen: v0.9.35
+    hooks:
+      - id: pymarkdown
+        name: pymarkdown-autofix
+        args: ["-x-fix", "scan"]
+      - id: pymarkdown
+        name: pymarkdown
+  - repo: https://github.com/dzhu/rstfmt
+    rev: 81e5b5eafe45c61b9d1e2410aa16ae39390ad43d  # frozen: v0.0.14
+    hooks:
+      - id: rstfmt
+  - repo: https://github.com/rstcheck/rstcheck
+    rev: 27258fde1ee7d3b1e6a7bbc58f4c7b1dd0e719e5  # frozen: v6.2.5
+    hooks:
+      - id: rstcheck
+  - repo: https://github.com/codespell-project/codespell
+    rev: 63c8f8312b7559622c0d82815639671ae42132ac  # frozen: v2.4.1
+    hooks:
+      - id: codespell
+        # Don't try to "fix" any spellings in the source data.
+        exclude: "^src/pycountry/databases.*$"
+        # Avoid requiring an extra dependency on `tomli` by requiring Python 3.11
+        # When 3.11 is the lowest version supported, this tag can be dropped.
+        language_version: "3.11"
+  - repo: https://github.com/sirosen/texthooks
+    rev: 815307a61a62d48c84412f34f3e6789a2cd9179a  # frozen: 0.7.1
+    hooks:
+      # Don't try to fix any of the data files.
+      - id: fix-smartquotes
+        exclude: "^src/pycountry/databases.*$"
+      - id: fix-ligatures
+        exclude: "^src/pycountry/databases.*$"
+      - id: fix-spaces
+        exclude: "^src/pycountry/databases.*$"
+      - id: forbid-bidi-controls
+        exclude: "^src/pycountry/databases.*$"
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: 3a6eb0fadf60b3cccfd80bad9dbb6fae7e47b316  # frozen: v1.10.0
+    hooks:
+      - id: python-check-blanket-noqa
+      - id: python-no-eval
+      - id: rst-backticks
+      - id: rst-directive-colons
+      - id: rst-inline-touching-normal
+  - repo: https://github.com/henryiii/validate-pyproject-schema-store
+    rev: 5e6f0fbc775cf099208a6aaece4e3d22b76f3e3c  # frozen: 2026.02.15
+    hooks:
+      - id: validate-pyproject

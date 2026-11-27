@@ -1,0 +1,25 @@
+# coverage artifacts
+htmlcov/
+.coverage
+
+# build artifacts
+dist/
+
+# test artifacts
+.tox/
+__pycache__/
+
+# iso-codes checkout
+parts/
+
+# development artifacts
+*.swp
+*.sublime-workspace
+pycountry.xcodeproj
+.cache/
+.pytest_cache/
+.venv/
+.idea/
+
+# other cruft
+.DS_Store
