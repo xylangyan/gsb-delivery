@@ -4,6 +4,7 @@ Changelog
 All help in providing PRs to close out bug issues is appreciated. Even if that is providing a repo that fully replicates issues. We have very generous contributors that have added these to bug issues which meant another contributor picked up the bug and closed it out.
 
 -  Unreleased
+    - Add handover mode: two shifts can share one cassette through a sidecar handover book with independent cursors, per-shift used/recorded occurrences and explicit withdrawals, then build a minimized cassette for another team with group-wise and individual owner-ID rewrites, collision checks under per-group matchers, a resumable build journal and an offline request script. The original cassette file is never modified and the handover book is invisible to matchers.
     - CI: also test with urllib3 1.26, which vcrpy supports but CI didn't test, so #1092 wasn't caught
 
 -  9.4.2

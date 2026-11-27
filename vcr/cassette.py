@@ -191,6 +191,7 @@ class Cassette:
         before_save_interaction=None,
         after_load_interaction=None,
         skip_patchers=(),
+        handover=None,
     ):
         self._persister = persister or FilesystemPersister
         self._path = path
@@ -214,6 +215,15 @@ class Cassette:
             self._before_save_interaction.append(hide)
             self._after_load_interaction.insert(0, restore)
         self.skip_patchers = validate_skip_patchers(skip_patchers)
+
+        # Handover mode: progress goes to a sidecar handover book, never into
+        # this cassette file. None means an ordinary cassette.
+        self.handover_config = handover
+        self.handover_ledger = None
+        # Original occurrence indices hidden from this session because the duty
+        # officer withdrew them before this shift opened (or before it reached
+        # them). Reached pages stay playable even after withdrawal.
+        self._hidden_occurrences = set()
 
         # self.data is the list of (req, resp) tuples
         self.data = []
@@ -269,6 +279,20 @@ class Cassette:
             return
         self.data.append((request, response))
         self.dirty = True
+        if self.handover_ledger is not None:
+            # The book dedupes identical new interactions across both shifts, so
+            # a resumed run or another shift re-submitting the same fetch is not
+            # recorded twice. The original cassette file is left untouched.
+            _shift_id, _index, recorded_before = self.handover_ledger.record_new_interaction(
+                request, response
+            )
+            if recorded_before:
+                # The page is already in self.data (loaded from the book or
+                # appended earlier in this session); drop the in-memory duplicate.
+                self.data.pop()
+                self.dirty = False
+                return
+            self.handover_ledger.save()
 
     def filter_request(self, request):
         return self._before_record_request(request)
@@ -280,8 +304,14 @@ class Cassette:
         """
         request = self._before_record_request(request)
         for index, (stored_request, response) in enumerate(self.data):
+            if self._is_hidden(index):
+                continue
             if requests_match(request, stored_request, self._match_on):
                 yield index, response
+
+    def _is_hidden(self, index):
+        """In handover mode, withdrawals this shift hasn't reached are hidden."""
+        return self.handover_ledger is not None and index in self._hidden_occurrences
 
     def can_play_response_for(self, request):
         request = self._before_record_request(request)
@@ -305,6 +335,12 @@ class Cassette:
                     # Use stored (possibly modified) request, not the raw incoming request
                     self._played_interactions.append((self.data[index][0], response))
                 self.play_counts[index] += 1
+                if self.handover_ledger is not None and index < self._loaded_count:
+                    # Reached pages keep playing for this shift even if withdrawn later;
+                    # each used original occurrence is registered once.
+                    self.handover_ledger.record_playback(index)
+                    self.handover_ledger.shift.advance_cursor(index + 1)
+                    self._hidden_occurrences.discard(index)
                 return response
         # The cassette doesn't contain the request asked for.
         raise UnhandledHTTPRequestError(
@@ -328,6 +364,25 @@ class Cassette:
 
     def rewind(self):
         self.play_counts = collections.Counter()
+
+    def handover_withdraw(self, occurrence_index):
+        """Register the withdrawal of one original occurrence.
+
+        The occurrence must have appeared in the original cassette and is
+        identified by its index plus the stored request fingerprint in the
+        handover book. A shift that has already reached the page keeps its
+        local playback; newly opened sessions no longer see the page.
+        """
+        if self.handover_ledger is None:
+            raise RuntimeError("handover_withdraw is only available in handover mode")
+        occurrence_index = int(occurrence_index)
+        if not 0 <= occurrence_index < self._loaded_count:
+            raise IndexError(f"occurrence {occurrence_index} is not an original interaction")
+        stored_request = self.data[occurrence_index][0]
+        self.handover_ledger.withdraw(occurrence_index, stored_request)
+        self.handover_ledger.save()
+        if occurrence_index not in self.handover_ledger.shift.reached_occurrences:
+            self._hidden_occurrences.add(occurrence_index)
 
     def find_requests_with_most_matches(self, request):
         """
@@ -421,6 +476,14 @@ class Cassette:
         return kept + recorded
 
     def _save(self, force=False):
+        if self.handover_ledger is not None:
+            # Handover mode never overwrites the original cassette: the shift's
+            # progress lives in the sidecar book and is written on close even if
+            # the other shift is still open. _save only runs when the cassette
+            # context exits, so this also closes the shift for later reopening.
+            self.handover_ledger.close_shift()
+            self.dirty = False
+            return
         if self.record_mode == RecordMode.ALL:
             if force or self.dirty:
                 interactions = self._rerecorded_interactions()
@@ -489,6 +552,42 @@ class Cassette:
                 self._path,
                 exc_info=True,
             )
+        self._setup_handover()
+
+    def _setup_handover(self):
+        if self.handover_config is None:
+            return
+        from .handover.ledger import HandoverLedger, _interaction_from_dict
+
+        self.handover_ledger = HandoverLedger.open(self.handover_config, self._path)
+        shift = self.handover_ledger.shift
+        # Pages withdrawn before this shift reached them don't appear in a new
+        # open; reached pages stay in the local playback cursor.
+        for occurrence in self.handover_ledger.withdrawn_occurrences:
+            if occurrence not in shift.reached_occurrences:
+                self._hidden_occurrences.add(occurrence)
+        # Restore every shift's recorded pages (in book order) so a resumed
+        # session can replay them, while new appends are still registered only
+        # against this shift's section of the book.
+        for section in self.handover_ledger.raw_data()["shifts"].values():
+            for entry in section.get("recorded", []):
+                request, response = _interaction_from_dict(entry)
+                self.data.append((request, response))
+        log.info(
+            "Handover shift %r resumed at cursor %s (%d used, %d recorded, %d withdrawn)",
+            self.handover_ledger.shift_id,
+            shift.cursor,
+            len(shift.used_occurrences),
+            len(shift.recorded),
+            len(self.handover_ledger.withdrawn_occurrences),
+        )
+
+    @property
+    def handover_cursor(self):
+        """This shift's independent playback position in the original cassette."""
+        if self.handover_ledger is None:
+            return None
+        return self.handover_ledger.shift.cursor
 
     def __str__(self):
         return f"<Cassette containing {len(self)} recorded response(s)>"

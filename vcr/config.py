@@ -172,6 +172,7 @@ class VCR:
             "before_save_interaction": kwargs.get("before_save_interaction", self.before_save_interaction),
             "after_load_interaction": kwargs.get("after_load_interaction", self.after_load_interaction),
             "skip_patchers": kwargs.get("skip_patchers", self.skip_patchers),
+            "handover": kwargs.get("handover"),
         }
         path = kwargs.get("path")
         if path:

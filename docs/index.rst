@@ -10,6 +10,7 @@ Contents
    usage
    configuration
    advanced
+   handover
    api
    debugging
    contributing
