@@ -1,0 +1,72 @@
+require "flipper"
+require "flipper/middleware/setup_env"
+require "flipper/middleware/memoizer"
+require "flipper/cloud/configuration"
+require "flipper/cloud/dsl"
+require "flipper/cloud/middleware"
+require "flipper/cloud/migrate"
+
+module Flipper
+  module Cloud
+    # Public: Returns a new Flipper instance with an http adapter correctly
+    # configured for flipper cloud.
+    #
+    # token - The String token for the environment from the website.
+    # options - The Hash of options. See Flipper::Cloud::Configuration.
+    # block - The block that configuration will be yielded to allowing you to
+    #         customize this cloud instance and its adapter.
+    def self.new(options = {})
+      configuration = Configuration.new(options)
+      yield configuration if block_given?
+      DSL.new(configuration)
+    end
+
+    def self.app(flipper = nil, options = {})
+      env_key = options.fetch(:env_key, 'flipper')
+      memoizer_options = options.fetch(:memoizer_options, {})
+      middleware_options = {env_key: env_key}
+      middleware_options[:signature_tolerance] = options[:signature_tolerance] if options.key?(:signature_tolerance)
+
+      app = ->(_) { [404, { Rack::CONTENT_TYPE => 'application/json'.freeze }, ['{}'.freeze]] }
+      builder = Rack::Builder.new
+      yield builder if block_given?
+      builder.use Flipper::Middleware::SetupEnv, flipper, env_key: env_key
+      builder.use Flipper::Middleware::Memoizer, memoizer_options.merge(env_key: env_key)
+      builder.use Flipper::Cloud::Middleware, middleware_options
+      builder.run app
+      klass = self
+      app = builder.to_app
+      app.define_singleton_method(:inspect) { klass.inspect } # pretty rake routes output
+      app
+    end
+
+    # Private: Configure Flipper to use Cloud by default. Reads are served
+    # from one Memory adapter that every thread in the process shares, unless
+    # FLIPPER_CLOUD_MEMORY_READS is false, which reads the local adapter.
+    #
+    # options - A block that returns more options for each new instance.
+    def self.set_default(&options)
+      if ENV["FLIPPER_CLOUD_TOKEN"]
+        Flipper.configure do |config|
+          memory = Flipper::Cloud::SharedMemory.new if memory_reads?
+          config.default do
+            adapter_options = if memory
+              { memory: memory, adapter_builder: config }
+            else
+              { local_adapter: config.adapter }
+            end
+            self.new((options ? options.call : {}).merge(adapter_options))
+          end
+        end
+      end
+    end
+
+    # Private: Returns false when FLIPPER_CLOUD_MEMORY_READS turns reading
+    # from memory off (default: true).
+    def self.memory_reads?
+      Flipper::Typecast.to_boolean(ENV.fetch("FLIPPER_CLOUD_MEMORY_READS", "true"))
+    end
+  end
+end
+
+Flipper::Cloud.set_default

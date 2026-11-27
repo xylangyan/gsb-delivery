@@ -1,0 +1,248 @@
+require "open3"
+
+RSpec.describe Flipper::UI do
+  let(:token) do
+    if Rack::Protection::AuthenticityToken.respond_to?(:random_token)
+      Rack::Protection::AuthenticityToken.random_token
+    else
+      'a'
+    end
+  end
+  let(:session) do
+    { :csrf => token, 'csrf' => token, '_csrf_token' => token }
+  end
+  let(:configuration) { described_class.configuration }
+
+  describe 'Initializing middleware with flipper instance' do
+    let(:app) { build_app(flipper) }
+
+    it 'works' do
+      flipper.enable :some_great_feature
+      get '/features'
+      expect(last_response.status).to be(200)
+      expect(last_response.body).to include('some_great_feature')
+    end
+  end
+
+  describe 'Request method unsupported by action' do
+    it 'answers 405 with the methods the route allows' do
+      options '/features'
+      expect(last_response.status).to be(405)
+      expect(last_response.headers['allow']).to eq('HEAD, GET, POST')
+      expect(last_response.body).to eq('Method Not Allowed')
+    end
+
+    it 'answers 405 for PUT on a feature page' do
+      put '/features/search', { 'authenticity_token' => token }, 'rack.session' => session
+      expect(last_response.status).to be(405)
+      expect(last_response.headers['allow']).to eq('HEAD, GET, DELETE')
+    end
+  end
+
+  describe 'Head requests' do
+    let(:app) { build_app(flipper) }
+
+    it 'are allowed but perform get and return no body' do
+      flipper.enable :some_great_feature
+
+      head '/features'
+
+      expect(last_response.status).to be(200)
+      expect(last_response.body).to be_empty
+    end
+  end
+
+  describe 'Inspecting the built Rack app' do
+    it 'returns a String' do
+      expect(build_app(flipper).inspect).to eq("Flipper::UI")
+    end
+  end
+
+  # See https://github.com/flippercloud/flipper/issues/80
+  it 'can route features with names that match static directories' do
+    post 'features/refactor-images/actors',
+         { 'value' => 'User;6', 'operation' => 'enable', 'authenticity_token' => token },
+         'rack.session' => session
+    expect(last_response.status).to be(302)
+    expect(last_response.headers['location']).to eq('/features/refactor-images')
+  end
+
+  describe 'configure' do
+    it 'yields configuration instance' do
+      described_class.configure do |config|
+        expect(config).to be_instance_of(Flipper::UI::Configuration)
+      end
+    end
+
+    describe 'banner' do
+      it 'does not include the banner if banner_text is not set' do
+        get '/features'
+        expect(last_response.body).not_to include('Production Environment')
+      end
+
+      describe 'when set' do
+        around do |example|
+          begin
+            @original_banner_text = described_class.configuration.banner_text
+            described_class.configuration.banner_text = 'Production Environment'
+            example.run
+          ensure
+            described_class.configuration.banner_text = @original_banner_text
+          end
+        end
+
+        it 'includes banner' do
+          get '/features'
+          expect(last_response.body).to include('Production Environment')
+        end
+
+        it 'prefers the banner given to the app' do
+          app = build_app(flipper, banner_text: 'Cross-app project', banner_class: 'warning')
+          status, _, body = app.call(Rack::MockRequest.env_for('/features'))
+          html = body.each.to_a.join
+
+          expect(status).to be(200)
+          expect(html).to include('Cross-app project')
+          expect(html).to include('alert-warning')
+          expect(html).not_to include('Production Environment')
+        end
+      end
+
+      it 'rejects an unknown banner_class for the app' do
+        expect { build_app(flipper, banner_class: 'nope').call(Rack::MockRequest.env_for('/features')) }.
+          to raise_error(Flipper::InvalidConfigurationValue, /banner_class/)
+      end
+    end
+
+    describe "application_href" do
+      around do |example|
+        original_href = configuration.application_href
+        example.run
+      ensure
+        configuration.application_href = original_href
+      end
+
+      it 'does not have an application_href by default' do
+        expect(configuration.application_href).to be(nil)
+      end
+
+      context 'with application_href not set' do
+        it 'does not add App link' do
+          get '/features'
+          expect(last_response.body).not_to include('<a href="/myapp">App</a>')
+        end
+      end
+
+      context 'with application_href set' do
+        before do
+          configuration.application_href = '/myapp'
+        end
+
+        it 'does add App link' do
+          get '/features'
+          expect(last_response.body).to match('<a.*href="/myapp"')
+        end
+      end
+
+      context 'with application_href set to full url' do
+        before do
+          configuration.application_href = "https://myapp.com/"
+        end
+
+        it 'does add App link' do
+          get '/features'
+          expect(last_response.body).to match('<a.*href="https://myapp.com/"')
+        end
+      end
+    end
+
+    describe "feature_creation_enabled" do
+      it 'sets feature_creation_enabled to true by default' do
+        expect(configuration.feature_creation_enabled).to be(true)
+      end
+
+      context 'with feature_creation_enabled set to true' do
+        before do
+          @original_feature_creation_enabled = configuration.feature_creation_enabled
+          configuration.feature_creation_enabled = true
+        end
+
+        it 'has the add_feature button' do
+          get '/features'
+          expect(last_response.body).to include('Add Feature')
+        end
+
+        after do
+          configuration.feature_creation_enabled = @original_feature_creation_enabled
+        end
+      end
+
+      context 'with feature_creation_enabled set to false' do
+        before do
+          @original_feature_creation_enabled = configuration.feature_creation_enabled
+          configuration.feature_creation_enabled = false
+        end
+
+        it 'does not have the add_feature button' do
+          get '/features'
+          expect(last_response.body).not_to include('Add Feature')
+        end
+
+        after do
+          configuration.feature_creation_enabled = @original_feature_creation_enabled
+        end
+      end
+    end
+
+    describe "feature_removal_enabled" do
+      it 'sets feature_removal_enabled to true by default' do
+        expect(configuration.feature_removal_enabled).to be(true)
+      end
+
+      context 'with feature_removal_enabled set to true' do
+        before do
+          @original_feature_removal_enabled = configuration.feature_removal_enabled
+          configuration.feature_removal_enabled = true
+        end
+
+        it 'has the add_feature button' do
+          get '/features/test'
+          expect(last_response.body).to include('Delete')
+        end
+
+        after do
+          configuration.feature_removal_enabled = @original_feature_removal_enabled
+        end
+      end
+
+      context 'with feature_removal_enabled set to false' do
+        before do
+          @original_feature_removal_enabled = configuration.feature_removal_enabled
+          configuration.feature_removal_enabled = false
+        end
+
+        it 'does not have the add_feature button' do
+          get '/features/test'
+          expect(last_response.body).not_to include('Delete')
+        end
+
+        after do
+          configuration.feature_removal_enabled = @original_feature_removal_enabled
+        end
+      end
+    end
+  end
+
+  it "loads rack/session, since the examples and docs tell you to use its cookie middleware" do
+    # A child process so nothing else has loaded it. RUBYLIB finds the bundled gems
+    # (CI installs them outside GEM_HOME) without loading Bundler or Rails. The check
+    # is on the file because Rack 2, which older Rails rows use, defines the constant itself.
+    env = { "RUBYLIB" => $LOAD_PATH.join(File::PATH_SEPARATOR) }
+    script = "require 'flipper/ui'; exit $LOADED_FEATURES.grep(%r{/rack/session\\.rb\\z}).any?"
+    _, stderr, status = Bundler.with_unbundled_env do
+      Open3.capture3(env, RbConfig.ruby, "-Ilib", "-e", script, chdir: FlipperRoot.to_s)
+    end
+
+    expect(status).to be_success, stderr
+  end
+end
