@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Vremec"
+  given-names: "Matevz"
+  orcid: "https://orcid.org/0000-0002-2730-494X"
+- family-names: "Collenteur"
+  given-names: "Matevz"
+  orcid: "https://orcid.org/0000-0001-7843-1538"
+- family-names: "Birk"
+  given-names: "Steffen"
+  orcid: "https://orcid.org/0000-0001-7474-3884"
+title: "Technical note: Improved handling of potential evapotranspiration in hydrological studies with PyEt"
+doi: https://doi.org/10.5194/hess-2022-417
+date-released: 2023
+url: "https://github.com/phydrus/pyet"
+preferred-citation:
+    type: journal
+    authors:
+    - family-names: "Vremec"
+      given-names: "Matevz"
+      orcid: "https://orcid.org/0000-0002-2730-494X"
+    - family-names: "Collenteur"
+      given-names: "Matevz"
+      orcid: "https://orcid.org/0000-0001-7843-1538"
+    - family-names: "Birk"
+      given-names: "Steffen"
+      orcid: "https://orcid.org/0000-0001-7474-3884"
+    doi: "https://doi.org/10.5194/hess-2022-417"
+    journal: "Hydrol. Earth Syst. Sci. Discuss. [preprint]"
+    year: "2023"
+    title: "Technical note: Improved handling of potential evapotranspiration in hydrological studies with PyEt"

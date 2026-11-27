@@ -1,0 +1,26 @@
+{
+  "description": "PyEt is an open source python package for calculating reference and potential Evapotranspiration for 1D (pandas.Series) and 3D (xarray.DataArrray) data.",
+  "license": "MIT",
+  "title": "PyEt: A Python package for estimating potential evapotranspiration",
+  "upload_type": "software",
+  "creators": [
+    {
+      "affiliation": "University of Graz, Graz, Austria.",
+      "name": "Matevz Vremec",
+      "orcid": "0000-0002-2730-494X"
+    },
+    {
+      "affiliation": "Eawag, Dübendorf, Switzerland.",
+      "name": "Raoul Collenteur",
+      "orcid": "0000-0001-7843-1538"
+    }
+  ],
+  "access_right": "open",
+  "keywords": [
+    "python",
+    "evaporation",
+    "hydrology",
+    "water balance",
+    "open source"
+  ]
+}
