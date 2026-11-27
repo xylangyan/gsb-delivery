@@ -1,0 +1,99 @@
+from datetime import datetime, timezone
+
+import pytest
+from cron_converter import Cron
+from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticCustomError
+
+from pydantic_extra_types.cron import CronStr
+
+
+class CronModel(BaseModel):
+    cron: CronStr
+
+
+def test_cron_str_is_validated_via_model() -> None:
+    model = CronModel(cron='*/5 0 * * 1-5')
+    cron_value = model.cron
+
+    assert isinstance(cron_value, CronStr)
+    assert cron_value.minute == '*/5'
+    assert cron_value.hour == '0'
+    assert cron_value.day_of_the_month == '*'
+    assert cron_value.month == '*'
+    assert cron_value.day_of_the_week == '1-5'
+    assert isinstance(cron_value.cron_obj, Cron)
+
+
+def test_cron_str_rejects_invalid_components() -> None:
+    with pytest.raises(ValidationError) as exc:
+        CronModel(cron='* * * *')
+    assert 'Cron expression must contain 5 space separated components' in str(exc.value)
+
+
+@pytest.mark.parametrize('expression', [None, ''])
+def test_cron_str_rejects_non_string_or_empty_input(expression: str | None) -> None:
+    with pytest.raises(PydanticCustomError):
+        CronStr(expression)
+
+
+def test_cron_str_rejects_invalid_expression() -> None:
+    with pytest.raises(ValidationError) as exc:
+        CronModel(cron='60 0 * * *')
+    assert "Value 60 out of range for 'minute'" in str(exc.value)
+
+
+def test_cron_str_next_after() -> None:
+    cron_value = CronStr('15 8 * * 1-5')
+    next_run = cron_value.next_after(datetime(2024, 1, 1, 7, 0))
+    assert next_run == datetime(2024, 1, 1, 8, 15)
+    now = datetime.now(timezone.utc)
+    current_year = now.year
+    if now.month == 12 and now.day == 31:  # "If it's Dec 31, the next invocation is actually in the new year
+        assert cron_value.next_run.startswith(str(current_year + 1))
+    else:
+        assert cron_value.next_run.startswith(str(current_year))  # sanity check for property access
+
+
+def test_cron_str_strips_whitespace() -> None:
+    cron_value = CronStr(' 0 12 * * * ')
+    assert str(cron_value) == '0 12 * * *'
+
+
+def test_cron_str_preserves_explicit_slash_step() -> None:
+    # https://github.com/pydantic/pydantic-extra-types/issues/418
+    # `cron-converter`'s ``to_string()`` drops the `/step` for non-wildcard bases
+    # (e.g. ``30/5`` -> ``30``), which would silently change the schedule when the
+    # expression is serialised and re-parsed. The validated input must be kept.
+    model = CronModel(cron='30/5 * * * *')
+    assert str(model.cron) == '30/5 * * * *'
+    assert model.cron.minute == '30/5'
+
+    assert str(CronModel(cron='0/5 * * * *').cron) == '0/5 * * * *'
+
+    # Wildcard-based steps and whitespace normalisation are unaffected.
+    assert str(CronModel(cron='*/5 * * * *').cron) == '*/5 * * * *'
+    assert str(CronModel(cron='  30/5   *  *  *  *  ').cron) == '30/5 * * * *'
+
+
+@pytest.mark.parametrize(
+    'expression',
+    [
+        '+1 * * * *',
+        '1_0 * * * *',
+        '１ * * * *',  # fullwidth digit
+        '* ٣ * * *',  # Arabic-Indic digit
+        '* * 1_0 * *',
+        '* * * +1 *',
+        '* * * * +1',
+    ],
+)
+def test_cron_str_rejects_non_crontab_characters(expression: str) -> None:
+    with pytest.raises(ValidationError) as exc:
+        CronModel(cron=expression)
+    assert 'may only contain ASCII letters, digits' in str(exc.value)
+
+
+@pytest.mark.parametrize('expression', ['*/5 0 * * 1-5', '0 0 1 JAN,feb *', '0 12 * * mon-fri', '30/5 * * * *'])
+def test_cron_str_accepts_names_and_steps(expression: str) -> None:
+    assert str(CronModel(cron=expression).cron) == expression

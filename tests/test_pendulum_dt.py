@@ -1,0 +1,754 @@
+import warnings
+from datetime import date, datetime, time, timedelta
+from datetime import timezone as tz
+
+import pendulum
+import pytest
+from pydantic import BaseModel, TypeAdapter, ValidationError
+
+from pydantic_extra_types.pendulum_dt import Date, DateTime, Duration, Interval, Time
+
+UTC = tz.utc
+
+DtTypeAdapter = TypeAdapter(datetime)
+
+
+class DtModel(BaseModel):
+    dt: DateTime
+
+
+class TimeModel(BaseModel):
+    t: Time
+
+
+class DateTimeNonStrict(DateTime, strict=False):
+    pass
+
+
+class DtModelNotStrict(BaseModel):
+    dt: DateTimeNonStrict
+
+
+class DateModel(BaseModel):
+    d: Date
+
+
+class DurationModel(BaseModel):
+    delta_t: Duration
+
+
+class IntervalModel(BaseModel):
+    interval: Interval
+
+
+@pytest.mark.parametrize(
+    'instance',
+    [
+        pendulum.now(),
+        datetime.now(),
+        datetime.now(UTC),
+    ],
+)
+def test_existing_instance(instance):
+    """Verifies that constructing a model with an existing pendulum dt doesn't throw, and that
+    a naive instance stays naive (pydantic/pydantic-extra-types#414) instead of being defaulted
+    to UTC."""
+    model = DtModel(dt=instance)
+    if isinstance(instance, datetime):
+        assert model.dt == pendulum.instance(instance, tz=None)
+        dt = model.dt
+    else:
+        assert model.dt == instance
+        dt = model.dt
+
+    assert dt.day == instance.day
+    assert dt.month == instance.month
+    assert dt.year == instance.year
+    assert dt.hour == instance.hour
+    assert dt.minute == instance.minute
+    assert dt.second == instance.second
+    assert dt.microsecond == instance.microsecond
+    assert isinstance(dt, pendulum.DateTime)
+    assert type(dt) is DateTime
+    if dt.tzinfo != instance.tzinfo:
+        assert dt.tzinfo.utcoffset(dt) == instance.tzinfo.utcoffset(instance)
+
+
+@pytest.mark.parametrize(
+    'instance',
+    [
+        pendulum.today(),
+        date.today(),
+    ],
+)
+def test_pendulum_date_existing_instance(instance):
+    """Verifies that constructing a model with an existing pendulum date doesn't throw."""
+    model = DateModel(d=instance)
+    if isinstance(instance, datetime):
+        assert model.d == pendulum.instance(instance).date()
+    else:
+        assert model.d == instance
+    d = model.d
+    assert d.day == instance.day
+    assert d.month == instance.month
+    assert d.year == instance.year
+    assert isinstance(d, pendulum.Date)
+    assert type(d) is Date
+
+
+@pytest.mark.parametrize(
+    'instance',
+    [
+        pendulum.duration(days=42, hours=13, minutes=37),
+        pendulum.duration(days=-42, hours=13, minutes=37),
+        pendulum.duration(weeks=97),
+        pendulum.duration(days=463),
+        pendulum.duration(milliseconds=90122),
+        pendulum.duration(microseconds=90122),
+        pendulum.duration(
+            years=2,
+            months=3,
+            weeks=19,
+            days=1,
+            hours=25,
+            seconds=732,
+            milliseconds=123,
+            microseconds=1324,
+        ),
+        timedelta(days=42, hours=13, minutes=37),
+        timedelta(days=-42, hours=13, minutes=37),
+        timedelta(
+            weeks=19,
+            days=1,
+            hours=25,
+            seconds=732,
+            milliseconds=123,
+            microseconds=1324,
+        ),
+    ],
+)
+def test_duration_timedelta__existing_instance(instance):
+    """Verifies that constructing a model with an existing pendulum duration doesn't throw."""
+    model = DurationModel(delta_t=instance)
+
+    assert model.delta_t.total_seconds() == instance.total_seconds()
+    assert isinstance(model.delta_t, pendulum.Duration)
+    assert model.delta_t
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        pendulum.now().to_iso8601_string(),
+        pendulum.now().to_w3c_string(),
+    ],
+)
+def test_pendulum_dt_from_serialized(dt):
+    """Verifies that building an instance from serialized, well-formed strings decode properly."""
+    dt_actual = pendulum.parse(dt)
+    model = DtModel(dt=dt)
+    assert model.dt == dt_actual
+    assert type(model.dt) is DateTime
+    assert isinstance(model.dt, pendulum.DateTime)
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        pendulum.now().to_iso8601_string(),
+        pendulum.now().to_w3c_string(),
+    ],
+)
+def test_pendulum_dt_from_serialized_preserves_timezones(dt):
+    """Verifies that building an instance from serialized, well-formed strings decode
+    properly and preserves the timezone information across all of the Pendulum DateTime
+    properties.  Regression test for pydantic/pydantic-extra-types#188.
+    """
+    dt_actual = pendulum.parse(dt)
+    model = DtModel(dt=dt)
+    assert model.dt == dt_actual
+    assert type(model.dt) is DateTime
+    assert isinstance(model.dt, pendulum.DateTime)
+    assert model.dt.tzinfo is not None
+    assert model.dt.tzinfo.utcoffset(model.dt) == dt_actual.tzinfo.utcoffset(dt_actual)
+    assert model.dt.tz is not None
+    assert model.dt.tz.utcoffset(model.dt) == dt_actual.tz.utcoffset(dt_actual)
+    assert model.dt.timezone is not None
+    assert model.dt.timezone.utcoffset(model.dt) == dt_actual.timezone.utcoffset(dt_actual)
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        '2026-07-24',
+        '2026-07-24T10:00:00',
+    ],
+)
+def test_pendulum_dt_from_serialized_naive_stays_naive(dt):
+    """A timezone-naive string must not be defaulted to UTC. Regression test for
+    pydantic/pydantic-extra-types#414.
+    """
+    model = DtModel(dt=dt)
+    assert model.dt.tzinfo is None
+
+
+def test_pendulum_dt_from_serialized_aware_keeps_its_offset():
+    """A non-UTC offset in the input string must survive unchanged; naive inputs (#414) and
+    the pre-existing #188 fix for aware inputs are two branches of the same invariant.
+    """
+    model = DtModel(dt='2026-07-24T10:00:00+05:00')
+    assert model.dt.tzinfo is not None
+    assert model.dt.tzinfo.utcoffset(model.dt) == timedelta(hours=5)
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        pendulum.now().to_iso8601_string(),
+        pendulum.now().to_w3c_string(),
+        'Sat Oct 11 17:13:46 UTC 2003',  # date util parsing
+        pendulum.now().to_iso8601_string()[:5],  # actually valid or pendulum.parse(dt, strict=False) would fail here
+    ],
+)
+def test_pendulum_dt_not_strict_from_serialized(dt):
+    """Verifies that building an instance from serialized, well-formed strings decode properly,
+    without defaulting a naive result to UTC (pydantic/pydantic-extra-types#414)."""
+    dt_actual = pendulum.parse(dt, strict=False, tz=None)
+    model = DtModelNotStrict(dt=dt)
+    assert model.dt == dt_actual
+    assert type(model.dt) is DateTime
+    assert isinstance(model.dt, pendulum.DateTime)
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        pendulum.now().to_iso8601_string(),
+        pendulum.now().to_w3c_string(),
+        1718096578,
+        1718096578.5,
+        -5,
+        -5.5,
+        float('-0'),
+        '1718096578',
+        '1718096578.5',
+        '-5',
+        '-5.5',
+        '-0',
+        '-0.0',
+        '+0.0',
+        '+1718096578.5',
+        float('-2e10') - 1.0,
+        float('2e10') + 1.0,
+        -2e10 - 1,
+        2e10 + 1,
+    ],
+)
+def test_pendulum_dt_from_str_unix_timestamp(dt):
+    """Verifies that building an instance from serialized, well-formed strings decode properly."""
+    dt_actual = pendulum.instance(DtTypeAdapter.validate_python(dt))
+    model = DtModel(dt=dt)
+    assert model.dt == dt_actual
+    assert type(model.dt) is DateTime
+    assert isinstance(model.dt, pendulum.DateTime)
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        1718096578,
+        1718096578.5,
+        -5,
+        -5.5,
+        float('-0'),
+        '1718096578',
+        '1718096578.5',
+        '-5',
+        '-5.5',
+        '-0',
+        '-0.0',
+        '+0.0',
+        '+1718096578.5',
+        float('-2e10') - 1.0,
+        float('2e10') + 1.0,
+        -2e10 - 1,
+        2e10 + 1,
+    ],
+)
+def test_pendulum_dt_from_str_unix_timestamp_is_utc(dt):
+    """Verifies that without timezone information, it is coerced to UTC. As in pendulum"""
+    model = DtModel(dt=dt)
+    assert model.dt.tzinfo.tzname(model.dt) == 'UTC'
+
+
+@pytest.mark.parametrize(
+    'd',
+    [
+        pendulum.now().date().isoformat(),
+        pendulum.now().to_w3c_string(),
+        pendulum.now().to_iso8601_string(),
+    ],
+)
+def test_pendulum_date_from_serialized(d):
+    """Verifies that building an instance from serialized, well-formed strings decode properly."""
+    date_actual = pendulum.parse(d).date()
+    model = DateModel(d=d)
+    assert model.d == date_actual
+    assert type(model.d) is Date
+    assert isinstance(model.d, pendulum.Date)
+
+
+@pytest.mark.parametrize(
+    'delta_t_str',
+    [
+        'P3.14D',
+        'PT404H',
+        'P1DT25H',
+        'P2W',
+        'P10Y10M10D',
+    ],
+)
+def test_pendulum_duration_from_serialized(delta_t_str):
+    """Verifies that building an instance from serialized, well-formed strings decode properly."""
+    true_delta_t = pendulum.parse(delta_t_str)
+    model = DurationModel(delta_t=delta_t_str)
+    assert model.delta_t == true_delta_t
+    assert type(model.delta_t) is Duration
+    assert isinstance(model.delta_t, pendulum.Duration)
+
+
+def test_pendulum_interval_existing_instance():
+    """Verifies that constructing a model with an existing pendulum interval doesn't throw."""
+    start = pendulum.datetime(2024, 1, 1, tz='UTC')
+    end = pendulum.datetime(2024, 1, 2, tz='UTC')
+    interval = end - start
+
+    model = IntervalModel(interval=interval)
+
+    assert type(model.interval) is Interval
+    assert isinstance(model.interval, pendulum.Interval)
+    assert model.interval.start == start
+    assert model.interval.end == end
+
+
+def test_pendulum_interval_from_serialized():
+    """Verifies that interval strings are parsed into pendulum interval objects."""
+    interval_str = '2024-01-01T00:00:00Z/2024-01-02T00:00:00Z'
+    parsed = pendulum.parse(interval_str)
+    model = IntervalModel(interval=interval_str)
+
+    assert parsed == model.interval
+    assert type(model.interval) is Interval
+    assert isinstance(model.interval, pendulum.Interval)
+
+
+@pytest.mark.parametrize(
+    'interval_str',
+    [
+        '2024-01-01T00:00:00+00:00/2024-01-02T00:00:00+00:00',
+        '2021-05-06T12:30:00+00:00/2021-05-06T13:45:30+00:00',
+        '2020-02-28T00:00:00+00:00/2020-03-01T00:00:00+00:00',
+    ],
+)
+def test_pendulum_interval_serialization_roundtrip(interval_str):
+    """Verifies that an Interval survives a JSON serialize/deserialize round-trip.
+
+    Regression: without a serialization schema the Interval was serialized as a
+    bare duration (e.g. ``"P1D"``), dropping the start/end boundaries, and the
+    resulting string then failed to re-validate.
+    """
+    adapter = TypeAdapter(Interval)
+    interval = adapter.validate_python(interval_str)
+    json_serialized = adapter.dump_json(interval)
+    deserialized = adapter.validate_json(json_serialized)
+    assert deserialized.start == interval.start
+    assert deserialized.end == interval.end
+    assert deserialized == interval
+
+
+@pytest.mark.parametrize('microsecond', [0, 123456])
+@pytest.mark.parametrize(
+    'timezone', [None, UTC, tz(timedelta(hours=5, minutes=30)), tz(timedelta(hours=-3, minutes=-30))]
+)
+def test_pendulum_interval_roundtrip_preserves_endpoint_timezones(timezone, microsecond):
+    start = pendulum.datetime(2024, 1, 1, 12, 30, 0, microsecond, tz=timezone)
+    end = start.add(days=1)
+    adapter = TypeAdapter(Interval)
+    interval = adapter.validate_python(pendulum.interval(start, end))
+
+    restored = adapter.validate_json(adapter.dump_json(interval))
+
+    assert type(restored) is Interval
+    for actual, expected in [(restored.start, start), (restored.end, end)]:
+        assert actual.isoformat() == expected.isoformat()
+        assert actual.utcoffset() == expected.utcoffset()
+        assert actual == expected
+
+
+def test_pendulum_interval_python_dump_has_no_serializer_warning() -> None:
+    """Verifies that dumping an Interval in Python mode does not warn.
+
+    The core schema described the validated value as a ``str``, while validation
+    returns an ``Interval``. Python-mode serialization therefore warned that it
+    expected a ``str``, which turns into an error whenever warnings are escalated
+    (as they are in this test suite through ``filterwarnings = error``).
+    """
+    interval_str = '2024-01-01T00:00:00+00:00/2024-01-02T00:00:00+00:00'
+    model = IntervalModel(interval=interval_str)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        dumped = model.model_dump()
+
+    assert isinstance(dumped['interval'], Interval)
+    assert dumped['interval'] == model.interval
+
+
+@pytest.mark.parametrize(
+    'duration',
+    [
+        Duration(months=1),
+        Duration(weeks=1),
+        Duration(milliseconds=1),
+        Duration(microseconds=1),
+        Duration(days=1),
+        Duration(hours=1),
+        Duration(minutes=1),
+        Duration(seconds=1),
+        Duration(months=2, days=5),
+        Duration(weeks=3, hours=12),
+        Duration(days=10, minutes=30),
+        Duration(weeks=1, days=2, hours=3),
+        Duration(seconds=30, milliseconds=500),
+    ],
+)
+def test_pendulum_duration_serialization_roundtrip(duration):
+    adapter = TypeAdapter(Duration)
+    python_serialized = adapter.dump_python(duration)
+    json_serialized = adapter.dump_json(duration)
+    deserialized = TypeAdapter.validate_json(adapter, json_serialized)
+    assert deserialized == python_serialized == duration
+    assert deserialized.years == python_serialized.years == duration.years
+    assert deserialized.months == python_serialized.months == duration.months
+
+
+@pytest.mark.parametrize(
+    'duration',
+    [
+        Duration(days=-1),
+        Duration(days=-10),
+        Duration(seconds=-10),
+        Duration(hours=-5),
+        Duration(weeks=-2),
+        Duration(months=-3),
+        Duration(years=-1),
+        Duration(days=-1, hours=-2, minutes=-30),
+    ],
+)
+def test_pendulum_negative_duration_serialization_roundtrip(duration):
+    """Verifies that negative durations serialize and deserialize correctly."""
+    adapter = TypeAdapter(Duration)
+    json_serialized = adapter.dump_json(duration)
+    deserialized = TypeAdapter.validate_json(adapter, json_serialized)
+    assert deserialized == duration
+    assert deserialized.total_seconds() == duration.total_seconds()
+
+
+def test_pendulum_duration_iso8601_negative():
+    """Verifies that to_iso8601_string produces valid ISO 8601 for negative durations."""
+    d = Duration(days=-10)
+    iso = d.to_iso8601_string()
+    assert iso == '-P10D', f'Expected "-P10D", got "{iso}"'
+
+    d2 = Duration(seconds=-10)
+    iso2 = d2.to_iso8601_string()
+    assert iso2 == '-PT10S', f'Expected "-PT10S", got "{iso2}"'
+
+
+def get_invalid_dt_common():
+    return [
+        None,
+        'malformed',
+        'P10Y10M10D',
+        float('inf'),
+        float('-inf'),
+        'inf',
+        '-inf',
+        'INF',
+        '-INF',
+        '+inf',
+        'Infinity',
+        '+Infinity',
+        '-Infinity',
+        'INFINITY',
+        '+INFINITY',
+        '-INFINITY',
+        'infinity',
+        '+infinity',
+        '-infinity',
+        float('nan'),
+        'nan',
+        'NaN',
+        'NAN',
+        '+nan',
+        '-nan',
+    ]
+
+
+dt_strict = get_invalid_dt_common()
+dt_strict.append(pendulum.now().to_iso8601_string()[:5])
+
+
+@pytest.mark.parametrize(
+    'dt',
+    dt_strict,
+)
+def test_pendulum_dt_malformed(dt):
+    """Verifies that the instance fails to validate if malformed dt is passed."""
+    with pytest.raises(ValidationError):
+        DtModel(dt=dt)
+
+
+@pytest.mark.parametrize('dt', get_invalid_dt_common())
+def test_pendulum_dt_non_strict_malformed(dt):
+    """Verifies that the instance fails to validate if malformed dt are passed."""
+    with pytest.raises(ValidationError):
+        DtModelNotStrict(dt=dt)
+
+
+@pytest.mark.parametrize(
+    'instance',
+    [
+        pendulum.now().time(),
+        datetime.now().time(),
+        datetime.now(UTC).time(),
+    ],
+)
+def test_existing_time_instance(instance):
+    """Verifies that constructing a model with an existing pendulum time doesn't throw."""
+    model = TimeModel(t=instance)
+    if isinstance(instance, pendulum.Time):
+        assert model.t == instance
+        t = model.t
+    else:
+        assert model.t.replace(tzinfo=UTC) == pendulum.instance(instance)  # pendulum defaults to UTC
+        t = model.t
+
+    assert t.hour == instance.hour
+    assert t.minute == instance.minute
+    assert t.second == instance.second
+    assert t.microsecond == instance.microsecond
+    assert isinstance(t, pendulum.Time)
+    assert type(t) is Time
+    if t.tzinfo != instance.tzinfo:
+        date = Date(2022, 1, 22)
+        assert t.tzinfo.utcoffset(DateTime.combine(date, t)) == instance.tzinfo.utcoffset(
+            DateTime.combine(date, instance)
+        )
+
+
+@pytest.mark.parametrize(
+    'dt',
+    [
+        '17:53:12.266369',
+        '17:53:46',
+    ],
+)
+def test_pendulum_time_from_serialized(dt):
+    """Verifies that building an instance from serialized, well-formed strings decode properly."""
+    dt_actual = pendulum.parse(dt, exact=True)
+    model = TimeModel(t=dt)
+    assert model.t == dt_actual.replace(tzinfo=UTC)
+    assert type(model.t) is Time
+    assert isinstance(model.t, pendulum.Time)
+
+
+def test_pendulum_time_from_datetime_string():
+    model = TimeModel(t='2024-01-01T17:53:12')
+    assert type(model.t) is Time
+    assert (model.t.hour, model.t.minute, model.t.second) == (17, 53, 12)
+
+
+@pytest.mark.parametrize('prefix', ['', '2024-01-01T'])
+@pytest.mark.parametrize('offset', ['+05:30', '-03:30', 'Z'])
+def test_pendulum_time_preserves_serialized_offset(prefix, offset):
+    value = f'{prefix}12:34:56.123456{offset}'
+    model = TimeModel(t=value)
+    expected = time.fromisoformat(f'12:34:56.123456{offset.replace("Z", "+00:00")}')
+
+    assert model.t.isoformat() == expected.isoformat()
+    assert TimeModel.model_validate_json(model.model_dump_json()).t.isoformat() == expected.isoformat()
+
+
+def get_invalid_dt_common():
+    return [
+        None,
+        'malformed',
+        'P10Y10M10D',
+        float('inf'),
+        float('-inf'),
+        'inf',
+        '-inf',
+        'INF',
+        '-INF',
+        '+inf',
+        'Infinity',
+        '+Infinity',
+        '-Infinity',
+        'INFINITY',
+        '+INFINITY',
+        '-INFINITY',
+        'infinity',
+        '+infinity',
+        '-infinity',
+        float('nan'),
+        'nan',
+        'NaN',
+        'NAN',
+        '+nan',
+        '-nan',
+    ]
+
+
+dt_strict = get_invalid_dt_common()
+dt_strict.append(pendulum.now().to_iso8601_string()[:5])
+
+
+@pytest.mark.parametrize(
+    'dt',
+    dt_strict,
+)
+def test_pendulum_time_malformed(dt):
+    """Verifies that the instance fails to validate if malformed time is passed."""
+    with pytest.raises(ValidationError):
+        TimeModel(t=dt)
+
+
+@pytest.mark.parametrize(
+    'invalid_value',
+    [None, 'malformed', pendulum.today().to_iso8601_string()[:5], 'P10Y10M10D'],
+)
+def test_pendulum_date_malformed(invalid_value):
+    """Verifies that the instance fails to validate if malformed date are passed."""
+    with pytest.raises(ValidationError):
+        DateModel(d=invalid_value)
+
+
+@pytest.mark.parametrize(
+    'delta_t',
+    [
+        None,
+        'malformed',
+        pendulum.today().to_iso8601_string()[:5],
+        42,
+        '12m',
+        '2021-01-01T12:00:00',
+    ],
+)
+def test_pendulum_duration_malformed(delta_t):
+    """Verifies that the instance fails to validate if malformed durations are passed."""
+    with pytest.raises(ValidationError) as exc_info:
+        DurationModel(delta_t=delta_t)
+    assert exc_info.value.errors()[0]['type'] == 'value_error'
+
+
+@pytest.mark.parametrize(
+    'interval',
+    [
+        None,
+        'malformed',
+        pendulum.today().to_iso8601_string()[:5],
+        42,
+        'P1DT25H',
+    ],
+)
+def test_pendulum_interval_malformed(interval):
+    """Verifies that the instance fails to validate if malformed intervals are passed."""
+    with pytest.raises(ValidationError):
+        IntervalModel(interval=interval)
+
+
+@pytest.mark.parametrize(
+    'input_type, value, is_instance',
+    [
+        (Date, '2021-01-01', pendulum.Date),
+        (Date, date(2021, 1, 1), pendulum.Date),
+        (Date, pendulum.date(2021, 1, 1), pendulum.Date),
+        (Time, '12:00:00', pendulum.Time),
+        (Time, time(12, 0, 0), pendulum.Time),
+        (Time, pendulum.time(12, 0, 0), pendulum.Time),
+        (DateTime, '2021-01-01T12:00:00', pendulum.DateTime),
+        (DateTime, datetime(2021, 1, 1, 12, 0, 0), pendulum.DateTime),
+        (DateTime, pendulum.datetime(2021, 1, 1, 12, 0, 0), pendulum.DateTime),
+        (Duration, 'P1DT25H', pendulum.Duration),
+        (Duration, timedelta(days=1, hours=25), pendulum.Duration),
+        (Duration, pendulum.duration(days=1, hours=25), pendulum.Duration),
+        (Interval, '2024-01-01T00:00:00Z/2024-01-02T00:00:00Z', pendulum.Interval),
+        (
+            Interval,
+            pendulum.datetime(2024, 1, 2, tz='UTC') - pendulum.datetime(2024, 1, 1, tz='UTC'),
+            pendulum.Interval,
+        ),
+    ],
+)
+def test_date_type_adapter(input_type: type, value, is_instance: type):
+    validated = TypeAdapter(input_type).validate_python(value)
+    assert type(validated) is input_type
+    assert isinstance(validated, input_type)
+    assert isinstance(validated, is_instance)
+
+
+def test_pendulum_duration_months_are_preserved():
+    m = DurationModel(delta_t=pendulum.Duration(months=1))
+
+    assert m.delta_t.months == 1
+
+
+@pytest.mark.parametrize(
+    'zero_duration',
+    [
+        Duration(),
+        Duration(years=0, months=0, days=0, hours=0, minutes=0, seconds=0),
+        Duration(0),
+        pendulum.duration(),
+    ],
+)
+def test_zero_duration_serialization_and_validation(zero_duration):
+    """Zero durations should serialize as 'P0D' and round-trip without error."""
+    model = DurationModel(delta_t=zero_duration)
+    json_dump = model.model_dump_json()
+    assert json_dump == '{"delta_t":"P0D"}'
+    loaded = DurationModel.model_validate_json(json_dump)
+    assert loaded.delta_t == zero_duration
+    assert isinstance(loaded.delta_t, Duration)
+
+
+def test_zero_duration_from_string():
+    """'P0D' string should be accepted and produce a zero Duration."""
+    model = DurationModel(delta_t='P0D')
+    assert model.delta_t == Duration()
+    assert isinstance(model.delta_t, Duration)
+
+
+def test_invalid_zero_duration_string():
+    """'P' is not a valid ISO 8601 duration and should raise a validation error."""
+    with pytest.raises(ValidationError):
+        DurationModel(delta_t='P')
+
+
+@pytest.mark.parametrize('value', ['--P1D', '---P1D', '--PT1S', '---PT1S'])
+def test_pendulum_duration_rejects_repeated_minus(value: str) -> None:
+    with pytest.raises(ValidationError):
+        DurationModel(delta_t=value)
+
+
+@pytest.mark.parametrize('value', ['PT', 'P1DT', '-PT', '-P1DT'])
+def test_pendulum_duration_rejects_empty_time_designator(value: str) -> None:
+    """RFC 3339 Appendix A: `dur-time = "T" (dur-hour / dur-minute / dur-second)`, so a bare 'T' is invalid."""
+    with pytest.raises(ValidationError):
+        DurationModel(delta_t=value)
+
+
+@pytest.mark.parametrize('value', ['PT1S', 'P1DT1H', 'P1D', '-PT1S'])
+def test_pendulum_duration_accepts_time_designator_with_element(value: str) -> None:
+    assert isinstance(DurationModel(delta_t=value).delta_t, Duration)

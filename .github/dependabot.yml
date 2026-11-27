@@ -1,0 +1,25 @@
+version: 2
+
+updates:
+  # GitHub Actions
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    commit-message:
+      prefix: ⬆
+    cooldown:
+      default-days: 7
+  - package-ecosystem: 'uv'
+    # Python
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    groups:
+      python-packages:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: ⬆
+    cooldown:
+      default-days: 7

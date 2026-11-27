@@ -1,0 +1,183 @@
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+import pytest
+from pydantic import BaseModel, ValidationError
+
+from pydantic_extra_types.uuid_types import UUID6, UUID7, UUID8, uuid7, uuid7_to_datetime
+
+
+class ModelUUID7(BaseModel):
+    id: UUID7
+
+
+class ModelUUID6(BaseModel):
+    id: UUID6
+
+
+class ModelUUID8(BaseModel):
+    id: UUID8
+
+
+VALID_UUID7_STR = '018f0e8c-7a6a-7b1c-a3e4-fdf3e0ef7a4a'
+VALID_UUID7_OBJ = uuid.UUID(VALID_UUID7_STR)
+VALID_UUID4_STR = 'a7b3d4e1-1c2d-4f3e-8a5b-6c7d8e9f0a1b'
+
+
+@pytest.mark.parametrize(
+    'value, valid',
+    [
+        (VALID_UUID7_STR, True),
+        (VALID_UUID7_OBJ, True),
+        (VALID_UUID4_STR, False),
+        ('6ba7b810-9dad-11d1-80b4-00c04fd430c8', False),
+        ('not-a-uuid', False),
+        ('', False),
+    ],
+)
+def test_uuid7_validation(value: Any, valid: bool) -> None:
+    if valid:
+        m = ModelUUID7(id=value)
+        assert m.id.version == 7
+        assert isinstance(m.id, uuid.UUID)
+    else:
+        with pytest.raises(ValidationError):
+            ModelUUID7(id=value)
+
+
+def test_uuid7_serialization() -> None:
+    m = ModelUUID7(id=VALID_UUID7_STR)
+    dumped = m.model_dump()
+    assert dumped['id'] == VALID_UUID7_OBJ
+
+    json_str = m.model_dump_json()
+    assert VALID_UUID7_STR in json_str
+
+
+def test_uuid7_json_schema() -> None:
+    schema = ModelUUID7.model_json_schema()
+    assert schema['properties']['id']['type'] == 'string'
+    assert schema['properties']['id']['format'] == 'uuid'
+
+
+VALID_UUID6_STR = '1ef21d2f-6aa3-6d00-a327-541a2bda5190'
+
+
+@pytest.mark.parametrize(
+    'value, valid',
+    [
+        (VALID_UUID6_STR, True),
+        (uuid.UUID(VALID_UUID6_STR), True),
+        (VALID_UUID4_STR, False),
+    ],
+)
+def test_uuid6_validation(value: Any, valid: bool) -> None:
+    if valid:
+        m = ModelUUID6(id=value)
+        assert m.id.version == 6
+    else:
+        with pytest.raises(ValidationError):
+            ModelUUID6(id=value)
+
+
+def test_uuid6_json_schema() -> None:
+    schema = ModelUUID6.model_json_schema()
+    assert schema['properties']['id']['type'] == 'string'
+    assert schema['properties']['id']['format'] == 'uuid'
+
+
+def test_uuid_version_metadata_methods() -> None:
+    metadata = UUID6.__metadata__[0]
+    same_version = type(metadata)(6)
+    other_version = type(metadata)(7)
+
+    assert repr(metadata) == 'UuidVersion(uuid_version=6)'
+    assert hash(metadata) == hash(6)
+    assert metadata == same_version
+    assert metadata != other_version
+    assert metadata != object()
+
+
+VALID_UUID8_STR = '00112233-4455-8677-8899-aabbccddeeff'
+
+
+@pytest.mark.parametrize(
+    'value, valid',
+    [
+        (VALID_UUID8_STR, True),
+        (uuid.UUID(VALID_UUID8_STR), True),
+        (VALID_UUID4_STR, False),
+    ],
+)
+def test_uuid8_validation(value: Any, valid: bool) -> None:
+    if valid:
+        m = ModelUUID8(id=value)
+        assert m.id.version == 8
+    else:
+        with pytest.raises(ValidationError):
+            ModelUUID8(id=value)
+
+
+def test_uuid8_json_schema() -> None:
+    schema = ModelUUID8.model_json_schema()
+    assert schema['properties']['id']['type'] == 'string'
+    assert schema['properties']['id']['format'] == 'uuid'
+
+
+def test_uuid7_generation() -> None:
+    generated = uuid7()
+    assert isinstance(generated, uuid.UUID)
+    assert generated.version == 7
+
+
+def test_uuid7_generation_is_unique() -> None:
+    ids = {uuid7() for _ in range(100)}
+    assert len(ids) == 100
+
+
+def test_uuid7_generation_is_sortable() -> None:
+    ids = [uuid7() for _ in range(10)]
+    assert ids == sorted(ids)
+
+
+def test_uuid7_generation_validates() -> None:
+    generated = uuid7()
+    m = ModelUUID7(id=str(generated))
+    assert m.id.version == 7
+
+
+def test_uuid7_to_datetime() -> None:
+    u = uuid.UUID(VALID_UUID7_STR)
+    dt = uuid7_to_datetime(u)
+    assert isinstance(dt, datetime)
+    assert dt.tzinfo == timezone.utc
+    expected_ms = 0x018F0E8C7A6A
+    expected_dt = datetime.fromtimestamp(expected_ms / 1000.0, tz=timezone.utc)
+    assert dt == expected_dt
+
+
+@pytest.mark.parametrize(
+    'timestamp_ms, expected',
+    [
+        (0, datetime(1970, 1, 1, tzinfo=timezone.utc)),
+        (10_000_000_000_001, datetime(2286, 11, 20, 17, 46, 40, 1000, tzinfo=timezone.utc)),
+        (253_402_300_799_999, datetime(9999, 12, 31, 23, 59, 59, 999000, tzinfo=timezone.utc)),
+    ],
+)
+def test_uuid7_to_datetime_preserves_milliseconds(timestamp_ms: int, expected: datetime) -> None:
+    value = uuid.UUID(int=(timestamp_ms << 80) | (7 << 76) | (2 << 62))
+    assert uuid7_to_datetime(value) == expected
+
+
+def test_uuid7_to_datetime_roundtrip() -> None:
+    generated = uuid7()
+    dt = uuid7_to_datetime(generated)
+    now = datetime.now(tz=timezone.utc)
+    assert abs((now - dt).total_seconds()) < 2
+
+
+def test_uuid7_to_datetime_wrong_version() -> None:
+    u4 = uuid.UUID(VALID_UUID4_STR)
+    with pytest.raises(ValueError, match='Expected UUID version 7'):
+        uuid7_to_datetime(u4)
