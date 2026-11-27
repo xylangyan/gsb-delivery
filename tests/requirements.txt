@@ -1,0 +1,13 @@
+codecov
+coverage
+flake8
+black
+isort
+collective.checkdocs
+pygments
+moban
+moban_jinja2_github
+xlrd==1.2.0
+pyexcel-xls
+pyexcel
+pytest
