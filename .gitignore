@@ -1,0 +1,25 @@
+*.pyc
+.coverage
+TEST*.xml
+build/*
+dist/*
+*.swp
+.DS_Store
+*.orig
+*.egg-info
+MANIFEST
+Vagrantfile
+.vagrant/*
+.coverage
+*.aux.xml
+*.ipynb_checkpoints*
+.idea
+venv
+.eggs
+.cache
+.python-version
+*.lprof
+
+# no uv lockfile until this is fixed:
+# https://github.com/astral-sh/uv/issues/10845
+uv.lock
