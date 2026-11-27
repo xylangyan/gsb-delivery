@@ -1,0 +1,204 @@
+# frozen_string_literal: true
+
+require "uri"
+
+require "http/form_data"
+require "http/headers"
+require "http/connection"
+require "http/uri"
+
+module HTTP
+  class Request
+    # Builds HTTP::Request objects from resolved options
+    #
+    # @example Build a request from options
+    #   options = HTTP::Options.new(headers: {"Accept" => "application/json"})
+    #   builder = HTTP::Request::Builder.new(options)
+    #   request = builder.build(:get, "https://example.com")
+    #
+    # @see Options
+    class Builder
+      # Pattern matching HTTP or HTTPS URI schemes
+      HTTP_OR_HTTPS_RE = %r{\Ahttps?://}i
+
+      # Initialize a new Request Builder
+      #
+      # @example
+      #   HTTP::Request::Builder.new(HTTP::Options.new)
+      #
+      # @param options [HTTP::Options] resolved request options
+      # @return [HTTP::Request::Builder]
+      # @api public
+      def initialize(options)
+        @options = options
+      end
+
+      # Build an HTTP request
+      #
+      # @example
+      #   builder.build(:get, "https://example.com")
+      #
+      # @param verb [Symbol] the HTTP method
+      # @param uri [#to_s] the URI to request
+      # @return [HTTP::Request] the built request object
+      # @api public
+      def build(verb, uri)
+        uri     = make_request_uri(uri)
+        headers = make_request_headers
+        body    = make_request_body(headers)
+
+        req = HTTP::Request.new(
+          verb:           verb,
+          uri:            uri,
+          uri_normalizer: @options.feature(:normalize_uri)&.normalizer,
+          proxy:          @options.proxy,
+          headers:        headers,
+          body:           body
+        )
+
+        wrap(req)
+      end
+
+      # Wrap a request through feature middleware
+      #
+      # @example
+      #   builder.wrap(redirect_request)
+      #
+      # @param request [HTTP::Request] the request to wrap
+      # @return [HTTP::Request] the wrapped request
+      # @api public
+      def wrap(request)
+        @options.features.inject(request) do |req, (_name, feature)|
+          feature.wrap_request(req)
+        end
+      end
+
+      private
+
+      # Merges query params if needed
+      #
+      # @param uri [#to_s] the URI to process
+      # @return [HTTP::URI] the constructed URI
+      # @api private
+      def make_request_uri(uri)
+        uri = neutralize_protocol_relative(uri.to_s)
+
+        if @options.base_uri? && uri !~ HTTP_OR_HTTPS_RE
+          uri = resolve_against_base(uri)
+        elsif @options.persistent? && uri !~ HTTP_OR_HTTPS_RE
+          uri = "#{@options.persistent}#{uri}"
+        end
+
+        uri = HTTP::URI.parse uri
+
+        merge_query_params!(uri)
+
+        # Some proxies (seen on WEBrick) fail if URL has
+        # empty path (e.g. `http://example.com`) while it's RFC-compliant:
+        # http://tools.ietf.org/html/rfc1738#section-3.1
+        uri.path = "/" if uri.path.empty?
+
+        uri
+      end
+
+      # Neutralize a leading "//" so it resolves as a relative path under base
+      #
+      # A "//"-prefixed input is a protocol-relative (network-path) reference
+      # per RFC 3986 §4.2 / §5.2. On the base_uri branch it would replace the
+      # base authority via URI#join; on the persistent branch naive
+      # concatenation produces "scheme://persistent//evil/path" which
+      # HTTP::URI.parse normalises into scheme://evil/path. Prepending "./"
+      # forces the input to resolve as an ordinary relative path under the
+      # configured base.
+      #
+      # @param uri [String] the input URI
+      # @return [String] uri unchanged, or "./" + uri when neutralization applies
+      # @api private
+      def neutralize_protocol_relative(uri)
+        return uri unless @options.base_uri? || @options.persistent?
+        return uri unless uri.start_with?("//")
+
+        "./#{uri}"
+      end
+
+      # Resolve a relative URI against the configured base URI
+      #
+      # Ensures the base URI path has a trailing slash so that relative
+      # paths are appended rather than replacing the last path segment,
+      # per the convention described in RFC 3986 Section 5.
+      #
+      # @param uri [String] the relative URI to resolve
+      # @return [String] the resolved absolute URI
+      # @api private
+      def resolve_against_base(uri)
+        base = @options.base_uri or raise Error, "base_uri is not set"
+
+        unless base.path.end_with?("/")
+          base = base.dup
+          base.path = "#{base.path}/"
+        end
+
+        String(base.join(uri))
+      end
+
+      # Merge query parameters into URI
+      #
+      # @return [void]
+      # @api private
+      def merge_query_params!(uri)
+        return unless @options.params && !@options.params.empty?
+
+        existing = ::URI.decode_www_form(uri.query || "")
+        uri.query = ::URI.encode_www_form(existing.concat(@options.params.to_a))
+      end
+
+      # Creates request headers
+      #
+      # @return [HTTP::Headers] the constructed headers
+      # @api private
+      def make_request_headers
+        headers = @options.headers
+
+        # Tell the server to keep the conn open
+        headers[Headers::CONNECTION] = @options.persistent? ? Connection::KEEP_ALIVE : Connection::CLOSE
+
+        headers
+      end
+
+      # Create the request body object to send
+      #
+      # @return [String, HTTP::FormData, nil] the request body
+      # @api private
+      def make_request_body(headers)
+        if @options.body
+          @options.body
+        elsif @options.form
+          form = make_form_data(@options.form)
+          headers[Headers::CONTENT_TYPE] ||= form.content_type
+          form
+        elsif @options.json
+          make_json_body(@options.json, headers)
+        end
+      end
+
+      # Encode JSON body and set content type header
+      # @return [String] the encoded JSON body
+      # @api private
+      def make_json_body(data, headers)
+        body = MimeType[:json].encode data
+        headers[Headers::CONTENT_TYPE] ||= "application/json; charset=#{body.encoding.name.downcase}"
+        body
+      end
+
+      # Coerce form data into an HTTP::FormData object
+      # @return [HTTP::FormData::Multipart, HTTP::FormData::Urlencoded] form data
+      # @api private
+      def make_form_data(form)
+        return form if form.is_a? FormData::Multipart
+        return form if form.is_a? FormData::Urlencoded
+
+        FormData.create(form)
+      end
+    end
+  end
+end

@@ -1,0 +1,11 @@
+Layout/LeadingCommentSpace:
+  AllowRBSInlineAnnotation: true
+
+Layout/FirstHashElementIndentation:
+  Enabled: true
+  EnforcedStyle: consistent
+
+Layout/HashAlignment:
+  Enabled: true
+  EnforcedColonStyle: table
+  EnforcedHashRocketStyle: table

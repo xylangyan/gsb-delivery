@@ -1,0 +1,38 @@
+plugins:
+  - rubocop-performance
+  - rubocop-rake
+  - rubocop-minitest
+
+inherit_from:
+  - .rubocop/layout.yml
+  - .rubocop/metrics.yml
+  - .rubocop/style.yml
+
+AllCops:
+  DisplayCopNames: true
+  DisplayStyleGuide: true
+  NewCops: enable
+  TargetRubyVersion: 3.2
+  Include:
+    - '.duel.rb'
+inherit_mode:
+  merge:
+    - Include
+
+# Feature has no initialize, so super() is a no-op in subclasses
+Lint/MissingSuper:
+  AllowedParentClasses:
+    - BasicObject
+    - Feature
+
+Minitest/MultipleAssertions:
+  Exclude:
+    - 'test/**/*.rb'
+
+Minitest/TestFileName:
+  Exclude:
+    - 'test/regression_tests.rb'
+
+Naming/VariableNumber:
+  Exclude:
+    - 'test/**/*.rb'

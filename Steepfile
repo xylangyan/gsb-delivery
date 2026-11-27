@@ -1,0 +1,20 @@
+# frozen_string_literal: true
+
+target :lib do
+  signature "sig"
+  check "lib"
+
+  library "date"
+  library "forwardable"
+  library "ipaddr"
+  library "json"
+  library "openssl"
+  library "singleton"
+  library "socket"
+  library "tempfile"
+  library "time"
+  library "timeout"
+  library "securerandom"
+  library "uri"
+  library "zlib"
+end

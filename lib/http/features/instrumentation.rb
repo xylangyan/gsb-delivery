@@ -1,0 +1,149 @@
+# frozen_string_literal: true
+
+module HTTP
+  module Features
+    # Instrument requests and responses. Expects an
+    # ActiveSupport::Notifications-compatible instrumenter. Defaults to use a
+    # namespace of 'http' which may be overridden with a `:namespace` param.
+    # Emits a single event like `"request.{namespace}"`, eg `"request.http"`.
+    # Be sure to specify the instrumenter when enabling the feature:
+    #
+    #    HTTP
+    #      .use(instrumentation: {instrumenter: ActiveSupport::Notifications.instrumenter})
+    #      .get("https://example.com/")
+    #
+    # Emits two events on every request:
+    #
+    #  * `start_request.http` before the request is made, so you can log the request being started
+    #  * `request.http` after the response is received, and contains `start`
+    #    and `finish` so the duration of the request can be calculated.
+    #
+    class Instrumentation < Feature
+      # The instrumenter instance
+      #
+      # @example
+      #   feature.instrumenter
+      #
+      # @return [#instrument] the instrumenter instance
+      # @api public
+      attr_reader :instrumenter
+
+      # The event name for requests
+      #
+      # @example
+      #   feature.name # => "request.http"
+      #
+      # @return [String] the event name for requests
+      # @api public
+      attr_reader :name
+
+      # The event name for errors
+      #
+      # @example
+      #   feature.error_name # => "error.http"
+      #
+      # @return [String] the event name for errors
+      # @api public
+      attr_reader :error_name
+
+      # Initializes the Instrumentation feature
+      #
+      # @example
+      #   Instrumentation.new(instrumenter: ActiveSupport::Notifications.instrumenter)
+      #
+      # @param instrumenter [#instrument] instrumenter instance
+      # @param namespace [String] event namespace
+      # @return [Instrumentation]
+      # @api public
+      def initialize(instrumenter: NullInstrumenter.new, namespace: "http")
+        super()
+        @instrumenter = instrumenter
+        @name = "request.#{namespace}"
+        @error_name = "error.#{namespace}"
+      end
+
+      # Wraps the HTTP exchange with instrumentation
+      #
+      # Emits a `"start_request.http"` event before the request, then wraps
+      # the exchange in a `"request.http"` span that is guaranteed to close
+      # on both success and failure (via the instrumenter's ensure block).
+      #
+      # @example
+      #   feature.around_request(request) { perform_io }
+      #
+      # @param request [HTTP::Request]
+      # @yield Executes the HTTP exchange
+      # @yieldreturn [HTTP::Response]
+      # @return [HTTP::Response]
+      # @api public
+      def around_request(request)
+        # Emit a separate "start" event, so a logger can print the request
+        # being run without waiting for a response
+        instrumenter.instrument("start_#{name}", request: request) {} # rubocop:disable Lint/EmptyBlock
+        instrumenter.instrument(name, request: request) do |payload|
+          response = yield request
+          payload[:response] = response if payload
+          response
+        end
+      end
+
+      # Instruments a request error
+      #
+      # @example
+      #   feature.on_error(request, error)
+      #
+      # @param request [HTTP::Request]
+      # @param error [Exception]
+      # @return [Object]
+      # @api public
+      def on_error(request, error)
+        instrumenter.instrument(error_name, request: request, error: error) {} # rubocop:disable Lint/EmptyBlock
+      end
+
+      HTTP::Options.register_feature(:instrumentation, self)
+
+      # No-op instrumenter used as default when none is provided
+      class NullInstrumenter
+        # Instruments an event with a name and payload
+        #
+        # @example
+        #   instrumenter.instrument("request.http", request: req)
+        #
+        # @param name [String]
+        # @param payload [Hash]
+        # @return [Object]
+        # @api public
+        def instrument(name, payload = {})
+          start(name, payload)
+          begin
+            yield payload if block_given?
+          ensure
+            finish name, payload
+          end
+        end
+
+        # Starts an instrumentation event
+        #
+        # @example
+        #   instrumenter.start("request.http", request: req)
+        #
+        # @param _name [String]
+        # @param _payload [Hash]
+        # @return [nil]
+        # @api public
+        def start(_name, _payload); end
+
+        # Finishes an instrumentation event
+        #
+        # @example
+        #   instrumenter.finish("request.http", response: resp)
+        #
+        # @param _name [String]
+        # @param _payload [Hash]
+        # @return [nil]
+        # @api public
+        def finish(_name, _payload); end
+      end
+    end
+  end
+end

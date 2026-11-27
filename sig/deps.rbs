@@ -1,0 +1,95 @@
+# Overrides for stdlib RBS signatures
+
+# Stubs for external dependencies without RBS definitions
+
+module Addressable
+  module IDNA
+    def self.to_ascii: (String) -> String
+  end
+
+  class URI
+    class InvalidURIError < StandardError
+    end
+
+    def self.parse: (untyped) -> Addressable::URI
+    def self.form_encode: (untyped, ?bool) -> String
+    def self.normalize_path: (untyped) -> String
+
+    def initialize: (?untyped) -> void
+    def scheme: () -> String?
+    def scheme=: (untyped) -> untyped
+    def normalized_scheme: () -> String?
+    def authority: () -> String?
+    def normalized_authority: () -> String?
+    def user: () -> String?
+    def user=: (untyped) -> untyped
+    def password: () -> String?
+    def password=: (untyped) -> untyped
+    def host: () -> String?
+    def host=: (untyped) -> untyped
+    def normalized_host: () -> String?
+    def port: () -> Integer?
+    def port=: (untyped) -> untyped
+    def normalized_port: () -> Integer?
+    def path: () -> String
+    def path=: (untyped) -> untyped
+    def normalized_path: () -> String
+    def query: () -> String?
+    def query=: (untyped) -> untyped
+    def query_values: (?untyped?) -> untyped
+    def query_values=: (untyped) -> untyped
+    def normalized_query: () -> String?
+    def request_uri: () -> String
+    def request_uri=: (untyped) -> untyped
+    def fragment: () -> String?
+    def normalized_fragment: () -> String?
+    def fragment=: (untyped) -> untyped
+    def omit: (*Symbol) -> Addressable::URI
+    def join: (untyped) -> Addressable::URI
+    def normalize: () -> Addressable::URI
+    def origin: () -> String
+    def default_port: () -> Integer?
+    def to_s: () -> String
+    def ==: (untyped) -> bool
+    def eql?: (untyped) -> bool
+    def hash: () -> Integer
+    def dup: () -> Addressable::URI
+  end
+end
+
+# Override: HTTP passes IO-like objects that only implement #write(String)
+module Zlib
+  class GzipWriter
+    private
+
+    def initialize: (untyped io, ?Integer? level, ?Integer? strategy, **untyped opts) -> void
+                  | ...
+  end
+end
+
+class IO
+  def self.copy_stream: (untyped src, untyped dst, ?Integer? copy_length, ?Integer? src_offset) -> Integer
+                      | ...
+end
+
+# Supplement: Numeric#to_i and #to_f are not in the stdlib RBS
+class Numeric
+  def to_i: () -> Integer
+  def to_f: () -> Float
+end
+
+module IO::WaitReadable
+end
+
+module IO::WaitWritable
+end
+
+class IO
+  # Missing from rbs core (available since Ruby 3.2)
+  class TimeoutError < IOError
+  end
+
+  class EAGAINWaitReadable < Errno::EAGAIN
+    include IO::WaitReadable
+  end
+end

@@ -1,0 +1,172 @@
+# frozen_string_literal: true
+
+require "forwardable"
+require "http/client"
+
+module HTTP
+  class Response
+    # A streamable response body, also easily converted into a string
+    class Body
+      extend Forwardable
+      include Enumerable
+
+      def_delegator :to_s, :empty?
+
+      # The connection object for the request
+      #
+      # @example
+      #   body.connection
+      #
+      # @return [HTTP::Connection]
+      # @api public
+      attr_reader :connection
+
+      # The encoding used for the body content
+      #
+      # @example
+      #   body.encoding # => Encoding::UTF_8
+      #
+      # @return [Encoding]
+      # @api public
+      attr_reader :encoding
+
+      # Create a new Body instance
+      #
+      # @example
+      #   Body.new(stream, encoding: Encoding::UTF_8)
+      #
+      # @param stream [#readpartial] the response stream
+      # @param encoding [Encoding] the encoding to use
+      # @return [Body]
+      # @api public
+      def initialize(stream, encoding: Encoding::BINARY)
+        @stream     = stream
+        @connection = stream.respond_to?(:connection) ? stream.connection : stream
+        @streaming  = nil
+        @contents   = nil
+        @encoding   = find_encoding(encoding)
+      end
+
+      # Read a chunk of the body
+      #
+      # @example
+      #   body.readpartial # => "chunk of data"
+      #
+      # (see HTTP::Client#readpartial)
+      # @return [String]
+      # @raise [EOFError] when no more data left
+      # @api public
+      def readpartial(*)
+        stream!
+        chunk = @stream.readpartial(*)
+        String.new(chunk, encoding: @encoding)
+      end
+
+      # Iterate over the body, allowing it to be enumerable
+      #
+      # @example
+      #   body.each { |chunk| puts chunk }
+      #
+      # @yield [chunk] Passes each chunk to the block
+      # @yieldparam chunk [String]
+      # @return [void]
+      # @api public
+      def each
+        loop do
+          yield readpartial
+        end
+      rescue EOFError # rubocop:disable Lint/SuppressedException
+      end
+
+      # Eagerly consume the entire body as a string
+      #
+      # @example
+      #   body.to_s # => "full response body"
+      #
+      # @return [String]
+      # @api public
+      def to_s
+        return @contents if @contents
+
+        raise StateError, "body is being streamed" unless @streaming.nil?
+
+        begin
+          @streaming = false
+          @contents = read_contents
+        rescue
+          @contents = nil
+          raise
+        end
+
+        @contents
+      end
+      alias to_str to_s
+
+      # Assert that the body is actively being streamed
+      #
+      # @example
+      #   body.stream!
+      #
+      # @return [true]
+      # @api public
+      def stream!
+        raise StateError, "body has already been consumed" if @streaming.eql?(false)
+
+        @streaming = true
+      end
+
+      # Whether the body content is suitable for logging
+      #
+      # Returns true when the body encoding is not binary. Binary responses
+      # (images, audio, compressed data) produce unreadable log output.
+      #
+      # @example
+      #   body.loggable? # => true
+      #
+      # @return [Boolean]
+      # @api public
+      def loggable?
+        @encoding != Encoding::BINARY
+      end
+
+      # Easier to interpret string inspect
+      #
+      # @example
+      #   body.inspect # => "#<HTTP::Response::Body:3ff2 @streaming=false>"
+      #
+      # @return [String]
+      # @api public
+      def inspect
+        "#<#{self.class}:#{object_id.to_s(16)} @streaming=#{!!@streaming}>"
+      end
+
+      private
+
+      # Read all chunks into a single string
+      #
+      # @return [String]
+      # @api private
+      def read_contents
+        contents = String.new("", encoding: @encoding)
+
+        loop do
+          contents << String.new(@stream.readpartial, encoding: @encoding)
+        rescue EOFError
+          break
+        end
+
+        contents
+      end
+
+      # Retrieve encoding by name
+      #
+      # @return [Encoding]
+      # @api private
+      def find_encoding(encoding)
+        Encoding.find encoding
+      rescue ArgumentError
+        Encoding::BINARY
+      end
+    end
+  end
+end
