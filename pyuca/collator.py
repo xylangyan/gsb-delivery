@@ -44,6 +44,7 @@ class BaseCollator(object):
                 "allkeys-{0}.txt".format(self.UCA_VERSION))
         self.table = Trie()
         self.implicit_weights = []
+        self.rules = {}
         self.load(filename)
 
     def load(self, filename):
@@ -68,6 +69,7 @@ class BaseCollator(object):
                 for x in COLL_ELEMENT_PATTERN.finditer(b.strip()):
                     weights = x.groups()
                     coll_elements.append(hexstrings2int(weights))
+                self.rules[tuple(char_list)] = coll_elements
                 self.table.add(char_list, coll_elements)
 
     def collation_elements(self, normalized_string):
@@ -119,6 +121,28 @@ class BaseCollator(object):
         normalized_string = unicodedata.normalize("NFD", string)
         collation_elements = self.collation_elements(normalized_string)
         return self.sort_key_from_collation_elements(collation_elements)
+
+    def sort_key_levels(self, string, max_level=4):
+        """Return the non-zero weights of *string* separated by level.
+
+        The result is a tuple of at most ``max_level`` tuples, one per
+        collation level (primary first).  This is equivalent to splitting
+        :meth:`sort_key` on its level separators.
+        """
+        normalized_string = unicodedata.normalize("NFD", string)
+        collation_elements = self.collation_elements(normalized_string)
+        levels = []
+        for level in range(max_level):
+            levels.append(tuple(
+                element[level]
+                for element in collation_elements
+                if len(element) > level and element[level]
+            ))
+        return tuple(levels)
+
+    def sort_key_primary(self, string):
+        """Return the primary-level weights for *string*."""
+        return self.sort_key_levels(string, max_level=1)[0]
 
     def implicit_weight(self, cp):
         if (

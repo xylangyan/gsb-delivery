@@ -56,6 +56,59 @@ But just `from pyuca import Collator` will ensure that the collator version
 matches the version of `unicodata` provided by the standard library for your
 version of Python.
 
+## Comparing two collation tables
+
+`pyuca.audit` compares an archived goods-name catalog under an old and a new
+allkeys table.  It answers the release questions directly:
+
+- exact old and new rank spans for every accession or compressed range;
+- how many original card pairs really changed order (weighted, so a repeated
+  range is never expanded);
+- which cards cross a page edge, including cards whose own key did not change
+  but whose page did;
+- the earliest UCA level (or accession tie-break) that decided any chosen
+  pair, in both versions.
+
+```python
+from pyuca.audit import audit, format_report
+
+report = audit(
+    old="allkeys-old.txt",
+    new="allkeys-new.txt",
+    catalog={
+        "records": [
+            {"entry": 1, "name": "café"},
+            {"entry_range": [10, 99], "name": "same archived card"},
+        ],
+        "pages": {"anchors": [10, 50]},
+        "boundaries": [10],
+    },
+    mode="full",          # or "primary" for a first-level index sheet
+    tie_break="entry",    # old behaviour: first accession number
+)
+print(format_report(report))
+```
+
+The catalog may store each card's `old_key` and `old_page`; a separate
+`old_index` may hold the actual old keys and source accession ranges.  Names
+can be assembled from reusable `fragments` before key generation; the
+assembled text is what gets normalized and compared, never the individual
+fragments.  `mode="primary"` uses only the primary level (suitable for a
+primary index sheet), while `mode="full"` uses all four levels.
+
+The command-line wrapper is installed as `pyuca-audit`:
+
+```bash
+pyuca-audit catalog.json --format json --pair 1 42
+pyuca-audit --compare allkeys-old.txt:allkeys-new.txt
+```
+
+Large catalogs produce per-page details lazily by accessor; JSON output
+keeps accession ranges compressed unless `--expand` is explicitly requested.
+`--page-range N` returns just one page's old and new accession segments, and
+the report object also exposes `rank_at(entry)` and `pair_detail(a, b)` for
+single-card checks.
+
 ## How to cite it
 
 Tauber, J. K. (2016). pyuca: a Python implementation of the Unicode Collation Algorithm. The Journal of Open Source Software. DOI: 10.21105/joss.00021

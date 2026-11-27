@@ -16,6 +16,7 @@ setup(
         "allkeys-9.0.0.txt",
         "allkeys-10.0.0.txt",
     ]},
+    entry_points={"console_scripts": ["pyuca-audit = pyuca.audit_cli:main"]},
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "License :: OSI Approved :: MIT License",

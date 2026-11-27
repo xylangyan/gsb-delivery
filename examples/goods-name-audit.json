@@ -1,0 +1,26 @@
+{
+  "old_table": "demo-old.txt",
+  "new_table": "demo-new.txt",
+  "mode": "full",
+  "tie_break": "entry",
+  "pages": {"sizes": [3, 3, 4]},
+  "boundaries": [1],
+  "fragments": {
+    "head": "ca",
+    "accent": "́",
+    "tail": "̧"
+  },
+  "records": [
+    {"entry": 1, "name": "a"},
+    {"entry": 2, "name": "á"},
+    {"entry": 3, "name": "a̧"},
+    {"entry": 4, "fragments": ["head", "accent"]},
+    {"entry": 5, "fragments": [{"literal": "a"}, {"ref": "tail"}]},
+    {"entry_range": [6, 9], "name": "same archived card"},
+    {"entry": 10, "name": "b"}
+  ],
+  "old_index": [
+    {"entry_range": [1, 1], "old_key": "1000 | 0020 | 0002 |"},
+    {"entry_range": [2, 2], "old_key": "1000 | 0020 0021 | 0002 0002 |"}
+  ]
+}

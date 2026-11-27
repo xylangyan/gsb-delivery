@@ -16,3 +16,4 @@ element table.
 """
 
 from .collator import Collator  # noqa
+from .audit import AuditReport, audit, diff_tables, format_report  # noqa
