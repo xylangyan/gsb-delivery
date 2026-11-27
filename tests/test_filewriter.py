@@ -1019,6 +1019,49 @@ class TestCorrectAmbiguousVR:
         ):
             correct_ambiguous_vr(deepcopy(ref_ds), True)
 
+    def test_lut_descriptor_first_value_unsigned(self):
+        """The LUT Descriptor entry count and bit depth are always unsigned.
+
+        Only the second value follows the sign of *Pixel Representation*.
+        """
+        ref_ds = Dataset()
+        ref_ds.PixelRepresentation = 1
+
+        # 0xFFFF entries, 0, 16 bits
+        ref_ds.LUTDescriptor = b"\xff\xff\x00\x00\x10\x00"
+        ds = correct_ambiguous_vr(deepcopy(ref_ds), True)
+        assert "SS" == ds[0x00283002].VR
+        assert [65535, 0, 16] == ds.LUTDescriptor
+
+        # 0xFFFF entries, -1, 16 bits
+        ref_ds.LUTDescriptor = b"\xff\xff\xff\xff\x10\x00"
+        ds = correct_ambiguous_vr(deepcopy(ref_ds), True)
+        assert [65535, -1, 16] == ds.LUTDescriptor
+
+        # A count of zero means 65536 entries, never negative
+        ref_ds.LUTDescriptor = b"\x00\x00\x00\x00\x10\x00"
+        ds = correct_ambiguous_vr(deepcopy(ref_ds), True)
+        assert [0, 0, 16] == ds.LUTDescriptor
+
+    def test_lut_data_entries(self):
+        """LUT Data VR depends on the descriptor entry count."""
+        ref_ds = Dataset()
+        ref_ds.PixelRepresentation = 0
+
+        # A single entry must be US
+        ref_ds.LUTDescriptor = b"\x01\x00\x00\x00\x10\x00"
+        ref_ds.LUTData = b"\x00\x01"
+        ds = correct_ambiguous_vr(deepcopy(ref_ds), True)
+        assert "US" == ds[0x00283006].VR
+        assert 256 == ds.LUTData
+
+        # Multiple entries must be OW
+        ref_ds.LUTDescriptor = b"\x00\x00\x00\x00\x10\x00"  # 65536 entries
+        ref_ds.LUTData = b"\x00\x01" * 4
+        ds = correct_ambiguous_vr(deepcopy(ref_ds), True)
+        assert "OW" == ds[0x00283006].VR
+        assert b"\x00\x01" * 4 == ds.LUTData
+
     def test_overlay(self):
         """Test correcting OverlayData"""
         # VR must be 'OW'
@@ -1299,6 +1342,46 @@ class TestCorrectAmbiguousVR:
         assert not hasattr(ds, "_pixel_rep")
         assert item._pixel_rep == 0
         assert "US" == item[0x00283002].VR
+
+    @pytest.mark.parametrize("access", [False, True])
+    def test_effective_marker_used_at_write(self, access):
+        """The final nearest marker is used, regardless of prior access.
+
+        One item inherits the marker from the root, the other sets its own.
+        When the root marker changes after both items may have been accessed
+        the inherited item must follow the new value while the local one keeps
+        its own.
+        """
+        ds = Dataset()
+        ds.PixelRepresentation = 0
+        ds.BeamSequence = [Dataset(), Dataset()]
+        ds.BeamSequence[0].PixelPaddingValue = b"\xff\xff"  # inherits
+        ds.BeamSequence[1].PixelRepresentation = 0
+        ds.BeamSequence[1].PixelPaddingValue = b"\xff\xff"  # local
+
+        fp = BytesIO()
+        ds.save_as(fp, implicit_vr=True)
+        fp.seek(0)
+        ds = dcmread(fp, force=True)
+
+        if access:
+            # Read the values before changing the root marker
+            assert 65535 == ds.BeamSequence[0].PixelPaddingValue
+            assert 65535 == ds.BeamSequence[1].PixelPaddingValue
+
+        ds.PixelRepresentation = 1
+
+        fp = BytesIO()
+        ds.save_as(fp, implicit_vr=False, little_endian=True)
+        fp.seek(0)
+        out = dcmread(fp, force=True)
+
+        # Inherited item follows the new root marker
+        assert -1 == out.BeamSequence[0].PixelPaddingValue
+        assert "SS" == out.BeamSequence[0][0x00280120].VR
+        # Local marker is unaffected
+        assert 65535 == out.BeamSequence[1].PixelPaddingValue
+        assert "US" == out.BeamSequence[1][0x00280120].VR
 
 
 class TestCorrectAmbiguousVRElement:

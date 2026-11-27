@@ -4,7 +4,7 @@
 from collections.abc import Sequence, MutableSequence, Iterable
 from copy import deepcopy
 from io import BufferedIOBase
-from struct import pack
+from struct import pack, unpack
 from typing import BinaryIO, Any, cast
 from collections.abc import Callable
 import zlib
@@ -34,6 +34,7 @@ from pydicom.tag import (
     ItemTag,
     ItemDelimiterTag,
     SequenceDelimiterTag,
+    TAG_PIXREP,
     _LUT_DESCRIPTOR_TAGS,
 )
 from pydicom.uid import (
@@ -105,6 +106,78 @@ _AMBIGUOUS_OB_OW_TAGS = {0x54000110, 0x54000112, 0x5400100A, 0x54001010}
 _OVERLAY_DATA_TAGS = {x << 16 | 0x3000 for x in range(0x6000, 0x601F, 2)}
 
 
+def _lut_descriptor_value(
+    raw: bytes, is_little_endian: bool, pixel_rep: int
+) -> list[int]:
+    """Return the decoded value for a LUT Descriptor from its raw bytes.
+
+    The first and third values are always unsigned (the number of entries uses
+    ``0`` to mean ``65536`` entries), only the middle value follows the
+    effective *Pixel Representation*.
+    """
+    endian = "<" if is_little_endian else ">"
+    if len(raw) < 2:
+        return [] if not raw else list(raw)
+
+    values = [unpack(f"{endian}H", raw[0:2])[0]]
+    if len(raw) >= 4:
+        values.append(unpack(f"{endian}{'H' if pixel_rep == 0 else 'h'}", raw[2:4])[0])
+    if len(raw) >= 6:
+        values.append(unpack(f"{endian}H", raw[4:6])[0])
+
+    return values
+
+
+def _effective_pixel_rep(ancestors: list[Dataset]) -> int | None:
+    """Return the *Pixel Representation* that applies to the nearest dataset.
+
+    The nearest dataset with a non-``None`` *Pixel Representation* wins; if
+    none of the ancestors defines one then the cached ``_pixel_rep`` values
+    (propagated from a parent when a sequence item was added) are used.
+    """
+    for ds in ancestors:
+        elem = ds._dict.get(TAG_PIXREP)
+        if elem is not None and elem.value is not None:
+            value = elem.value
+            return int(b"\x01" in value) if isinstance(value, bytes) else int(value)
+
+    for ds in ancestors:
+        if hasattr(ds, "_pixel_rep"):
+            return int(ds._pixel_rep)
+
+    return None
+
+
+def _find_lut_descriptor(ds: Dataset, ancestors: list[Dataset]) -> Any:
+    """Return the *LUT Descriptor* that applies to the nearest dataset."""
+    for item in ancestors:
+        elem = item._dict.get(BaseTag(0x00283002))
+        if elem is not None:
+            return elem.value
+
+    if "LUTDescriptor" in ds:
+        return ds.LUTDescriptor
+
+    raise AttributeError("'LUTDescriptor'")
+
+
+def _lut_descriptor_entries(descriptor: Any, is_little_endian: bool) -> int:
+    """Return the number of entries encoded by a LUT Descriptor value."""
+    if descriptor is None:
+        return 0
+
+    if isinstance(descriptor, bytes):
+        if len(descriptor) < 2:
+            return 0
+        endian = "<" if is_little_endian else ">"
+        return cast(int, unpack(f"{endian}H", descriptor[0:2])[0])
+
+    try:
+        return int(cast(Sequence[int], descriptor)[0])
+    except (IndexError, TypeError, ValueError):
+        return 0
+
+
 def _correct_ambiguous_vr_element(
     elem: DataElement,
     ancestors: list[Dataset],
@@ -146,22 +219,7 @@ def _correct_ambiguous_vr_element(
 
         # If correcting during write, or after implicit read when the
         #   element is on the same level as pixel representation
-        pixel_rep = next(
-            (
-                cast(int, x.PixelRepresentation)
-                for x in ancestors
-                if getattr(x, "PixelRepresentation", None) is not None
-            ),
-            None,
-        )
-
-        if pixel_rep is None:
-            # If correcting after implicit read when the element isn't
-            #   on the same level as pixel representation
-            pixel_rep = next(
-                (x._pixel_rep for x in ancestors if hasattr(x, "_pixel_rep")),
-                None,
-            )
+        pixel_rep = _effective_pixel_rep(ancestors)
 
         if pixel_rep is None:
             # If no pixel data is present, none if these tags is used,
@@ -177,7 +235,33 @@ def _correct_ambiguous_vr_element(
         elem.VR = VR.US if pixel_rep == 0 else VR.SS
         byte_type = "H" if pixel_rep == 0 else "h"
 
-        if elem.VM == 0:
+        # Keep the original encoded value so a later change to the effective
+        #   *Pixel Representation* can be re-applied at write time, regardless
+        #   of whether the element was accessed before that change
+        raw = getattr(elem, "_ambiguous_raw_value", None)
+        decoded = getattr(elem, "_ambiguous_decoded", None)
+        if isinstance(elem.value, bytes):
+            # Freshly read or previously unconverted encoded value
+            raw = elem.value
+            elem._ambiguous_raw_value = raw
+            elem._ambiguous_decoded = None
+        elif raw is not None and elem.value != decoded:
+            # The value has been changed since it was last decoded, so use
+            #   the current value rather than the original encoded bytes
+            raw = None
+
+        if raw is None and elem.VM == 0:
+            return elem
+
+        if raw is not None:
+            # LUT Descriptor has an unsigned entry count and bit depth, only
+            #   the second value follows the sign of the marker
+            if elem.tag in _LUT_DESCRIPTOR_TAGS:
+                elem.value = _lut_descriptor_value(raw, is_little_endian, pixel_rep)
+            else:
+                elem.value = convert_numbers(raw, is_little_endian, byte_type)
+
+            elem._ambiguous_decoded = deepcopy(elem.value)
             return elem
 
         # Need to handle type check for elements with VM > 1
@@ -186,6 +270,7 @@ def _correct_ambiguous_vr_element(
             elem.value = convert_numbers(
                 cast(bytes, elem.value), is_little_endian, byte_type
             )
+            elem._ambiguous_decoded = deepcopy(elem.value)
 
     # 'OB or OW' and dependent on WaveformBitsAllocated
     elif elem.tag in _AMBIGUOUS_OB_OW_TAGS:
@@ -201,9 +286,11 @@ def _correct_ambiguous_vr_element(
     elif elem.tag == 0x00283006:
         # First value in LUT Descriptor is how many values in
         #   LUTData, if there's only one value then must be US
+        # A value of 0 means 65536 entries
         # As per PS3.3 C.11.1.1.1
-        lut_descriptor = cast(Sequence[int], ds.LUTDescriptor)
-        if lut_descriptor and lut_descriptor[0] == 1:
+        lut_descriptor = _find_lut_descriptor(ds, ancestors)
+        nr_entries = _lut_descriptor_entries(lut_descriptor, is_little_endian)
+        if nr_entries == 1:
             elem.VR = VR.US
             if elem.VM == 0:
                 return elem
@@ -267,7 +354,15 @@ def correct_ambiguous_vr_element(
     """
     ancestors = [ds] if ancestors is None else ancestors
 
-    if elem.VR in AMBIGUOUS_VR:
+    # Elements that have already had their ambiguous VR corrected but which
+    #   retain their original encoded value must be re-checked, as the
+    #   effective *Pixel Representation* may have changed since
+    is_recheck = elem.VR not in AMBIGUOUS_VR and (
+        isinstance(elem, DataElement)
+        and getattr(elem, "_ambiguous_raw_value", None) is not None
+    )
+
+    if elem.VR in AMBIGUOUS_VR or is_recheck:
         # convert raw data elements before handling them
         if isinstance(elem, RawDataElement):
             elem = convert_raw_data_element(elem, ds=ds)
@@ -337,10 +432,28 @@ def correct_ambiguous_vr(
         # have ensured that the transfer syntax has not changed at this point
         if elem.VR == VR.SQ:
             elem = ds[elem.tag]
+            # The cached `_pixel_rep` of sequence items may be stale if a
+            #   parent's *Pixel Representation* changed after the items were
+            #   first accessed, so refresh it from the current values
+            parent_rep = _effective_pixel_rep(ancestors)
             for item in cast(MutableSequence["Dataset"], elem.value):
+                local = item._dict.get(TAG_PIXREP)
+                if local is not None and local.value is not None:
+                    value = local.value
+                    item._pixel_rep = (
+                        int(b"\x01" in value)
+                        if isinstance(value, bytes)
+                        else int(value)
+                    )
+                elif parent_rep is not None:
+                    item._pixel_rep = parent_rep
+
                 ancestors.insert(0, item)
                 correct_ambiguous_vr(item, is_little_endian, ancestors)
-        elif elem.VR in AMBIGUOUS_VR:
+        elif (
+            elem.VR in AMBIGUOUS_VR
+            or getattr(elem, "_ambiguous_raw_value", None) is not None
+        ):
             correct_ambiguous_vr_element(elem, ds, is_little_endian, ancestors)
 
     del ancestors[0]
@@ -372,14 +485,35 @@ def write_numbers(fp: DicomIO, elem: DataElement, struct_format: str) -> None:
             # works only if list, not if string or number
             value.append
         except AttributeError:  # is a single value - the usual case
-            fp.write(pack(format_string, value))
+            if struct_format == "h" and elem.tag in _LUT_DESCRIPTOR_TAGS:
+                # A lone value for LUT Descriptor is the (unsigned) entry count
+                fp.write(pack(f"{endianChar}H", value))
+            else:
+                fp.write(pack(format_string, value))
         else:
             # Some ambiguous VR elements ignore the VR for part of the value
             # e.g. LUT Descriptor is 'US or SS' and VM 3, but the first and
-            #   third values are always US (the third should be <= 16, so SS is OK)
-            if struct_format == "h" and elem.tag in _LUT_DESCRIPTOR_TAGS and value:
-                fp.write(pack(f"{endianChar}H", value[0]))
-                value = value[1:]
+            #   third values are always US (the third is the bit depth)
+            if elem.tag in _LUT_DESCRIPTOR_TAGS and value:
+                value = list(value)
+                if struct_format == "h":
+                    # Only the second value follows the sign of the VR
+                    fp.write(pack(f"{endianChar}H", value[0]))
+                    remaining = value[1:]
+                    if remaining:
+                        fp.write(pack(f"{endianChar}h", remaining[0]))
+                        remaining = remaining[1:]
+                    if remaining:
+                        fp.write(pack(f"{endianChar}H", remaining[0]))
+                        remaining = remaining[1:]
+
+                    if remaining:
+                        fp.write(pack(f"{endianChar}{len(remaining)}h", *remaining))
+                    return
+
+                if struct_format == "H":
+                    fp.write(pack(f"{endianChar}{len(value)}H", *value))
+                    return
 
             fp.write(pack(f"{endianChar}{len(value)}{struct_format}", *value))
     except Exception as exc:

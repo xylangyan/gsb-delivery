@@ -48,6 +48,17 @@ Fixes
 * Correctly handle empty components of multi-valued **DS** and **IS** elements when
   converting to and from JSON.
 * Correctly handle empty LUT data (:issue:`2238`).
+* Fixed the first value of *LUT Descriptor* and the palette color LUT descriptors being
+  decoded as signed when *Pixel Representation* is 1 during ambiguous VR correction,
+  which could prevent them from being written. The entry count and bit depth are always
+  unsigned, only the second value follows the sign of *Pixel Representation*.
+* Fixed ambiguous **US or SS** elements being resolved using a stale *Pixel
+  Representation* when they were accessed before an ancestor's value was changed, such
+  as when converting from *Implicit VR Little Endian* to *Explicit VR Little Endian*.
+  The effective value is now determined from the final nearest dataset, independently
+  of access order.
+* Fixed the *LUT Data* VR when the applicable *LUT Descriptor* is in an ancestor dataset
+  or still encoded, and when the entry count is 0 (65536 entries).
 * Fixed data in the "unused" bits above *Bits Stored* sometimes being included in the returned
   pixel data for JPEG 2000 and JPEG-LS (:issue:`2260`).
 * Correctly handle meta data tags incorrectly written in implicit transfer syntax (:issue:`2290`)

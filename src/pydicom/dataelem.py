@@ -177,6 +177,13 @@ class DataElement:  # noqa: PLW1641
     showVR = True
     is_raw = False
 
+    # Set when the element is an ambiguous US/SS element whose value depends on
+    #   *Pixel Representation*. Holds the original encoded value so it can be
+    #   re-decoded using the final effective marker, and the last decoded value
+    #   so user modifications can be detected.
+    _ambiguous_raw_value: bytes | None = None
+    _ambiguous_decoded: Any = None
+
     def __init__(
         self,
         tag: int | str | tuple[int, int],
