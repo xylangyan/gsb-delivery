@@ -207,3 +207,5 @@ class ParseConfig
   end
   alias == eql?
 end
+
+require_relative 'hot_parseconfig'

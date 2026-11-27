@@ -19,6 +19,7 @@ Gem::Specification.new do |s|
              'LICENSE',
              'doc/',
              'lib/parseconfig.rb',
+             'lib/hot_parseconfig.rb',
              'lib/version.rb',
              'tests']
 end

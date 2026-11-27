@@ -84,6 +84,50 @@ Access it with ParseConfig:
 
 ```
 
+## Hot Updates
+
+`HotParseConfig` reads a complete config file exactly like `ParseConfig`
+and then applies batches of line edits (insertions, deletions and
+replacements, all positioned against the pre-edit document) published as
+a single release.  A batch is validated as a whole: readers keep seeing
+the current version while the candidate is checked, and the switch to
+the new version is one atomic swap.  If any rule of the candidate is
+unreadable, the whole batch is rejected with a
+`HotParseConfig::ConflictError` naming the conflicting physical lines.
+
+After each publish, key lookups, value types and group order match a
+fresh `ParseConfig` read of the new document (same separator and comment
+settings).  Publishing costs proportionally to the size of the batch -
+renaming a group header does not scan or copy the (possibly huge)
+section that follows it.
+
+```ruby
+>> hot = HotParseConfig.new('/path/to/rules.conf', ':', ['!'])
+>> hot['east']['route']
+=> "spare"
+
+# insert a line before line 4, replace line 4, delete line 7 - together
+>> hot.publish([
+     { op: :insert,  before: 4, text: 'failover' },
+     { op: :replace, line: 4,   text: '[north] ! night shift' },
+     { op: :delete,  line: 7 },
+   ])
+
+>> hot['failover']
+=> true
+>> hot['north']['route']
+=> "spare"
+
+# physical line number of the matched rule in the current document
+>> hot.line_of('north', 'route')
+=> 6
+>> hot.line_of('failover')
+=> 4
+
+# validate a batch without switching to it
+>> candidate = hot.preview([{ op: :delete, line: 2 }])
+```
+
 ## Development
 
 ### Docker

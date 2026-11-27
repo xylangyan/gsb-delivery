@@ -1,4 +1,10 @@
 
+Sat Nov 28, 2026
+- Add HotParseConfig: atomic batch publishing of line edits (insert /
+  delete / replace, positioned against the pre-edit document) with
+  whole-batch validation, physical line numbers for matched rules, and
+  incremental indexes that keep publishes proportional to the edit size
+
 Wed Sep 29, 2021 - v1.1.2
 - Dev and test against recent versions of Ruby (2.6+, 3.0+)
 - Docker development support
