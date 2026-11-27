@@ -1,0 +1,547 @@
+# Utility functions.
+
+import os.path
+import re
+from collections import OrderedDict
+from collections.abc import Callable, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Final,
+    Literal,
+    Union,
+)
+
+from ..typechecking import (
+    ByteOrder,
+    Choices,
+    CompiledFormatDict,
+    Formats,
+    SignalDictType,
+    SignalMappingType,
+    SignalValueType,
+)
+from .errors import DecodeError, EncodeError
+
+if TYPE_CHECKING:
+    from ..database import Database
+    from ..database.can.formats.dbc import (
+        DbcAttributeType,
+        DbcEnvironmentVariable,
+    )
+    from ..database.can.message import Message
+    from ..database.can.node import Node
+    from ..database.can.signal import Signal
+    from ..database.diagnostics import Data
+
+try:
+    import bitstruct.c  # type: ignore
+except ImportError:
+    import bitstruct  # type: ignore[import-untyped, unused-ignore]
+
+
+def format_or(items: list[int | str]) -> str:
+    string_items = [str(item) for item in items]
+
+    if len(string_items) == 1:
+        return string_items[0]
+    else:
+        return '{} or {}'.format(', '.join(string_items[:-1]),
+                                 string_items[-1])
+
+
+def format_and(items: Sequence[int | str]) -> str:
+    string_items = [str(item) for item in items]
+
+    if len(string_items) == 1:
+        return str(string_items[0])
+    else:
+        return '{} and {}'.format(', '.join(string_items[:-1]),
+                                  string_items[-1])
+
+
+def start_bit(signal: Union["Signal", "Data"]) -> int:
+    if signal.byte_order == 'big_endian':
+        return 8 * (signal.start // 8) + (7 - (signal.start % 8))
+    else:
+        return signal.start
+
+
+def _encode_signal_values(signals: Sequence[Union["Signal", "Data"]],
+                          signal_values: SignalMappingType,
+                          scaling: bool,
+                          ) -> dict[str, int | float]:
+    """
+    Convert a dictionary of physical signal values into raw ones.
+    """
+    raw_values: dict[str, int | float] = {}
+    for signal in signals:
+        name = signal.name
+        conversion = signal.conversion
+        value = signal_values[name]
+
+        if isinstance(value, (int, float)):
+            if scaling:
+                raw_values[name] = conversion.numeric_scaled_to_raw(value)
+                continue
+
+            raw_values[name] = value if conversion.is_float else round(value)
+            continue
+        elif isinstance(value, str):
+            raw_values[name] = conversion.choice_to_number(value)
+            continue
+        else:
+            # validate the given NamedSignalValue first
+            if value != conversion.raw_to_scaled(value.value, decode_choices=True):
+                raise EncodeError(
+                    f"Invalid 'NamedSignalValue' name/value pair not found! Name {value.name}, value {value.value}"
+                )
+
+            raw_values[name] = value.value
+            continue
+
+        raise EncodeError(
+            f"Unable to encode signal '{name}' "
+            f"with type '{value.__class__.__name__}'."
+        )
+
+    return raw_values
+
+
+def _pack_formats(formats: Formats, raw_signal_values: dict[str, int | float]) -> int:
+    """Pack raw signal values into the payload, returned as an integer.
+
+    Each layer is a bitstruct codec for a set of signals that do not
+    overlap each other. Messages without overlapping signals have
+    exactly one big and one little endian layer. Overlapping signals
+    (e.g. bit flags plus a status field covering the same bits) are
+    spread over several layers, which are packed separately and OR-ed
+    together.
+    """
+    packed_union = 0
+
+    for big_endian in formats.big_endian_layers:
+        packed_union |= int.from_bytes(big_endian.pack(raw_signal_values), "big")
+
+    for little_endian in formats.little_endian_layers:
+        packed_union |= int.from_bytes(little_endian.pack(raw_signal_values), "little")
+
+    return packed_union
+
+
+def encode_data(signal_values: SignalMappingType,
+                signals: Sequence[Union["Signal", "Data"]],
+                formats: Formats,
+                scaling: bool
+                ) -> int:
+    if len(signals) == 0:
+        return 0
+
+    raw_signal_values = _encode_signal_values(signals, signal_values, scaling)
+    return _pack_formats(formats, raw_signal_values)
+
+
+def decode_data(data: bytes,
+                expected_length: int,
+                signals: Sequence[Union["Signal", "Data"]],
+                formats: Formats,
+                decode_choices: bool,
+                scaling: bool,
+                allow_truncated: bool,
+                allow_excess: bool,
+                ) -> SignalDictType:
+
+    actual_length = len(data)
+    if actual_length != expected_length:
+        if allow_truncated:
+            # pad the data with 0xff to prevent the codec from
+            # raising an exception. Note that all signals
+            # that contain garbage will be removed below.
+            data = data.ljust(expected_length, b"\xFF")
+
+        if allow_excess:
+            # trim the payload data to match the expected size
+            data = data[:expected_length]
+
+        if len(data) != expected_length:
+            raise DecodeError(f"Wrong data size: {actual_length} instead of "
+                              f"{expected_length} bytes")
+
+    try:
+        # Each layer holds a different subset of the signals (see
+        # _pack_formats()), so merging the results yields all of them.
+        unpacked = {}
+        for big_endian in formats.big_endian_layers:
+            unpacked.update(big_endian.unpack(data))
+        reversed_data = data[::-1]
+        for little_endian in formats.little_endian_layers:
+            unpacked.update(little_endian.unpack(reversed_data))
+    except (bitstruct.Error, ValueError) as e:
+        # bitstruct returns different errors in PyPy and cpython
+        raise DecodeError("unpacking failed") from e
+
+    if actual_length < expected_length and allow_truncated:
+        # remove signals that are outside available data bytes
+        actual_bit_count = actual_length * 8
+        for signal in signals:
+            if signal.byte_order == "little_endian":
+                sequential_start_bit = signal.start
+            else:
+                # Calculate start bit with inverted indices.
+                # Function body of ``sawtooth_to_network_bitnum()``
+                # is inlined for improved performance.
+                sequential_start_bit = (8 * (signal.start // 8)) + (7 - (signal.start % 8))
+
+            if sequential_start_bit + signal.length > actual_bit_count:
+                del unpacked[signal.name]
+
+    # scale the signal values and decode choices
+    decoded: dict[str, SignalValueType] = {}
+    for signal in signals:
+        if (value := unpacked.get(signal.name)) is None:
+            # signal value was removed above...
+            continue
+
+        if scaling:
+            decoded[signal.name] = signal.conversion.raw_to_scaled(value, decode_choices)
+        elif (decode_choices
+              and signal.conversion.choices
+              and (choice := signal.conversion.choices.get(value, None)) is not None):
+            decoded[signal.name] = choice
+        else:
+            decoded[signal.name] = value
+
+    return decoded
+
+
+def _group_non_overlapping_signals(
+        signals: Sequence[Union["Data", "Signal"]],
+        start_fn: Callable[[Union["Data", "Signal"]], int],
+) -> list[list[Union["Data", "Signal"]]]:
+    """Split signals into layers that do not overlap in bitstruct layout.
+
+    Overlapping signals (e.g. bit flags plus a status byte covering the
+    same bits) cannot be represented by a single bitstruct format string.
+    """
+    layers: list[list] = []
+    layer_ends: list[int] = []
+
+    for signal in sorted(signals, key=start_fn):
+        start = start_fn(signal)
+        for index, end in enumerate(layer_ends):
+            if start >= end:
+                layers[index].append(signal)
+                layer_ends[index] = start + signal.length
+                break
+        else:
+            layers.append([signal])
+            layer_ends.append(start + signal.length)
+
+    return layers
+
+
+def _compile_bitstruct(fmt: str, names: list[str]) -> CompiledFormatDict:
+    """Compile a bitstruct format, preferring the C implementation.
+
+    Note that ``import bitstruct.c`` binds the name ``bitstruct`` to
+    the pure Python package, so ``bitstruct.compile()`` is the slow
+    implementation. ``bitstruct.c`` is unavailable on some platforms
+    and does not support every format (e.g. integers wider than 64
+    bits), hence the fallback.
+    """
+    try:
+        return bitstruct.c.compile(fmt, names)
+    except Exception:
+        return bitstruct.compile(fmt, names)
+
+
+def create_encode_decode_formats(signals: Sequence[Union["Data", "Signal"]], number_of_bytes: int) -> Formats:
+    format_length = (8 * number_of_bytes)
+
+    def get_format_string_type(signal: Union["Data", "Signal"]) -> str:
+        if signal.conversion.is_float:
+            return 'f'
+        elif signal.is_signed:
+            return 's'
+        else:
+            return 'u'
+
+    def padding_item(length: int) -> tuple[str, str, None]:
+        fmt = f'p{length}'
+        padding_mask = '1' * length
+
+        return fmt, padding_mask, None
+
+    def data_item(signal: Union["Data", "Signal"]) -> tuple[str, str, str]:
+        fmt = f'{get_format_string_type(signal)}{signal.length}'
+        padding_mask = '0' * signal.length
+
+        return fmt, padding_mask, signal.name
+
+    def fmt(items: list[tuple[str, str, str | None]]) -> str:
+        return ''.join([item[0] for item in items])
+
+    def names(items:  list[tuple[str, str, str | None]]) -> list[str]:
+        return [item[2] for item in items if item[2] is not None]
+
+    def padding_mask(items: list[tuple[str, str, str | None]]) -> int:
+        try:
+            return int(''.join([item[1] for item in items]), 2)
+        except ValueError:
+            return 0
+
+    def compile_be_layer(be_signals: Sequence[Union["Data", "Signal"]]) -> tuple[CompiledFormatDict, int]:
+        items: list[tuple[str, str, str | None]] = []
+        start = 0
+
+        # Ensure BE signals are sorted in network order
+        sorted_signals = sorted(
+            be_signals,
+            key=lambda signal: sawtooth_to_network_bitnum(signal.start),
+        )
+
+        for signal in sorted_signals:
+            padding_length = (start_bit(signal) - start)
+
+            if padding_length > 0:
+                items.append(padding_item(padding_length))
+
+            items.append(data_item(signal))
+            start = (start_bit(signal) + signal.length)
+
+        if start < format_length:
+            length = format_length - start
+            items.append(padding_item(length))
+
+        return _compile_bitstruct(fmt(items), names(items)), padding_mask(items)
+
+    def compile_le_layer(le_signals: Sequence[Union["Data", "Signal"]]) -> tuple[CompiledFormatDict, int]:
+        items: list[tuple[str, str, str | None]] = []
+        end = format_length
+
+        # Work from the highest start bit so padding stays non-negative.
+        for signal in sorted(le_signals, key=lambda signal: signal.start, reverse=True):
+            padding_length = end - (signal.start + signal.length)
+
+            if padding_length > 0:
+                items.append(padding_item(padding_length))
+
+            items.append(data_item(signal))
+            end = signal.start
+
+        if end > 0:
+            items.append(padding_item(end))
+
+        value = padding_mask(items)
+
+        if format_length > 0:
+            length = len(''.join([item[1] for item in items]))
+            _packed = bitstruct.pack(f'u{length}', value)
+            value = int.from_bytes(_packed, "little")
+
+        return _compile_bitstruct(fmt(items), names(items)), value
+
+    be_signals = [signal for signal in signals if signal.byte_order == "big_endian"]
+    le_signals = [signal for signal in signals if signal.byte_order != "big_endian"]
+
+    # Always compile at least one (possibly empty) layer per byte
+    # order. Its format then consists of padding only, which keeps
+    # the length check done by bitstruct when unpacking.
+    be_layers = [
+        compile_be_layer(layer)
+        for layer in _group_non_overlapping_signals(be_signals, start_bit) or [[]]
+    ]
+    le_layers = [
+        compile_le_layer(layer)
+        for layer in _group_non_overlapping_signals(le_signals, lambda signal: signal.start) or [[]]
+    ]
+
+    # The padding mask marks the bits which are not used by any
+    # signal. Message.encode(padding=True) fills these bits with the
+    # unused bit pattern. Each layer only knows about its own signals,
+    # so a bit is padding only if it is padding in all layers. Using
+    # the mask of a single layer would fill bits of signals in other
+    # layers and corrupt their values.
+    padding = (1 << format_length) - 1
+    for _, layer_padding_mask in be_layers + le_layers:
+        padding &= layer_padding_mask
+
+    return Formats([compiled for compiled, _ in be_layers],
+                   [compiled for compiled, _ in le_layers],
+                   padding)
+
+
+def sawtooth_to_network_bitnum(sawtooth_bitnum: int) -> int:
+    '''Convert SawTooth bit number to Network bit number
+
+    Byte     |   0   |   1   |
+    Sawtooth |7 ... 0|15... 8|
+    Network  |0 ... 7|8 ...15|
+    '''
+    return (8 * (sawtooth_bitnum // 8)) + (7 - (sawtooth_bitnum % 8))
+
+
+def cdd_offset_to_dbc_start_bit(cdd_offset: int, bit_length: int, byte_order: ByteOrder) -> int:
+    '''Convert CDD/c-style field bit offset to DBC field start bit convention.
+
+    BigEndian (BE) fields are located by their MSBit's sawtooth index.
+    LitteleEndian (LE) fields located by their LSBit's sawtooth index.
+    '''
+    if byte_order == "big_endian":
+        # Note: Allow for BE fields that are smaller or larger than 8 bits.
+        return (8 * (cdd_offset // 8)) + min(7, (cdd_offset % 8) + bit_length - 1)
+    else:
+        return cdd_offset
+
+
+def prune_signal_choices(signal: "Signal") -> None:
+    '''Shorten the names of the signal choices of a single signal
+
+    For signals with multiple named values this means removing the
+    longest common prefix that ends with an underscore and for which
+    the removal still result the named signal values to be valid
+    python identifiers. For signals with a single named choice, this
+    means removing all leading segments between underscores which
+    occur before a segment that contains a digit.
+
+    Examples:
+
+    ..code:: text
+
+       MyMessage_MySignal_Uint32_Choice1, MyMessage_MySignal_Uint32_Choice2
+       -> Choice1, Choice2
+       MyMessage_MySignal_Uint32_NotAvailable
+       -> NotAvailable
+
+    '''
+
+    if signal.choices is None:
+        # no named choices
+        return
+
+    if len(signal.choices) == 1:
+        # signal exhibits only a single named value: Use the longest
+        # postfix starting with an underscore that does not contain
+        # digits as the new name. If no such suffix exists, leave the
+        # choice alone...
+        key = next(iter(signal.choices.keys()))
+        choice = next(iter(signal.choices.values()))
+        m = re.match(r'^[0-9A-Za-z_]*?_([A-Za-z_]+)$', str(choice))
+        val = str(choice)
+        if m:
+            val = m.group(1)
+
+        if isinstance(choice, str):
+            signal.choices[key] = val
+        else:
+            # assert isinstance(choice, NamedSignalValue)
+            choice.name = val
+        return
+
+    # if there are multiple choices, remove the longest common prefix
+    # that ends with an underscore from all of them provided that the
+    # names of the choices stay valid identifiers
+    choice_values = [ str(x) for x in signal.choices.values() ]
+    full_prefix = os.path.commonprefix(choice_values)  # noqa: RUF071
+    i = full_prefix.rfind('_')
+
+    if i >= 0:
+        full_prefix = full_prefix[0:i]
+    else:
+        # full_prefix does not contain an underscore
+        # but the following algorithm assumes it does
+        # and would strip too much
+        return
+
+    if not full_prefix:
+        # the longest possible prefix is empty, i.e., there is nothing
+        # to strip from the names of the signal choices
+        return
+
+    full_prefix_segments = full_prefix.split('_')
+
+    # find the longest prefix of the choices which keeps all
+    # names valid python identifiers
+    prefix = ''
+    n = 0
+    valid_name_re = re.compile('^[a-zA-Z_][a-zA-Z0-9_]*$')
+    for i in range(len(full_prefix_segments), -1, -1):
+        if i == 0:
+            # there is no such non-empty prefix
+            return
+
+        prefix = '_'.join(full_prefix_segments[:i]) + '_'
+        n = len(prefix)
+
+        if all(valid_name_re.match(x[n:]) for x in choice_values):
+            break
+
+    # remove the prefix from the choice names
+    for key, choice in signal.choices.items():
+        if isinstance(choice, str):
+            signal.choices[key] = choice[n:]
+        else:
+            # assert isinstance(choice, NamedSignalValue)
+            choice.name = choice.name[n:]
+
+
+def prune_database_choices(database: "Database") -> None:
+    '''
+    Prune names of all named signal values of all signals of a database
+    '''
+    for message in database.messages:
+
+        for signal in message.signals:
+            prune_signal_choices(signal)
+
+        if message.is_container:
+            for cm in message.contained_messages:
+                for cs in cm.signals:
+                    prune_signal_choices(cs)
+
+
+SORT_SIGNALS_DEFAULT: Final = 'default'
+type_sort_signals = Callable[[list["Signal"]], list["Signal"]] | Literal['default'] | None
+
+type_sort_attribute = \
+    tuple[Literal['dbc'],     "DbcAttributeType", None,   None,      None,     None] | \
+    tuple[Literal['node'],    "DbcAttributeType", "Node", None,      None,     None] | \
+    tuple[Literal['message'], "DbcAttributeType", None,   "Message", None,     None] | \
+    tuple[Literal['signal'],  "DbcAttributeType", None,   "Message", "Signal", None] | \
+    tuple[Literal['envvar'],  "DbcAttributeType", None,   None,      None,     "DbcEnvironmentVariable"]
+
+type_sort_attributes = Callable[[list[type_sort_attribute]], list[type_sort_attribute]] | Literal['default'] | None
+
+type_sort_choices = Callable[[Choices], Choices] | None
+
+def sort_signals_by_start_bit(signals: list["Signal"]) -> list["Signal"]:
+    return sorted(signals, key=start_bit)
+
+
+def sort_signals_by_start_bit_reversed(signals: list["Signal"]) -> list["Signal"]:
+    return sorted(signals, key=start_bit)[::-1]
+
+
+def sort_signals_by_name(signals: list["Signal"]) -> list["Signal"]:
+    return sorted(signals, key=lambda s: s.name)
+
+
+def sort_signals_by_start_bit_and_mux(signals: list["Signal"]) -> list["Signal"]:
+    # sort by start bit
+    signals = sorted(signals, key=start_bit)
+    # but unmuxed values come first
+    signals = sorted(signals, key=lambda s: bool(s.multiplexer_ids))
+    # and group by mux... -1 is fine as the "no mux" case because even negative
+    # multiplexors get cast to unsigned in the .dbc
+    signals = sorted(
+        signals, key=lambda s: s.multiplexer_ids[0] if s.multiplexer_ids else -1
+    )
+
+    return signals
+
+
+def sort_choices_by_value(choices: Choices) -> Choices:
+    return OrderedDict(sorted(choices.items(), key=lambda x: x[0]))
+
+
+def sort_choices_by_value_descending(choices: Choices) -> Choices:
+    return OrderedDict(sorted(choices.items(), key=lambda x: x[0], reverse=True))
