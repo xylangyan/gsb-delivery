@@ -1,0 +1,421 @@
+"""What the runtime this suite is running on can actually do.
+
+Probed rather than inferred from a platform or interpreter name: a name answers who is running, and every question
+here is about what the runtime can do. The coverage pragmas and the tests' skipif gates both read these, so a test
+cannot skip while coverage still demands its lines.
+
+Kept apart from the pragma plugin so reading a capability never requires coverage to be installed.
+"""
+
+from __future__ import annotations
+
+import gc
+import os
+import signal
+import socket
+import stat
+import sys
+import tempfile
+import time
+import weakref
+from asyncio import CancelledError
+from contextlib import asynccontextmanager, contextmanager, suppress
+from importlib import import_module
+from importlib.util import find_spec
+from itertools import count
+from pathlib import Path
+from typing import TYPE_CHECKING, Final, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Generator
+    from types import FrameType
+
+    from _typeshed import Unused  # simplint: ignore[private-import-path]  # precise callback type
+
+
+def _supports_symlink() -> bool:
+    # Windows grants this per privilege, not per platform, so ask the filesystem.
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory, "target")
+        target.touch()
+        try:
+            Path(directory, "link").symlink_to(target)
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+        return True
+
+
+def _supports_unlinking_an_open_file() -> bool:
+    # Where this is refused, a peer can never take a live holder's marker.
+    with tempfile.TemporaryDirectory() as directory:
+        victim = Path(directory, "victim")
+        victim.touch()
+        with victim.open("rb"):
+            try:
+                victim.unlink()
+            except OSError:
+                return False
+        return True
+
+
+def _honors_link_follow_symlinks() -> bool:
+    # PyPy advertises the option then rejects it with EINVAL, so trust a real link over os.supports_follow_symlinks.
+    if not hasattr(os, "link"):
+        return False
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory, "source")
+        source.touch()
+        try:
+            os.link(source, Path(directory, "link"), follow_symlinks=False)
+        except (OSError, NotImplementedError, ValueError):
+            return False
+        return True
+
+
+def _finalizes_on_last_reference() -> bool:
+    # Only a refcounting collector runs __del__ the moment the last reference goes; a tracing one defers it.
+    finalized: list[bool] = []
+
+    class Probe:
+        def __del__(self) -> None:
+            finalized.append(True)
+
+    Probe()
+    return bool(finalized)
+
+
+def _finalizes_on_collection() -> bool:
+    # GraalPy queues finalizers on the host collector, so even a forced collection does not run __del__.
+    finalized: list[bool] = []
+
+    class Probe:
+        def __del__(self) -> None:
+            finalized.append(True)
+
+    Probe()
+    gc.collect()
+    return bool(finalized)
+
+
+_T = TypeVar("_T")
+
+
+def _collects_classes() -> bool:
+    # GraalPy can collect a plain class while retaining one instantiated through a custom metaclass.
+    class ProbeMeta(type):
+        def __call__(cls: type[_T]) -> _T:
+            return type.__call__(cls)
+
+    def build() -> type:
+        class Probe(metaclass=ProbeMeta):
+            pass
+
+        Probe()
+        return Probe
+
+    reference: Final[weakref.ReferenceType[type]] = weakref.ref(build())
+    gc.collect()
+    return reference() is None
+
+
+def _preserves_context_thrown_into_a_generator() -> bool:
+    # GraalPy resets __context__ when contextlib throws into the suspended generator, losing the chained cause.
+    @contextmanager
+    def probe() -> Generator[None]:
+        yield
+
+    error = KeyError("thrown")
+    error.__context__ = ValueError("context")
+    try:
+        with probe():
+            raise error
+    except KeyError as caught:
+        return caught.__context__ is not None
+    return False  # pragma: no cover  # the raise above always propagates
+
+
+class _Suspend:
+    # An awaitable that parks its coroutine once, so a probe can throw into a suspended frame without a loop.
+    def __await__(self) -> Generator[None, None, None]:
+        yield
+
+
+def _propagates_a_cancellation_thrown_into_a_coroutine() -> bool:
+    # Driven by hand so the probe needs no event loop: GraalPy answers athrow with RuntimeError instead of the
+    # CancelledError, so every cancellation crossing an async context manager surfaces as the wrong exception.
+    @asynccontextmanager
+    async def gate() -> AsyncGenerator[None]:
+        await _Suspend()
+        yield
+
+    async def body() -> None:
+        async with gate():
+            pass
+
+    coroutine = body()
+    coroutine.send(None)
+    try:
+        coroutine.throw(CancelledError())
+    except CancelledError:
+        return True
+    except BaseException:  # ruff:ignore[blind-except]  # whatever else a runtime substitutes counts as the deviation
+        return False
+    return False  # pragma: no cover  # throwing into the suspended coroutine always raises
+
+
+def _finishes_a_generator_a_profile_hook_interrupts_on_resume() -> bool:
+    # PyPy and GraalPy can end the generator without its finally, leaking resources when a test injects an interrupt.
+    finished: Final[list[bool]] = []
+
+    def probe() -> Generator[None]:
+        try:
+            yield
+        finally:
+            finished.append(True)
+
+    entries: Final[count[int]] = count()
+
+    def interrupt(frame: FrameType, event: str, _arg: Unused) -> None:
+        # The first entry starts the generator; every later one resumes it.
+        if event == "call" and frame.f_code is probe.__code__ and next(entries):
+            raise KeyboardInterrupt
+
+    previous = sys.getprofile()
+    sys.setprofile(interrupt)
+    try:
+        with suppress(KeyboardInterrupt), contextmanager(probe)():
+            pass
+    finally:
+        sys.setprofile(previous)
+    return bool(finished)
+
+
+def _runs_a_raised_signal_handler_at_once() -> bool:
+    # GraalPy runs the handler some time after raise_signal returns, so the code the signal should interrupt has already
+    # moved on, and the late signal lands in whatever runs next.
+    delivered: Final[list[bool]] = []
+    try:
+        previous = signal.signal(signal.SIGINT, lambda _signum, _frame: delivered.append(True))
+    except ValueError:  # only the main thread may install a handler
+        return False
+    try:
+        signal.raise_signal(signal.SIGINT)
+        at_once: Final[bool] = bool(delivered)
+        # Restoring the previous handler while the signal is still pending would hand it a KeyboardInterrupt.
+        deadline: Final[float] = time.monotonic() + 5
+        while not delivered and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    return at_once
+
+
+def _delivers_audit_events() -> bool:
+    # GraalPy accepts a hook and never calls it. The hook is a permanent no-op; tests install their own anyway.
+    delivered: list[bool] = []
+    audit_probe_event: str = "filelock.capability-probe"
+    sys.addaudithook(lambda event, _args: delivered.append(True) if event == audit_probe_event else None)
+    sys.audit(audit_probe_event)
+    return bool(delivered)
+
+
+def _survives_settrace_inside_audit_hook() -> bool:
+    # CPython before 3.12 holds one process-wide flag while settrace and setprofile run their audit hooks, so a nested
+    # call raises. Probe through setprofile: re-installing the trace function would unhook coverage's C tracer.
+    nested: list[bool] = []
+
+    def setprofile_again(event: str, _args: Unused) -> None:
+        if event == "sys.setprofile" and not nested:
+            nested.append(True)
+            sys.setprofile(sys.getprofile())
+
+    sys.addaudithook(setprofile_again)
+    try:
+        sys.setprofile(sys.getprofile())
+    except RuntimeError:
+        return False
+    return True
+
+
+def _refuses_to_open_a_symlink() -> bool:
+    # GraalPy accepts O_NOFOLLOW then follows the link anyway, so ask for the refusal rather than the constant.
+    if not hasattr(os, "O_NOFOLLOW"):
+        return False
+    if not _supports_symlink():
+        # Nothing to point the probe at, so keep the constant's answer rather than reporting a gap we cannot see.
+        return True
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory, "target")
+        target.touch()
+        link = Path(directory, "link")
+        link.symlink_to(target)
+        try:
+            descriptor = os.open(link, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return True
+        os.close(descriptor)
+        return False
+
+
+def _grants_a_file_lease() -> bool:
+    # Only Linux has F_SETLEASE, and a filesystem or fs.leases-enable=0 can still refuse it.
+    try:
+        fcntl = import_module("fcntl")
+    except ImportError:
+        return False
+    if not hasattr(fcntl, "F_SETLEASE"):
+        return False
+    with tempfile.TemporaryFile() as handle:
+        try:
+            fcntl.fcntl(handle.fileno(), fcntl.F_SETLEASE, fcntl.F_WRLCK)
+        except OSError:
+            return False
+        return True
+
+
+def _reports_object_tracebacks() -> bool:
+    # pytest's thread and unraisable exception hooks ask tracemalloc where the offending object was allocated. GraalPy
+    # raises NotImplementedError from that lookup; CPython answers None while not tracing, and PyPy, which ships no
+    # tracemalloc, is never asked.
+    try:
+        get_object_traceback = import_module("tracemalloc").get_object_traceback
+    except ImportError:
+        return True
+    try:
+        get_object_traceback(object())
+    except NotImplementedError:
+        return False
+    return True
+
+
+def _traces_allocations() -> bool:
+    try:
+        return hasattr(import_module("tracemalloc"), "start")
+    except ImportError:
+        return False
+
+
+def _supports_file_mode() -> bool:
+    with _unreadable_file() as probe:
+        return probe.stat().st_mode & 0o777 == 0
+
+
+def _enforces_file_permissions() -> bool:
+    # Privileged processes can retain mode bits while bypassing access checks.
+    with _unreadable_file() as probe:
+        try:
+            probe.read_bytes()
+        except PermissionError:
+            return True
+        return False
+
+
+@contextmanager
+def _unreadable_file() -> Generator[Path]:
+    with tempfile.TemporaryDirectory() as directory:
+        probe: Final[Path] = Path(directory, "probe")
+        probe.touch()
+        probe.chmod(0)
+        try:
+            yield probe
+        finally:
+            probe.chmod(0o600)
+
+
+def _has_a_sticky_tmp_of_another_user() -> bool:
+    # A lock refuses a protocol directory of another account only under a sticky parent this account does not own.
+    # /tmp is that parent on Linux and macOS, unless the suite runs as the user who owns it.
+    if sys.platform == "win32":
+        return False
+    try:
+        tmp: Final[os.stat_result] = Path("/tmp").stat()  # ruff:ignore[hardcoded-temp-file]  # the shared directory is the subject
+    except OSError:
+        return False
+    return bool(tmp.st_mode & stat.S_ISVTX) and tmp.st_uid != os.geteuid()
+
+
+def _lists_every_open_descriptor(view: str | None) -> bool:
+    # FreeBSD's devfs and NetBSD provide only the standard streams under /dev/fd until fdescfs is mounted, so a listing
+    # there misses every descriptor a test opened. NetBSD's static nodes also keep a closed descriptor listed, so the
+    # probe has to disappear once closed as well.
+    if view is None:
+        return False
+    with Path(os.devnull).open("rb") as probe:
+        number: Final[int] = probe.fileno()
+        listed: Final[bool] = Path(view, str(number)).exists()
+    return listed and not Path(view, str(number)).exists()
+
+
+def _exports_interpreter_states() -> bool:
+    try:
+        pythonapi = getattr(import_module("ctypes"), "pythonapi", None)
+    except ImportError:
+        return False
+    return hasattr(pythonapi, "PyInterpreterState_Get") and hasattr(pythonapi, "PyInterpreterState_Main")
+
+
+_FD_VIEW: Final[str | None] = next((view for view in ("/dev/fd", "/proc/self/fd") if Path(view).is_dir()), None)
+_LINK_FOLLOW_SYMLINKS: Final[bool] = _honors_link_follow_symlinks()
+
+
+#: Capability -> whether this runtime provides it. Tests gate their skipif on this same mapping.
+CAPABILITIES: Final[dict[str, bool]] = {
+    "fork": hasattr(os, "fork") and hasattr(os, "register_at_fork"),
+    # Narrower than "fork": GraalPy registers fork handlers but cannot fork.
+    "register-at-fork": hasattr(os, "register_at_fork"),
+    "dir-fd": os.open in os.supports_dir_fd,
+    # Narrower than "dir-fd": GraalPy takes os.open relative to a directory descriptor but not os.link.
+    "link-dir-fd": hasattr(os, "link") and os.link in os.supports_dir_fd,
+    "fork1": hasattr(os, "fork1"),
+    "hard-link": hasattr(os, "link"),
+    "symlink": _supports_symlink(),
+    "fcntl": find_spec("fcntl") is not None,
+    "unlink-open-file": _supports_unlinking_an_open_file(),
+    "posix-signals": hasattr(signal, "SIGKILL"),
+    "prompt-signal-delivery": _runs_a_raised_signal_handler_at_once(),
+    "file-mode": _supports_file_mode(),
+    "file-permissions": _enforces_file_permissions(),
+    "prompt-finalization": _finalizes_on_last_reference(),
+    "collected-finalization": _finalizes_on_collection(),
+    "class-collection": _collects_classes(),
+    "generator-exception-context": _preserves_context_thrown_into_a_generator(),
+    "coroutine-cancellation": _propagates_a_cancellation_thrown_into_a_coroutine(),
+    "audit-events": _delivers_audit_events(),
+    "settrace-safe-audit-hooks": _survives_settrace_inside_audit_hook(),
+    "profile-interrupted-generator-finishes": _finishes_a_generator_a_profile_hook_interrupts_on_resume(),
+    "fd-directory": _FD_VIEW is not None,
+    "complete-fd-directory": _lists_every_open_descriptor(_FD_VIEW),
+    "fifo": hasattr(os, "mkfifo"),
+    "foreign-sticky-tmp": _has_a_sticky_tmp_of_another_user(),
+    "af-unix": hasattr(socket, "AF_UNIX"),
+    # Distinct from "symlink": a runtime can create them yet still not refuse to follow one.
+    "o-nofollow": _refuses_to_open_a_symlink(),
+    "file-lease": _grants_a_file_lease(),
+    "utime-nofollow": os.utime in os.supports_follow_symlinks,
+    "access-nofollow": os.access in os.supports_follow_symlinks,
+    "utime-fd": os.utime in os.supports_fd,
+    "sqlite3": find_spec("sqlite3") is not None,
+    "suspend-clock": hasattr(time, "CLOCK_MONOTONIC" if sys.platform == "darwin" else "CLOCK_BOOTTIME")
+    and hasattr(time, "clock_gettime"),
+    "lazy-imports": hasattr(sys, "set_lazy_imports"),
+    # A source consumer may run the suite unmeasured, and a forked child then has nothing to flush.
+    "coverage": find_spec("coverage") is not None,
+    "link-follow-symlinks": _LINK_FOLLOW_SYMLINKS,
+    "embedded-interpreter-api": sys.implementation.name == "cpython"
+    and sys.version_info < (3, 12)
+    and _exports_interpreter_states(),
+    "posix-subinterpreters": os.name == "posix"
+    and find_spec("_interpreters" if sys.version_info >= (3, 13) else "_xxsubinterpreters") is not None,
+    "posix-hard-link": sys.platform != "win32" and _LINK_FOLLOW_SYMLINKS,
+    "sqlite-private-link": sys.platform == "win32" or _LINK_FOLLOW_SYMLINKS,
+    "tracemalloc-allocations": _traces_allocations(),
+    "tracemalloc-object-traceback": _reports_object_tracebacks(),
+    "gc-objects": hasattr(gc, "get_objects"),
+    # Only the tox env that installs a released filelock sets this.
+    "old-client": bool(os.environ.get("FILELOCK_OLD_CLIENT_PATH")),
+}
+
+
+__all__ = [
+    "CAPABILITIES",
+]

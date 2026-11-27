@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import multiprocessing
+from typing import TYPE_CHECKING, Final, Literal, TypeVar
+
+import pytest
+
+from filelock import ReadWriteLock, Timeout
+
+if TYPE_CHECKING:
+    import os
+    import sys
+    from collections.abc import Callable
+
+    if sys.platform == "win32":
+        from multiprocessing.connection import PipeConnection as Connection
+    else:
+        from multiprocessing.connection import Connection
+
+
+OPPOSITE_MODE: Final[dict[Literal["read", "write"], Literal["read", "write"]]] = {
+    "read": "write",
+    "write": "read",
+}
+
+ACQUIRE_SETTINGS: Final[pytest.MarkDecorator] = pytest.mark.parametrize(
+    ("instance_timeout", "instance_blocking", "call_timeout", "call_blocking", "minimum"),
+    [
+        pytest.param(0.2, True, None, None, 0.1, id="instance-timeout"),
+        pytest.param(30, False, None, None, 0, id="instance-nonblocking"),
+        pytest.param(30, True, 0.2, None, 0.1, id="call-timeout"),
+        pytest.param(0.2, False, None, True, 0.1, id="call-blocking"),
+        pytest.param(30, True, None, False, 0, id="call-nonblocking"),
+        pytest.param(30, True, 0, None, 0, id="zero-timeout"),
+    ],
+)
+
+INVALID_TIMEOUTS: Final[pytest.MarkDecorator] = pytest.mark.parametrize(
+    ("timeout", "message"),
+    [
+        pytest.param(-2, "timeout must be a non-negative number or -1, not -2.0", id="integer"),
+        pytest.param(-0.5, "timeout must be a non-negative number or -1, not -0.5", id="fraction"),
+        pytest.param(float("-inf"), "timeout must be a non-negative number or -1, not -inf", id="negative-infinite"),
+        pytest.param(float("nan"), "timeout must be a number of seconds, not nan", id="nan"),
+    ],
+)
+
+
+def assert_read_write_lock_state(lock_file: str, mode: Literal["read", "write"], *, available: bool) -> None:
+    context = multiprocessing.get_context("spawn")
+    # Pipes avoid GraalPy's multiprocessing semaphore failures.
+    receiving, sending = context.Pipe(duplex=False)
+    probe = context.Process(target=_probe_read_write_lock, args=(lock_file, mode, sending))
+    probe.start()
+    sending.close()
+    try:
+        # Spawn imports and coverage shutdown need separate budgets from the lock operation.
+        assert receiving.poll(timeout=10), "read-write lock probe did not start"
+        receiving.recv_bytes()
+        assert receiving.poll(timeout=5), "read-write lock probe did not finish"
+        acquired: Final[bytes] = receiving.recv_bytes()
+        probe.join(timeout=10)
+        assert not probe.is_alive(), "read-write lock probe did not exit"
+        assert (probe.exitcode, acquired) == (0, bytes([available]))
+    finally:
+        if probe.is_alive():  # pragma: no cover - cleanup for a hung child after the assertion fails
+            probe.terminate()
+            probe.join(timeout=5)
+        probe.close()
+        receiving.close()
+
+
+def _probe_read_write_lock(lock_file: str, mode: Literal["read", "write"], sending: Connection) -> None:
+    with sending:
+        lock: Final[ReadWriteLock] = ReadWriteLock(lock_file, is_singleton=False)
+        sending.send_bytes(b"")
+        acquired = False
+        try:
+            try:
+                (lock.acquire_read if mode == "read" else lock.acquire_write)(blocking=False)
+            except Timeout:
+                return
+            acquired = True
+            lock.release()
+        finally:
+            lock.close()
+            sending.send_bytes(bytes([acquired]))
+
+
+def writer_gets_in(lock_file: str | os.PathLike[str]) -> bool:
+    contender: Final[ReadWriteLock] = ReadWriteLock(lock_file, is_singleton=False)
+    try:
+        contender.acquire_write(blocking=False)
+    except Timeout:
+        return False
+    finally:
+        contender.close()
+    return True
+
+
+_T = TypeVar("_T")
+
+
+def interrupt_once(real: Callable[[_T], None], *, before: bool) -> Callable[[_T], None]:
+    pending = True
+
+    def call(instance: _T) -> None:
+        nonlocal pending
+        if pending and before:
+            pending = False
+            raise Interrupt
+        real(instance)
+        if pending:
+            pending = False
+            raise Interrupt
+
+    return call
+
+
+class Interrupt(BaseException):
+    # Stands in for an exception a signal handler raises, without pytest treating it as a KeyboardInterrupt.
+    ...
+
+
+__all__ = [
+    "ACQUIRE_SETTINGS",
+    "INVALID_TIMEOUTS",
+    "Interrupt",
+    "assert_read_write_lock_state",
+    "interrupt_once",
+    "writer_gets_in",
+]
