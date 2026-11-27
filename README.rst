@@ -180,6 +180,42 @@ JMESPath libraries, not just python), please let us know at
 `jmespath.site <https://github.com/jmespath/jmespath.site/issues>`__.
 
 
+Live leaderboard queries
+========================
+
+The ``jmespath.live`` module keeps a sharded supplier leaderboard
+under a set of subscribed JMESPath expressions.  ``register`` reads
+the whole inventory once; afterwards rows are corrected by row number
+(``insert``/``replace``/``delete``), each record carrying a stable
+material id.  ``diff`` reports how every subscription changed and
+``round_stats.accesses`` exposes how many unchanged records had to be
+read, so the caller can verify the per-round access budget:
+
+.. code:: python
+
+    >>> import jmespath.live
+    >>> lb = jmespath.live.Leaderboard()
+    >>> lb.register({'shards': [{'rows': rows}], 'backup': backup_rows})
+    >>> sub = lb.subscribe(
+    ...     'map(&label, (sort_by(shards[].rows[] | [?live], &rank) | [0:2])'
+    ...     ' || (sort_by(backup[?live], &rank) | [0:2]))')
+    >>> lb.replace('main', 0, {'id': 'A2', 'live': True, 'rank': 10,
+    ...                        'label': 'valve'})
+    >>> diff = lb.diff()[sub]
+    >>> diff.kind             # 'unchanged' | 'value_changed' |
+    ...                       # 'source_changed' | 'error' | 'recovered'
+    >>> lb.round_stats.accesses <= 256
+    True
+
+Results are computed exactly like a plain ``jmespath.search`` over the
+whole current document (stable ordering of equal sort keys, ``map``
+keeping null slots, and ``sort_by`` key type errors raised for rows
+outside the page range).  When a subscription fails, ``diff.error``
+reports which board (``main``/``backup``) and which material failed
+first, the received key type and the required one.  Plain
+``jmespath.search`` is not affected.
+
+
 Specification
 =============
 
