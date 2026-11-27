@@ -1,0 +1,132 @@
+site_name: ruptures
+repo_url: https://github.com/deepcharles/ruptures
+repo_name: deepcharles/ruptures
+docs_dir: docs
+site_dir: site
+plugins:
+  - search
+  - mkdocstrings:
+      watch:
+        - ruptures
+      handlers:
+        python:
+          options:
+            filters:
+              - "!^_"  # exclude all members starting with _
+              - "^__init__$"  # but always include __init__ modules and methods
+  - mknotebooks:
+      execute: false
+      binder: false
+  - macros:
+      module_name: mkdocs_macros
+  - section-index
+markdown_extensions:
+  - pymdownx.snippets:
+  - pymdownx.tabbed:
+  - pymdownx.emoji:
+  - pymdownx.superfences:
+  - pymdownx.arithmatex:
+      generic: true
+  - admonition:
+  - toc:
+      permalink: "#"
+  - codehilite
+nav:
+  - Home:
+    - index.md
+  - Getting started:
+    - what-is-cpd.md
+    - 'Installation': install.md
+    - 'Basic usage': getting-started/basic-usage.ipynb
+    - 'Fitting and predicting': fit-and-predict.md
+    - 'Custom cost function': custom-cost-function.md
+  - User guide:
+    - user-guide/index.md
+    - Search methods:
+      - 'Dynamic programming': user-guide/detection/dynp.md
+      - 'Pelt': user-guide/detection/pelt.md
+      - 'Kernel change detection': user-guide/detection/kernelcpd.md
+      - 'Binary segmentation': user-guide/detection/binseg.md
+      - 'Bottom-up segmentation': user-guide/detection/bottomup.md
+      - 'Window sliding segmentation': user-guide/detection/window.md
+      - 'L1 Potts': user-guide/detection/l1potts.md
+    - Cost functions:
+      - 'CostL1': user-guide/costs/costl1.md
+      - 'CostL2': user-guide/costs/costl2.md
+      - 'CostNormal': user-guide/costs/costnormal.md
+      - 'CostRbf': user-guide/costs/costrbf.md
+      - 'CostCosine': user-guide/costs/costcosine.md
+      - 'CostLinear': user-guide/costs/costlinear.md
+      - 'CostCLinear': user-guide/costs/costclinear.md
+      - 'CostRank': user-guide/costs/costrank.md
+      - 'CostMl': user-guide/costs/costml.md
+      - 'CostAR': user-guide/costs/costautoregressive.md
+      - 'Custom cost': user-guide/costs/costcustom.md
+    - Generate signals:
+      - 'Piecewise constant': user-guide/datasets/pw_constant.md
+      - 'Piecewise linear': user-guide/datasets/pw_linear.md
+      - 'Piecewise Gaussian': user-guide/datasets/pw_normal.md
+      - 'Piecewise sinusoidal': user-guide/datasets/pw_wavy.md
+    - Evaluation metrics:
+      - 'Precision and recall': user-guide/metrics/precisionrecall.md
+      - 'Hausdorff metric': user-guide/metrics/hausdorff.md
+      - 'Rand index': user-guide/metrics/randindex.md
+    - Display:
+      - user-guide/show/display.md
+  - Gallery of examples:
+    - examples/introduction.md
+    - 'Simple usages':
+      - 'Basic usage': examples/basic-usage.ipynb
+    - 'Advanced usages':
+      - 'Combining cost functions': examples/merging-cost-functions.ipynb
+      - 'Kernel change point detection: a performance comparison': examples/kernel-cpd-performance-comparison.ipynb
+      - 'Music segmentation': examples/music-segmentation.ipynb
+      - 'Text segmentation': examples/text-segmentation.ipynb
+
+  - Code reference:
+      - code-reference/index.md
+      - Base classes: code-reference/base-reference.md
+      - Search methods:
+          - Dynp: code-reference/detection/dynp-reference.md
+          - KernelCPD: code-reference/detection/kernelcpd-reference.md
+          - Pelt: code-reference/detection/pelt-reference.md
+          - Binseg: code-reference/detection/binseg-reference.md
+          - BottomUp: code-reference/detection/bottomup-reference.md
+          - Window: code-reference/detection/window-reference.md
+          - L1Potts: code-reference/detection/l1potts-reference.md
+      - Cost functions:
+          - 'CostL1': code-reference/costs/costl1-reference.md
+          - 'CostL2': code-reference/costs/costl2-reference.md
+          - 'CostNormal': code-reference/costs/costnormal-reference.md
+          - 'CostRbf': code-reference/costs/costrbf-reference.md
+          - 'CostCosine': code-reference/costs/costcosine-reference.md
+          - 'CostLinear': code-reference/costs/costlinear-reference.md
+          - 'CostCLinear': code-reference/costs/costclinear-reference.md
+          - 'CostRank': code-reference/costs/costrank-reference.md
+          - 'CostMl': code-reference/costs/costml-reference.md
+          - 'CostAR': code-reference/costs/costautoregressive-reference.md
+      - Data sets:
+        - 'Piecewise constant': code-reference/datasets/pw_constant-reference.md
+        - 'Piecewise linear': code-reference/datasets/pw_linear-reference.md
+        - 'Piecewise normal': code-reference/datasets/pw_normal-reference.md
+        - 'Piecewise wavy': code-reference/datasets/pw_wavy-reference.md
+      - Metrics:
+        - 'Precision and recall': code-reference/metrics/precisionrecall.md
+        - 'Hausdorff metric': code-reference/metrics/hausdorff.md
+        - 'Rand index': code-reference/metrics/randindex.md
+      - Display:
+        - 'Display function': code-reference/show/display.md
+  - About:
+    - 'Release notes': release-notes.md
+    - 'Contributing': contributing.md
+    - 'License': license.md
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - search.highlight
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
