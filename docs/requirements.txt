@@ -1,0 +1,12 @@
+# ==============================
+# Requirements for Read The Docs
+# ==============================
+#
+# The following requirements are additional dependencies that
+# https://readthedocs.io needs to install so it can properly
+# generate the documentation for datatest.
+
+sphinx>=2.1.0
+sphinx-tabs
+sphinx_rtd_theme>=0.3.1
+
