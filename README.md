@@ -15,6 +15,7 @@
   - [Usage](#usage)
     - [Getting Started](#getting-started)
     - [Working with .pcd Files](#working-with-pcd-files)
+    - [Reading Narrow Windows of an Organized Frame](#reading-narrow-windows-of-an-organized-frame)
     - [Converting Between PointCloud and NumPy Array](#converting-between-pointcloud-and-numpy-array)
       - [Creating Custom Conversion Methods](#creating-custom-conversion-methods)
     - [Working with ROS PointCloud2 Messages](#working-with-ros-pointcloud2-messages)
@@ -66,6 +67,37 @@ pc: PointCloud = PointCloud.from_path("point_cloud.pcd")
 
 pc.fields
 # ('x', 'y', 'z', 'intensity')
+```
+
+### Reading Narrow Windows of an Organized Frame
+
+`PointCloud.from_path` always decodes a whole frame. When a quality check only
+needs a small pixel rectangle of one component (for example reflectivity, or the
+second component of a vector), open a re-usable *window credential* instead. It
+validates the frame once and then re-opens the file per query, touching only the
+source bytes the window needs. Only organized grids (`POINTS == WIDTH *
+HEIGHT`) stored as `binary` or `binary_compressed` are supported.
+
+Fields are addressed by their position in the original `FIELDS` header line and
+a zero-based component index, so placeholder fields named `_` stay independently
+addressable and internal numpy names never become long-lived credentials.
+
+```python
+from pypcd4 import open_window_credential
+
+credential = open_window_credential("organized.pcd")
+
+# field 1, component 0; rows [1, 3), columns [2, 5)
+block = credential.read_window(1, 0, 1, 3, 2, 5)
+cell = credential.read_point(1, 0, row=1, column=2)
+
+cell.raw        # original little-endian component bytes, NaN payloads preserved
+cell.signed     # bytes read as a signed integer
+cell.unsigned   # bytes read as an unsigned integer
+cell.floating   # bytes read as a float (4 or 8 byte components)
+cell.point_index  # row * WIDTH + column
+
+block.provenance()  # which header, field/component, point ids and raw bytes were used
 ```
 
 ### Converting Between PointCloud and NumPy Array

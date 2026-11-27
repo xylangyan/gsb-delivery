@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from sensor_msgs.msg import PointCloud2
     from std_msgs.msg import Header
 
+    from .windowing import WindowCredential
+
 PathLike = Union[str, Path]
 
 MetaDataVersion = Literal[".7", "0.7"]
@@ -298,6 +300,27 @@ class PointCloud:
 
         with open(path, mode="rb") as fp:
             return PointCloud.from_fileobj(fp)
+
+    @staticmethod
+    def open_window_credential(path: PathLike) -> "WindowCredential":
+        """Open a re-openable window credential for an organized frame.
+
+        Unlike :meth:`from_path`, this never decodes the whole frame: it
+        validates the frame once and records enough information to serve
+        repeated narrow pixel-rectangle reads while touching only the source
+        bytes each window needs.  Only organized ``binary`` and
+        ``binary_compressed`` frames are supported.
+
+        Args:
+            path (PathLike): Path to the ``.pcd`` file.
+
+        Returns:
+            WindowCredential: A reusable credential for windowed reads.
+        """
+
+        from .windowing import open_window_credential
+
+        return open_window_credential(path)
 
     @staticmethod
     def from_points(
