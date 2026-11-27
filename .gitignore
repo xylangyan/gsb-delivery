@@ -1,0 +1,42 @@
+# Compiled python modules.
+*.pyc
+
+# Setuptools distribution folder.
+/dist/
+
+# Python egg metadata, regenerated from source files by setuptools.
+/*.egg-info
+/*.egg
+
+# Dexy processing files
+.dexy
+
+# Build output
+/build/
+
+# docs build output
+docs/_build/
+
+.tox
+.coverage
+
+# test DwcA
+*.zip
+
+# vscode project info
+.vscode/
+.history/
+
+# pycharm project info
+.idea/
+
+# ipython notebook files
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# scratch files
+scratch.py
+
+# copilot instructions (local only)
+.github/copilot-instructions.md
+
