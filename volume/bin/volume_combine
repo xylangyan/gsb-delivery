@@ -1,0 +1,30 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift File.expand_path('../lib', __dir__)
+require 'volume_combine'
+require 'fileutils'
+
+# Usage:
+#   bin/volume_combine build MANIFEST OUTPUT_PDF REPORT_MD REPORT_JSON
+#   bin/volume_combine fixtures FIXTURE_DIR
+command = ARGV.fetch(0)
+
+case command
+when 'fixtures'
+  dir = ARGV.fetch(1)
+  paths = VolumeCombine::Fixtures.build(dir)
+  puts paths
+when 'build'
+  manifest_path, output_pdf, report_md, report_json = ARGV.values_at(1, 2, 3, 4)
+  raise 'usage: build MANIFEST OUTPUT_PDF REPORT_MD REPORT_JSON' unless output_pdf && report_md && report_json
+  FileUtils.mkdir_p(File.dirname(output_pdf))
+  result = VolumeCombine::Assembler.run(
+    manifest_path, output_pdf: output_pdf, report_md: report_md, report_json: report_json
+  )
+  auditor = result[:auditor]
+  puts "wrote #{output_pdf} (#{auditor.rows.count} verified references, #{auditor.gaps.count} gaps, #{auditor.discrepancies.count} discrepancies)"
+  exit(auditor.ok? ? 0 : 1)
+else
+  raise "unknown command #{command}"
+end
