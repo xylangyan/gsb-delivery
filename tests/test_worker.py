@@ -98,9 +98,13 @@ def test_queue_item_order():
     assert not message_2_item_priority_1 <= message_1_item_priority_0
     assert message_2_item_priority_1 != message_1_item_priority_0
 
-    # messages/items with same priority and different queue times,
-    message_1_item_time_0 = dramatiq.worker._WorkQueueItem(priority=0, message=message_proxy1, _queued_time=0)
-    message_2_item_time_1 = dramatiq.worker._WorkQueueItem(priority=0, message=message_proxy2, _queued_time=1)
+    # messages/items with same priority and different runnable sequences,
+    message_1_item_time_0 = dramatiq.worker._WorkQueueItem(
+        priority=0, message=message_proxy1, runnable_seq=0, _queued_time=0
+    )
+    message_2_item_time_1 = dramatiq.worker._WorkQueueItem(
+        priority=0, message=message_proxy2, runnable_seq=1, _queued_time=0
+    )
     assert message_1_item_time_0 < message_2_item_time_1
     assert message_1_item_time_0 <= message_2_item_time_1
     assert not message_1_item_time_0 > message_2_item_time_1
@@ -112,9 +116,13 @@ def test_queue_item_order():
     assert not message_2_item_time_1 <= message_1_item_time_0
     assert message_2_item_time_1 != message_1_item_time_0
 
-    # Messages/items with same priority and queue time
-    message_1_item_equal = dramatiq.worker._WorkQueueItem(priority=0, message=message_proxy1, _queued_time=0)
-    message_2_item_equal = dramatiq.worker._WorkQueueItem(priority=0, message=message_proxy2, _queued_time=0)
+    # Messages/items with same priority and runnable sequence
+    message_1_item_equal = dramatiq.worker._WorkQueueItem(
+        priority=0, message=message_proxy1, runnable_seq=0, _queued_time=0
+    )
+    message_2_item_equal = dramatiq.worker._WorkQueueItem(
+        priority=0, message=message_proxy2, runnable_seq=0, _queued_time=0
+    )
     assert not message_1_item_equal < message_2_item_equal
     assert not message_1_item_equal > message_2_item_equal
     assert message_1_item_equal <= message_2_item_equal

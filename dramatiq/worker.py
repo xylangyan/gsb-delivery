@@ -22,7 +22,7 @@ import os
 import time
 from collections import defaultdict
 from functools import lru_cache
-from queue import Empty, PriorityQueue
+from queue import PriorityQueue
 from threading import Event, Thread
 from typing import TYPE_CHECKING, Iterable, Optional, Union
 
@@ -32,6 +32,11 @@ from .errors import ActorNotFound, BrokerConnectionError, RateLimitExceeded, Ret
 from .logging import get_logger
 from .middleware import Middleware, SkipMessage
 from .results.middleware import Results
+from .source_limits import (
+    SourceGroupEventLog,
+    SourceGroupLimits,
+    SourceGroupScheduler,
+)
 
 #: The number of milliseconds to wait before restarting consumers
 #: after a connection error.
@@ -101,6 +106,42 @@ class Worker:
         self.work_queue: PriorityQueue[_WorkQueueItem] = PriorityQueue()
         self.worker_timeout = worker_timeout
         self.worker_threads = worker_threads
+
+        # Per-source-group concurrency limits and the admissions gate
+        # that enforces them.  The event log journals every prefetch,
+        # actor entry/exit and broker acknowledgement so operators can
+        # reconstruct scheduling decisions (including individual
+        # retries) after the fact.
+        self.source_group_limits = SourceGroupLimits()
+        self.source_group_events = SourceGroupEventLog()
+        self.source_group_scheduler = SourceGroupScheduler(
+            self.source_group_limits,
+            self.source_group_events,
+            self.work_queue,
+        )
+
+    def set_source_group_limit(self, group: str, limit: int) -> None:
+        """Adjust the concurrency limit for a source group at runtime.
+
+        The new limit constrains the next admission immediately;
+        attempts already inside their actor keep running to completion.
+        Messages prefetched for a saturated group remain runnable and
+        wait without occupying an execution thread.
+
+        Parameters:
+          group(str): The source group name (an actor's queue name by
+            default, or the value of its ``source_group`` option).
+          limit(int): A positive maximum number of concurrent attempts.
+        """
+        self.source_group_limits.set_limit(group, limit)
+
+    def remove_source_group_limit(self, group: str) -> None:
+        """Remove the concurrency limit configured for ``group``."""
+        self.source_group_limits.remove_limit(group)
+
+    def get_source_group_limit(self, group: str) -> Optional[int]:
+        """Return the configured limit for ``group`` or ``None``."""
+        return self.source_group_limits.get_limit(group)
 
     def start(self) -> None:
         """Initialize the worker boot sequence and start up all the
@@ -172,6 +213,13 @@ class Worker:
         for item in iter_queue(self.work_queue):
             messages_by_queue[item.message.queue_name].append(item.message)
 
+        # Runnable items that were pulled off the work queue but never
+        # admitted (their group was saturated) still have to be returned
+        # to the broker and balance the work queue's task accounting.
+        for item in self.source_group_scheduler.drain_parked():
+            messages_by_queue[item.message.queue_name].append(item.message)
+            self.work_queue.task_done()
+
         for queue_name, messages in messages_by_queue.items():
             try:
                 self.consumers[queue_name].requeue_messages(messages)
@@ -223,6 +271,7 @@ class Worker:
             queue_name=queue_name,
             prefetch=self.delay_prefetch if delay else self.queue_prefetch,
             work_queue=self.work_queue,
+            scheduler=self.source_group_scheduler,
             worker_timeout=self.worker_timeout,
         )
         consumer.start()
@@ -232,6 +281,7 @@ class Worker:
             broker=self.broker,
             consumers=self.consumers,
             work_queue=self.work_queue,
+            scheduler=self.source_group_scheduler,
             worker_timeout=self.worker_timeout,
         )
         worker.start()
@@ -257,7 +307,8 @@ class _WorkQueueItem:
     """This class is used as wrapper around MessageProxy when they are placed in a PriorityQueue.
 
     It uses order=True to define __lt__ etc., so the "lowest" item will be first in the queue.
-    The lowest item is the one with the lowest priority, or lowest _queued_time if priority matches.
+    The lowest item is the one with the lowest priority, or lowest runnable_seq if priority
+    matches, with the queue time as a final tie-breaker.
     Note the message itself is not compared.
 
     The intention of this is to make the PriorityQueue operate in a roughly FIFO manner for items with equal priority.
@@ -266,6 +317,9 @@ class _WorkQueueItem:
     # The priority of the message on the queue. This is either actor.priority, or options.eta for delayed messages.
     priority: int
     message: MessageProxy = dataclasses.field(compare=False)
+    # Order in which the attempt became runnable; retries get their own
+    # sequence when their delay elapses and they re-enter a normal queue.
+    runnable_seq: int = 0
     _queued_time: int = dataclasses.field(default_factory=time.monotonic_ns)
 
 
@@ -277,6 +331,7 @@ class ConsumerThread(Thread):
         queue_name: str,
         prefetch: int,
         work_queue: PriorityQueue[_WorkQueueItem],
+        scheduler: "SourceGroupScheduler",
         worker_timeout: int,
     ) -> None:
         super().__init__(daemon=True)
@@ -290,6 +345,7 @@ class ConsumerThread(Thread):
         self.prefetch = prefetch
         self.queue_name = queue_name
         self.work_queue = work_queue
+        self.scheduler = scheduler
         self.worker_timeout = worker_timeout
         self.delay_queue: PriorityQueue[_WorkQueueItem] = PriorityQueue()
 
@@ -381,12 +437,22 @@ class ConsumerThread(Thread):
             if "eta" in message.options:
                 self.logger.debug("Pushing message %r onto delay queue.", message.message_id)
                 self.broker.emit_before("delay_message", message)
+                self.scheduler.record_delayed(message)
                 self.delay_queue.put(_WorkQueueItem(message.options.get("eta", 0), message))
 
             else:
                 actor = self.broker.get_actor(message.actor_name)
                 self.logger.debug("Pushing message %r onto work queue.", message.message_id)
-                self.work_queue.put(_WorkQueueItem(actor.priority, message))
+                item = _WorkQueueItem(
+                    actor.priority,
+                    message,
+                    runnable_seq=self.scheduler.next_runnable_seq(),
+                )
+                self.work_queue.put(item)
+                # Journal the prefetch and wake worker threads now that
+                # the message is runnable, even if it has to wait for a
+                # source-group slot.
+                self.scheduler.on_runnable(item)
         except ActorNotFound as e:
             self.logger.error(
                 "Received message for undefined actor %r. Moving it to the DLQ.",
@@ -397,10 +463,16 @@ class ConsumerThread(Thread):
             message.stuff_exception(e)
             self.post_process_message(message)
 
-    def post_process_message(self, message: MessageProxy) -> None:
+    def post_process_message(self, message: MessageProxy, attempt: Optional[int] = None) -> None:
         """Called by worker threads whenever they're done processing
         individual messages, signaling that each message is ready to
         be acked or rejected.
+
+        ``attempt`` identifies the attempt that produced this call so
+        acknowledgements can be journaled per attempt.  It is ``None``
+        for internal acknowledgements (such as delay-queue re-enqueues
+        and dead-lettering unknown actors) that are not tied to an
+        actor entry; those are acknowledged but not journaled.
         """
         if TYPE_CHECKING:
             assert self.consumer
@@ -418,6 +490,8 @@ class ConsumerThread(Thread):
                     self.consumer.ack(message)
                     self.broker.emit_after("ack", message)
 
+                if attempt is not None:
+                    self.scheduler.record_acknowledgement(message, attempt)
                 return
 
             # This applies to the Redis broker.  The alternative to
@@ -506,6 +580,7 @@ class WorkerThread(Thread):
         broker: Broker,
         consumers: dict[str, ConsumerThread],
         work_queue: PriorityQueue[_WorkQueueItem],
+        scheduler: "SourceGroupScheduler",
         worker_timeout: int,
     ) -> None:
         super().__init__(daemon=True)
@@ -517,6 +592,7 @@ class WorkerThread(Thread):
         self.broker = broker
         self.consumers = consumers
         self.work_queue = work_queue
+        self.scheduler = scheduler
         self.timeout = worker_timeout / 1000
 
     def run(self) -> None:
@@ -530,25 +606,35 @@ class WorkerThread(Thread):
                 time.sleep(self.timeout)
                 continue
 
-            try:
-                item = self.work_queue.get(timeout=self.timeout)
-                self.process_message(item.message)
-            except Empty:
+            acquired = self.scheduler.acquire(timeout=self.timeout)
+            if acquired is None:
                 continue
+
+            item, admission, attempt = acquired
+            self.process_message(item.message, admission, attempt)
 
         self.broker.emit_before("worker_thread_shutdown", self)
         self.logger.debug("Worker thread stopped.")
 
-    def process_message(self, message: MessageProxy) -> None:
+    def process_message(self, message: MessageProxy, admission: int, attempt: int) -> None:
         """Process a message pulled off of the work queue then push it
         back to its associated consumer for post processing. Stuff any SkipMessage
         exception or BaseException into the message [proxy] so that it may be used
         by the stub broker to provide a nicer testing experience. Also used by the
         results middleware to pass exceptions into results.
 
+        The source-group slot is released as soon as the actor returns,
+        before the broker acknowledgement, so waiting for an ack never
+        occupies concurrency capacity.
+
         Parameters:
           message(MessageProxy)
+          admission(int): The admission sequence assigned when this
+            attempt entered its actor.
+          attempt(int): The attempt number captured when the attempt was
+            admitted, so retries are journaled independently.
         """
+        group = self.scheduler.source_group(message)
         actor = None
         try:
             self.logger.debug("Received message %s with id %r.", message, message.message_id)
@@ -600,11 +686,17 @@ class WorkerThread(Thread):
             self.broker.emit_after("process_message", message, exception=e)
 
         finally:
+            # The attempt has left its actor, so free the source-group
+            # slot before post processing.  The broker ack below may be
+            # delayed indefinitely but it no longer holds capacity.
+            self.scheduler.record_exited(message, admission, attempt)
+            self.scheduler.release(admission, group)
+
             # NOTE: There is no race here as any message that was
             # processed must have come off of a consumer.  Therefore,
             # there has to be a consumer for that message's queue so
             # this is safe.  Probably.
-            self.consumers[message.queue_name].post_process_message(message)
+            self.consumers[message.queue_name].post_process_message(message, attempt)
             self.work_queue.task_done()
 
             # See discussion #351.  Keeping a reference to the
