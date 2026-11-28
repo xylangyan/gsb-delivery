@@ -721,6 +721,54 @@ For example, this command extracts only Microdata and JSON-LD metadata from
 
 NB syntaxes names passed must correspond to these: microdata, json-ld, rdfa, opengraph, microformat
 
+
+Local release verification
+--------------------------
+
+When an inventory address moves to a new domain, product pages are refreshed
+from cache in independent publish *units*. ``extruct-release`` verifies, from
+local page templates only, whether a set of approved unit versions can be
+published safely and which arrangement republished the fewest distinct pages.
+
+A unit switches at most once. Units in one batch may switch in any order, or
+simultaneously, and the next batch only starts after every old cache copy of
+the current batch has expired. The checker therefore validates every subset of
+each batch on top of the units already switched. Migrating SKUs may read their
+old or new address during the migration but must read the new one after the
+last batch; retained SKUs must keep their original value throughout. On one
+page, every syntax enabled for a SKU has to point at the same address.
+
+Every check runs the normal ``extruct.extract`` on a complete rendered page.
+JSON-LD references flagged in the manifest are resolved against the nearest
+in-scope inline ``@base`` (the document base when none applies); the document
+base itself comes from the final page URL and the first valid ``<base
+href>``. RDFa is compared on the native absolute resource identifiers, so the
+same string appearing in descriptive text is ignored.
+
+The manifest is a JSON document:
+
+* ``pages``: ``id``, final ``url``, enabled ``syntaxes``
+  (``microdata``/``json-ld``/``rdfa``), the baseline ``template`` and optional
+  ``slots`` naming a baseline fragment that appears exactly once.
+* ``fields``: one registry entry per site/page/SKU with ``kind``
+  (``migrating`` or ``retained``), ``old_value`` and, for migrations,
+  ``new_value``. ``property`` defaults to ``url``.
+* ``units``: each unit's approved ``versions``; a version entry per page gives
+  either full ``content`` or ``fragments`` mapping slot names to replacement
+  fragments. All fragments of a unit switch atomically.
+* ``extraction_limit``: maximum number of full-page extractions (default
+  2000). Distinct ``(html, url, syntaxes)`` combinations are extracted once,
+  and sites without shared units never cause extractions for one another.
+
+Run it with::
+
+    extruct-release manifest.json
+
+The verdict lists, per batch, the units and versions to publish and the
+republished pages (a page touched several times is counted once). When no safe
+release exists, ``safe`` is false, the process exits non-zero and ``blockers``
+identify the page, SKU, mixed unit versions and the values each syntax read.
+
 Development version
 -------------------
 

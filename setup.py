@@ -30,6 +30,7 @@ setup(
     entry_points={
         "console_scripts": {
             "extruct = extruct.tool:main",
+            "extruct-release = extruct.release:main",
         }
     },
     packages=find_packages(
