@@ -365,6 +365,47 @@ asyncio.run(main())
 
 To read a file line by line, prefer `LineReader` over `async_open`.
 
+### Sealable write segments with receipts
+
+`SegmentRegistry`/`SegmentWriter` add a deterministic finalization layer on
+top of `AIOFile` for writers that lay records down at fixed offsets and only
+let downstream readers consume a segment after a seal receipt.
+
+* Multiple coroutines open one path through the same entry point; they share
+  a single open even if an earlier waiter is cancelled.
+* Every write returns a `RecordReceipt` bound to a `SegmentGeneration`.
+  Cancelling the caller never cancels a write already submitted.
+* The receipt — never the file's on-disk length — is the authority on whether
+  a record became durable. A half-written record stays visible as unfinished
+  on the `SealResult`.
+* Rotating a path starts a new generation, so a late receipt from the old
+  segment can never be confused with a new segment's result at the same
+  offset.
+* A borrowed file object (`AIOFile.from_fp`) is released, never closed.
+
+```python
+from aiofile import AIOFile, SegmentRegistry
+
+
+async def main(old_path, new_path):
+    registry = SegmentRegistry()
+
+    old_file = AIOFile(old_path, "wb")
+    generation, writer = await registry.open_segment("shard", old_file)
+
+    receipt = await writer.write_record(b"header+body", offset=10)
+    # ... the caller may cancel its wait here; the write keeps running and
+    # re-awaiting the receipt later reports the real outcome.
+    start, end = await receipt.wait()          # confirmed durable range
+
+    seal = await writer.seal()
+    assert seal.durable_range(10, len(b"header+body")) == (start, end)
+
+    new_file = AIOFile(new_path, "wb")
+    next_generation, next_writer = await registry.rotate("shard", new_file)
+    assert next_generation != generation       # receipts stay distinct
+```
+
 ## More examples
 
 ### Async CSV Dict Reader

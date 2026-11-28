@@ -1,4 +1,8 @@
 from .aio import AIOFile
+from .segment import (
+    RecordCancelled, RecordError, RecordReceipt, RecordState, SealResult,
+    SegmentGeneration, SegmentRegistry, SegmentWriter,
+)
 from .utils import (
     BinaryFileWrapper, FileIOCloner, FileIOWrapperBase, LineReader, Reader,
     TextFileWrapper, Writer, async_open, clone,
@@ -16,6 +20,14 @@ __all__ = (
     "FileIOWrapperBase",
     "LineReader",
     "Reader",
+    "RecordCancelled",
+    "RecordError",
+    "RecordReceipt",
+    "RecordState",
+    "SealResult",
+    "SegmentGeneration",
+    "SegmentRegistry",
+    "SegmentWriter",
     "TextFileWrapper",
     "Writer",
     "__author__",

@@ -141,6 +141,33 @@ class AIOFile:
         self._executor = executor
         self._clone_lock = asyncio.Lock()
         self._clones = 0
+        # Low-level I/O operations currently running against our descriptor.
+        # close() drains this set so an in-flight write can never land on a
+        # recycled descriptor belonging to a later-generation file.
+        self._inflight: "set[asyncio.Future[Any]]" = set()
+        # Set once the final release has started: no new operation may start.
+        self._closing = False
+        self._close_task: "Optional[asyncio.Future[None]]" = None
+        # Orders the durability flush against close: the last fdsync must
+        # complete before the descriptor is closed, even when a segment seal
+        # and the holder's close run concurrently.
+        self._finalize_lock = asyncio.Lock()
+
+    def _track(
+        self, awaitable: "Awaitable[_T]",
+    ) -> "asyncio.Future[_T]":
+        future = asyncio.ensure_future(awaitable)
+        self._inflight.add(future)
+        future.add_done_callback(self._inflight.discard)
+        return future
+
+    async def _drain_inflight(self) -> None:
+        pending = [
+            future for future in tuple(self._inflight)
+            if not future.done()
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     @classmethod
     def from_fp(cls, fp: FileIOType, **kwargs: Any) -> "AIOFile":
@@ -173,22 +200,55 @@ class AIOFile:
     def closed(self) -> bool:
         return self._file_obj is None or self._file_obj.closed
 
+    def __on_open_done(
+        self, future: "asyncio.Future[FileIOType]",
+    ) -> None:
+        # Adopt the opened file even when the task that started the open()
+        # was cancelled while the background open was still running, and
+        # reset the shared future on failure so a later open() can retry
+        # instead of replaying a dead result to every subsequent waiter.
+        if self.__open_result is not future:
+            return
+
+        self.__open_result = None
+
+        if future.cancelled() or future.exception() is not None:
+            return
+
+        if self._file_obj is None:
+            self._file_obj = future.result()
+
     async def open(self) -> Optional[int]:
         if self._file_obj is not None:
             if self._file_obj.closed:
                 raise asyncio.InvalidStateError("AIOFile closed")
             return None
 
+        is_opener = False
         if self.__open_result is None:
-            self.__open_result = cast(
+            future = cast(
                 "asyncio.Future[FileIOType]",
                 self._run_in_thread(open, self._fname, self._open_mode),
             )
-            self._file_obj = await self.__open_result
-            self.__open_result = None
-            return self._file_obj.fileno()
+            self.__open_result = future
+            future.add_done_callback(self.__on_open_done)
+            is_opener = True
+        else:
+            # Share the in-flight open. Each waiter shields the shared
+            # future: cancelling one waiter's task cancels only its shield,
+            # never the background open the other waiters rely on.
+            future = self.__open_result
 
-        await self.__open_result
+        await asyncio.shield(future)
+
+        if self._file_obj is None:
+            # Defensive: the done callback normally adopts the result first.
+            self._file_obj = future.result()
+            if self.__open_result is future:
+                self.__open_result = None
+
+        if is_opener:
+            return self._file_obj.fileno()
         return None
 
     def __repr__(self) -> str:
@@ -197,16 +257,23 @@ class AIOFile:
     async def clone(self) -> "AIOFile":
         """Returns self with a ref-count bump; close() is deferred until all
         clones are released."""
+        if self._closing:
+            raise asyncio.InvalidStateError(
+                "AIOFile is closing and can no longer be cloned",
+            )
         async with self._clone_lock:
             self._clones += 1
             return self
 
     async def close(self) -> None:
-        if (
-            self._file_obj is None
-            or not self._file_obj_owner
-            or self._file_obj.closed
-        ):
+        # Cheap, per-call release paths keep their original semantics: every
+        # close() by a holder releases exactly one reference. Only the actual
+        # final descriptor release (drain + flush + close) is coalesced.
+        if self._file_obj is None or self._file_obj.closed:
+            return
+
+        if not self._file_obj_owner:
+            # A borrowed file object is only released, never closed by us.
             return
 
         async with self._clone_lock:
@@ -214,10 +281,31 @@ class AIOFile:
                 self._clones -= 1
                 return
 
-        if self.mode.writable:
-            await self.fdsync()
+            if self._close_task is None:
+                self._closing = True
+                self._close_task = asyncio.ensure_future(
+                    self._final_release(),
+                )
+            release = self._close_task
 
-        await self._run_in_thread(self._file_obj.close)
+        await release
+
+    async def _final_release(self) -> None:
+        # Wait for in-flight operations so a write can never land on a
+        # descriptor closed and recycled for a later generation.
+        await self._drain_inflight()
+
+        # Hold the lock across flush and close so no concurrent fdsync (e.g.
+        # a segment seal) can observe a half-closed descriptor, and durability
+        # is always established before the descriptor goes away.
+        async with self._finalize_lock:
+            if self._file_obj is None or self._file_obj.closed:
+                return
+
+            if self.mode.writable:
+                await self.__context.fdsync(self.fileno())
+
+            await self._run_in_thread(self._file_obj.close)
 
     def fileno(self) -> int:
         if self._file_obj is None:
@@ -243,6 +331,14 @@ class AIOFile:
         if size < -1:
             raise ValueError("Unsupported value %d for size" % size)
 
+        if self._closing:
+            raise asyncio.InvalidStateError(
+                "AIOFile is closing and no longer starts operations",
+            )
+
+        return await self._track(self._read_bytes(size, offset))
+
+    async def _read_bytes(self, size: int, offset: int) -> bytes:
         if size == -1:
             size = (
                 await self._run_in_thread(
@@ -275,6 +371,16 @@ class AIOFile:
         data_size = len(data)
         if data_size == 0:
             return 0
+
+        if self._closing:
+            raise asyncio.InvalidStateError(
+                "AIOFile is closing and no longer starts operations",
+            )
+
+        return await self._track(self._write_bytes(data, offset))
+
+    async def _write_bytes(self, data: bytes, offset: int) -> int:
+        data_size = len(data)
 
         # data can be written partially, see write(2)
         # (https://www.man7.org/linux/man-pages/man2/write.2.html)
@@ -310,10 +416,14 @@ class AIOFile:
         return written
 
     async def fsync(self) -> None:
-        return await self.__context.fsync(self.fileno())
+        async with self._finalize_lock:
+            return await self.__context.fsync(self.fileno())
 
     async def fdsync(self) -> None:
-        return await self.__context.fdsync(self.fileno())
+        async with self._finalize_lock:
+            if self._file_obj is not None and self._file_obj.closed:
+                return None
+            return await self.__context.fdsync(self.fileno())
 
     def truncate(self, length: int = 0) -> Awaitable[None]:
         return self._run_in_thread(
