@@ -77,6 +77,60 @@ for result in big_slow_client.results(arxiv.Search(query="quantum")):
   print(result.title)
 ```
 
+#### Sharing a rate limit across processes
+
+`Client.delay_seconds` is per-process: two workers can each wait three seconds
+and still hit the server back-to-back. When several jobs (or several clients in
+one process) share an upstream source, give them one `RequestBudget`.
+
+```python
+import arxiv
+
+# All clients/processes that open this database share the same per-origin
+# budget. Set ARXIV_REQUEST_BUDGET to move it; the default is under ~/.cache.
+budget = arxiv.RequestBudget("/var/lib/crawler/arxiv-budget.sqlite3")
+
+client = arxiv.Client(
+  page_size = 100,
+  budget = budget,
+  job_id = "nightly-quantum",
+)
+
+for result in client.results(arxiv.Search(query="quantum")):
+  print(result.title)
+
+# Which leases this job used, and which records it actually fetched:
+report = client.budget_report()
+print(report["granted"])      # one record per page/retry
+print(report["fetched_ids"])  # entries parsed from successful responses
+```
+
+The budget enforces, per origin (by default the URL's host):
+
+- at most one *sent* request in flight; a second waiter may not send;
+- a minimum three-second gap measured from the end of the previous request;
+- `Retry-After` / `X-RateLimit-Reset` deadlines persisted in SQLite, so a
+  restarted daemon keeps the previous response's pause;
+- cancellation while a page is waiting does not count as an upstream request;
+- a sent request whose outcome was never confirmed (crash or transport error)
+  stays in flight. Time alone never releases it; call
+  `budget.resolve_unknown(origin, credential=...)` with an upstream receipt or
+  a `manual_record=...` once an operator has confirmed the outcome. A stale
+  parser/retry callback can only extend, never shorten, a newer pause.
+
+Different origins have independent entries, so one origin's wait does not block
+another. To cancel waiting work, share a token:
+
+```python
+token = arxiv.CancellationToken()
+# ... from another thread: token.cancel()
+for result in client.results(search, token=token):
+  ...
+```
+
+Tests can supply `arxiv.ManualClock()` for deterministic timelines; the budget
+never advances it on its own.
+
 #### Downloading a paper
 
 ```python
@@ -114,6 +168,15 @@ DEBUG:urllib3.connectionpool:https://export.arxiv.org:443 "GET /api/query?search
 A `Client` specifies a reusable strategy for fetching results from arXiv's API. For most use cases the default client should suffice.
 
 Clients configurations specify pagination and retry logic. *Reusing* a client allows successive API calls to use the same connection pool and ensures they abide by the rate limit you set.
+
+### RequestBudget
+
+A `RequestBudget` is an optional, durable per-origin coordinator for pagination
+and retries. Pass one to `Client(budget=...)` to share the single-in-flight and
+minimum-interval rules across clients and processes, persist `Retry-After`
+boundaries across restarts, and audit which leases each `job_id` used and which
+records it actually fetched. `budget.records(...)` returns request records;
+`budget.in_flight(...)` shows unresolved sent requests.
 
 ### Search
 

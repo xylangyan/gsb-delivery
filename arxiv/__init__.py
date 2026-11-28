@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import time
 import itertools
+import uuid
 import requests
 
 from importlib.metadata import PackageNotFoundError, version
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from datetime import datetime, timedelta, timezone
 from calendar import timegm
 
@@ -16,6 +17,28 @@ from enum import Enum
 from typing import Generator, Iterator
 
 from . import _feed
+from . import _budget as _budget
+from ._budget import (
+    BudgetTimeout as BudgetTimeout,
+    CancellationToken as CancellationToken,
+    CancelledError as CancelledError,
+    Clock as Clock,
+    FakeClock as FakeClock,
+    Lease as Lease,
+    ManualClock as ManualClock,
+    OriginState as OriginState,
+    RequestBudget as RequestBudget,
+    RequestCancelled as RequestCancelled,
+    RequestRecord as RequestRecord,
+    SystemClock as SystemClock,
+    TestClock as TestClock,
+    UnknownInFlightError as UnknownInFlightError,
+    VirtualClock as VirtualClock,
+    origin_key as origin_key,
+    parse_retry_after as parse_retry_after,
+    retry_after_from_headers as retry_after_from_headers,
+    retry_after_from_response as retry_after_from_response,
+)
 from ._feed import ParsedFeed
 
 
@@ -437,12 +460,39 @@ class Client:
     """
     Number of times to retry a failing API request before raising an Exception.
     """
+    budget: RequestBudget | None
+    """
+    Optional shared per-origin request budget.
+
+    When set, pagination and retries acquire a durable slot from this budget
+    instead of relying only on the in-process ``delay_seconds`` timer. Reuse the
+    same budget (typically backed by one SQLite file) across processes to
+    enforce a single in-flight request and a shared deferral boundary per
+    origin.
+    """
+    job_id: str
+    """Identifier recorded in the budget's audit log for this client's work."""
+    origin: str | None
+    """
+    Budget origin label. Defaults to the request URL's host (for example,
+    ``export.arxiv.org``). Use distinct labels to give independent sources
+    independent limits.
+    """
 
     _last_request_dt: datetime | None
     _session: requests.Session
 
     def __init__(
-        self, page_size: int = 100, delay_seconds: float = 3.0, num_retries: int = 3
+        self,
+        page_size: int = 100,
+        delay_seconds: float = 3.0,
+        num_retries: int = 3,
+        *,
+        budget: RequestBudget | None = None,
+        job_id: str | None = None,
+        origin: str | None = None,
+        clock: Clock | None = None,
+        budget_path: str | None = None,
     ) -> None:
         """
         Constructs an arXiv API client with the specified options.
@@ -451,10 +501,23 @@ class Client:
         for most use cases. Extreme page sizes, delays, or retries risk
         violating the arXiv [API Terms of Use](https://arxiv.org/help/api/tou),
         brittle behavior, and inconsistent results.
+
+        Pass ``budget=arxiv.RequestBudget(...)`` to coordinate pagination and
+        retries across clients/processes for the same origin. Without a budget,
+        behavior is unchanged: ``delay_seconds`` is enforced per client.
+
+        For convenience, ``clock=`` (optionally with ``budget_path=``) creates a
+        shared budget automatically. Passing a test clock together with an
+        explicit ``budget`` uses that budget as-is.
         """
+        if budget is None and (clock is not None or budget_path is not None):
+            budget = RequestBudget(budget_path, clock=clock)
         self.page_size = page_size
         self.delay_seconds = delay_seconds
         self.num_retries = num_retries
+        self.budget = budget
+        self.job_id = job_id or f"job-{uuid.uuid4().hex}"
+        self.origin = origin
         self._last_request_dt = None
         self._session = requests.Session()
 
@@ -469,7 +532,13 @@ class Client:
             repr(self.num_retries),
         )
 
-    def results(self, search: Search, offset: int = 0) -> Iterator[Result]:
+    def results(
+        self,
+        search: Search,
+        offset: int = 0,
+        *,
+        token: CancellationToken | None = None,
+    ) -> Iterator[Result]:
         """
         Uses this client configuration to fetch one page of the search results
         at a time, yielding the parsed `Result`s, until `max_results` results
@@ -483,15 +552,25 @@ class Client:
 
         For more on using generators, see
         [Generators](https://wiki.python.org/moin/Generators).
+
+        With a shared `RequestBudget`, pass a `CancellationToken` to stop while
+        a page is *waiting* for its slot. A cancellation at that point records
+        no upstream request.
         """
         limit = search.max_results - offset if search.max_results else None
         if limit and limit < 0:
             return iter(())
-        return itertools.islice(self._results(search, offset), limit)
+        return itertools.islice(self._results(search, offset, token=token), limit)
 
-    def _results(self, search: Search, offset: int = 0) -> Generator[Result, None, None]:
+    def _results(
+        self,
+        search: Search,
+        offset: int = 0,
+        *,
+        token: CancellationToken | None = None,
+    ) -> Generator[Result, None, None]:
         page_url = self._format_url(search, offset, self.page_size)
-        feed = self._parse_feed(page_url, first_page=True)
+        feed = self._parse_feed(page_url, first_page=True, token=token)
         if not feed.results:
             logger.info("Got empty first page; stopping generation")
             return
@@ -508,7 +587,7 @@ class Client:
             if offset >= total_results:
                 break
             page_url = self._format_url(search, offset, self.page_size)
-            feed = self._parse_feed(page_url, first_page=False)
+            feed = self._parse_feed(page_url, first_page=False, token=token)
 
     def _format_url(self, search: Search, start: int, page_size: int) -> str:
         """
@@ -524,23 +603,52 @@ class Client:
         )
         return self.query_url_format.format(urlencode(url_args))
 
-    def _parse_feed(self, url: str, first_page: bool = True, _try_index: int = 0) -> ParsedFeed:
+    def _budget_origin(self, url: str) -> str:
+        """The origin key used to share a budget entry for ``url``."""
+        return origin_key(self.origin or url)
+
+    def _parse_feed(
+        self,
+        url: str,
+        first_page: bool = True,
+        _try_index: int = 0,
+        *,
+        token: CancellationToken | None = None,
+    ) -> ParsedFeed:
         """
         Fetches the specified URL and parses it as an Atom feed.
 
         If a request fails or is unexpectedly empty, retries the request up to
-        `self.num_retries` times.
+        `self.num_retries` times. Cancellation while waiting for a budget slot
+        propagates as `RequestCancelled` and is never counted as an upstream
+        request.
         """
         try:
-            return self.__try_parse_feed(url, first_page=first_page, try_index=_try_index)
+            return self.__try_parse_feed(
+                url, first_page=first_page, try_index=_try_index, token=token
+            )
         except (
             HTTPError,
             UnexpectedEmptyPageError,
             requests.exceptions.ConnectionError,
         ) as err:
+            if self.budget is not None and isinstance(err, requests.exceptions.RequestException):
+                # With a shared budget a transport error leaves the request
+                # sent-but-unconfirmed. Retrying would wait on our own slot
+                # forever; surface the error and let the operator resolve the
+                # in-flight record explicitly.
+                logger.debug("Outcome unknown (try %d): %s", _try_index, err)
+                raise err
             if _try_index < self.num_retries:
+                if token is not None and token.cancelled:
+                    raise RequestCancelled(f"cancelled before retry: {url}") from err
                 logger.debug("Got error (try %d): %s", _try_index, err)
-                return self._parse_feed(url, first_page=first_page, _try_index=_try_index + 1)
+                return self._parse_feed(
+                    url,
+                    first_page=first_page,
+                    _try_index=_try_index + 1,
+                    token=token,
+                )
             logger.debug("Giving up (try %d): %s", _try_index, err)
             raise err
 
@@ -549,36 +657,125 @@ class Client:
         url: str,
         first_page: bool,
         try_index: int,
+        token: CancellationToken | None = None,
     ) -> ParsedFeed:
         """
         Recursive helper for _parse_feed. Enforces `self.delay_seconds`: if that
         number of seconds has not passed since `_parse_feed` was last called,
         sleeps until delay_seconds seconds have passed.
+
+        When a `RequestBudget` is configured, the budget replaces the local
+        delay. Every try (including retries) must acquire its own durable lease;
+        the lease is marked sent immediately before the HTTP call, so a crashed
+        process leaves an in-flight request that blocks the origin until its
+        outcome is explicitly resolved.
         """
-        # If this call would violate the rate limit, sleep until it doesn't.
-        if self._last_request_dt is not None:
-            required = timedelta(seconds=self.delay_seconds)
-            since_last_request = datetime.now() - self._last_request_dt
-            if since_last_request < required:
-                to_sleep = (required - since_last_request).total_seconds()
-                logger.info("Sleeping: %f seconds", to_sleep)
-                time.sleep(to_sleep)
+        lease: Lease | None = None
+        if self.budget is not None:
+            lease = self.budget.acquire(
+                self._budget_origin(url),
+                job_id=self.job_id,
+                page_key=_page_key(url),
+                url=url,
+                token=token,
+            )
+            if token is not None and token.cancelled:
+                lease.release("cancelled before send")
+                raise RequestCancelled(f"cancelled before sending: {url}")
+            lease.mark_sent()
+        else:
+            # If this call would violate the local rate limit, sleep until it
+            # doesn't. The budget, when present, owns this decision instead.
+            if self._last_request_dt is not None:
+                required = timedelta(seconds=self.delay_seconds)
+                since_last_request = datetime.now() - self._last_request_dt
+                if since_last_request < required:
+                    to_sleep = (required - since_last_request).total_seconds()
+                    logger.info("Sleeping: %f seconds", to_sleep)
+                    time.sleep(to_sleep)
 
         logger.info("Requesting page (first: %r, try: %d): %s", first_page, try_index, url)
 
-        resp = self._session.get(url, headers={"user-agent": _USER_AGENT})
+        try:
+            resp = self._session.get(url, headers={"user-agent": _USER_AGENT})
+        except requests.exceptions.RequestException as err:
+            if lease is not None:
+                # A transport error does not prove the server never received
+                # the request. Keep the slot in flight rather than retrying
+                # immediately and possibly doubling upstream traffic.
+                lease.mark_uncertain(err)
+            raise
+
         self._last_request_dt = datetime.now()
-        if resp.status_code != requests.codes.OK:
-            raise HTTPError(url, try_index, resp.status_code)
+        retry_deadline = retry_after_from_response(resp, now=self._now())
 
-        feed = _feed.parse(resp.content)
-        if len(feed.results) == 0 and not first_page:
-            raise UnexpectedEmptyPageError(url, try_index, feed)
+        feed: ParsedFeed | None = None
+        try:
+            if resp.status_code != requests.codes.OK:
+                raise HTTPError(url, try_index, resp.status_code)
 
-        if feed.malformed:
-            logger.warning("Malformed feed; consider handling: %s", feed.error)
+            feed = _feed.parse(resp.content)
+            if len(feed.results) == 0 and not first_page:
+                raise UnexpectedEmptyPageError(url, try_index, feed)
 
+            if feed.malformed:
+                logger.warning("Malformed feed; consider handling: %s", feed.error)
+        except BaseException:
+            if lease is not None:
+                ids = [r.entry_id for r in feed.results] if feed is not None else []
+                lease.complete(
+                    status_code=resp.status_code,
+                    defer_until=retry_deadline,
+                    result_ids=ids,
+                    result_count=len(ids),
+                    failed=True,
+                )
+            raise
+
+        if lease is not None:
+            lease.complete(
+                status_code=resp.status_code,
+                defer_until=retry_deadline,
+                result_count=len(feed.results),
+                result_ids=[r.entry_id for r in feed.results],
+            )
         return feed
+
+    def _now(self) -> float:
+        """The current time on the budget's clock (or wall time)."""
+        if self.budget is not None:
+            return self.budget.now()
+        return time.time()
+
+    def used_credentials(self) -> list[RequestRecord]:
+        """Leases granted to this client's job in the configured budget."""
+        if self.budget is None:
+            raise RuntimeError("Client has no RequestBudget configured")
+        return self.budget.used_credentials(job_id=self.job_id)
+
+    def fetched_records(self) -> list[RequestRecord]:
+        """Records this client's job actually fetched from upstream."""
+        if self.budget is None:
+            raise RuntimeError("Client has no RequestBudget configured")
+        return self.budget.records(job_id=self.job_id, fetched_only=True)
+
+    def budget_report(self) -> dict[str, object]:
+        """Summarize this client's audit trail in the configured budget.
+
+        Returns the job id, the leases that were actually granted (the "waited
+        credential" used by each page/retry), and the records actually fetched
+        back from upstream. Raises `RuntimeError` when no budget is configured.
+        """
+        if self.budget is None:
+            raise RuntimeError("Client has no RequestBudget configured")
+        granted = self.budget.used_credentials(job_id=self.job_id)
+        fetched = self.budget.records(job_id=self.job_id, fetched_only=True)
+        return {
+            "job_id": self.job_id,
+            "granted": granted,
+            "fetched": fetched,
+            "fetched_ids": [entry_id for record in fetched for entry_id in record.result_ids],
+        }
 
 
 class ArxivError(Exception):
@@ -679,3 +876,15 @@ class HTTPError(ArxivError):
 def _classname(o: object) -> str:
     """A helper function for use in __repr__ methods: arxiv.Result.Link."""
     return "arxiv.{}".format(o.__class__.__qualname__)
+
+
+def _page_key(url: str) -> str:
+    """Stable page identity for the audit log (the query's non-paging args)."""
+    parsed = urlsplit(url) if "://" in url else None
+    query = parsed.query if parsed is not None else url.partition("?")[2]
+    pairs = [
+        (key, value)
+        for key, value in parse_qsl(query, keep_blank_values=True)
+        if key not in ("start", "max_results")
+    ]
+    return urlencode(pairs)
