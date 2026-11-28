@@ -30,5 +30,18 @@ class DecodeError(ParseError):
     """
 
 
+class ProvenanceError(FormParserError):
+    """Raised when a provenance run cannot be settled - for example when the
+    outer multipart message never closes and provisional parts therefore
+    cannot be signed off.
+    """
+
+
+class ProvenanceDecodeError(DecodeError):
+    """Raised by the strict provenance-aware decoders when an encoded layer
+    contains bytes that violate its encoding rules.
+    """
+
+
 class FileError(FormParserError, OSError):
     """Exception class for problems with the File class."""
