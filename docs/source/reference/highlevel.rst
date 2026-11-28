@@ -28,3 +28,33 @@ extract_pages
 
 .. currentmodule:: pdfminer.high_level
 .. autofunction:: extract_pages
+
+
+.. _api_extract_receipt_columns:
+
+extract_receipt_columns
+=======================
+
+.. currentmodule:: pdfminer.high_level
+.. autofunction:: extract_receipt_columns
+
+The correction-aware session and its data types live in
+:mod:`pdfminer.receipt` and are documented below.
+
+.. currentmodule:: pdfminer.receipt
+
+.. autoclass:: ReceiptColumnSession
+   :members:
+
+.. autoclass:: CorrectionRegistry
+   :members:
+
+.. autoclass:: FontIdentity
+
+.. autoclass:: UnicodeCandidate
+
+.. autoclass:: ColumnReissue
+
+.. autoclass:: UnicodeConflict
+
+.. autoclass:: GlyphRecord

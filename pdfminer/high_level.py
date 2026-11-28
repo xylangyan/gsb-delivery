@@ -2,9 +2,9 @@
 
 import logging
 import sys
-from collections.abc import Container, Iterator
+from collections.abc import Container, Iterator, Sequence
 from io import StringIO
-from typing import Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from pdfminer.converter import (
     HOCRConverter,
@@ -19,7 +19,11 @@ from pdfminer.pdfdevice import PDFDevice, TagExtractor
 from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
 from pdfminer.pdfpage import PDFPage
+from pdfminer.receipt import extract_receipt_columns as _extract_receipt_columns
 from pdfminer.utils import AnyIO, FileOrName, open_filename
+
+if TYPE_CHECKING:
+    from pdfminer.receipt import CorrectionRegistry, ReceiptColumnSession
 
 
 def extract_text_to_fp(
@@ -225,3 +229,33 @@ def extract_pages(
             interpreter.process_page(page)
             layout = device.get_result()
             yield layout
+
+
+def extract_receipt_columns(
+    pdf_file: FileOrName,
+    column_bounds: Sequence[float],
+    registry: "CorrectionRegistry | None" = None,
+    password: str = "",
+    page_numbers: Container[int] | None = None,
+    caching: bool = True,
+) -> "ReceiptColumnSession":
+    """Extract horizontal text into half-open column windows.
+
+    Optional, correction-aware alternative to :func:`extract_pages`.  The PDF
+    content streams are read normally; every horizontal glyph is assigned to
+    the column window whose bounds contain its origin, and keeps provenance
+    covering the text operator, the in-string byte range and the concrete
+    font object.  The returned session supports selective re-reads after
+    encoding or Unicode corrections while preserving earlier snapshots.
+
+    See :func:`pdfminer.receipt.extract_receipt_columns` for full details.
+    """
+    page_list = list(page_numbers) if page_numbers is not None else None
+    return _extract_receipt_columns(
+        pdf_file,
+        column_bounds,
+        registry=registry,
+        password=password,
+        page_numbers=page_list,
+        caching=caching,
+    )
