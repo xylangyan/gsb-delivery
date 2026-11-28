@@ -1,6 +1,10 @@
 Change Log
 ----------
 
+Unreleased:
+
+- Add release-versioned, paginated scan-angle window reads.  ``File.create_scan_index`` builds a persistent index once, ``File.publish_scan_release`` records angle calibrations and QC receipts without rewriting reflectivity, and ``File.open_scan_window`` pages a left-closed/right-open angle window with a continuation token that keeps reading its original release snapshot.  Publish updates append only the changed index paths, sharing untouched index nodes and reflectivity chunks with earlier releases.
+
 Version 1.8.3 (November 11th, 2026):
 
 - Fix HDF 1.10 compatibility CI run, which broke with ubuntu-26.04, use GCC 13 in CI (:pull:`336`) by `Kai Mühlbauer <https://github.com/kmuehlbauer>`_

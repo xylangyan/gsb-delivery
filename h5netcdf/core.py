@@ -2029,6 +2029,146 @@ class File(Group):
         """
         return self._backend
 
+    # -- scan-angle windows ---------------------------------------------
+
+    def create_scan_index(
+        self,
+        angle=None,
+        qc=None,
+        reflectivity=None,
+        scans=None,
+        *,
+        qc_fillvalue=None,
+        index_group=None,
+        replace=False,
+    ):
+        """Build the persistent index used by the scan-angle window reader.
+
+        The index is built once from the archive columns.  Later releases only
+        append the nodes on the paths they correct.
+        """
+        from .scan import create_scan_index
+
+        return create_scan_index(
+            self,
+            angle=angle,
+            qc=qc,
+            reflectivity=reflectivity,
+            scans=scans,
+            qc_fillvalue=qc_fillvalue,
+            index_group=index_group,
+            replace=replace,
+        )
+
+    def scan_index(self, *, index_group=None):
+        """Return the persistent scan index of this file."""
+        from .scan import ScanWindowIndex
+
+        return ScanWindowIndex(self, index_group=index_group)
+
+    def publish_scan_release(
+        self,
+        scans=None,
+        angles=None,
+        qcs=None,
+        *,
+        present=None,
+        positions=None,
+        records=None,
+        angle_calibrations=None,
+        qc_receipts=None,
+        index_group=None,
+    ):
+        """Publish one release of scan-angle calibrations and QC receipts."""
+        from .scan import publish_scan_release
+
+        return publish_scan_release(
+            self,
+            scans,
+            angles=angles,
+            qcs=qcs,
+            present=present,
+            positions=positions,
+            records=records,
+            angle_calibrations=angle_calibrations,
+            qc_receipts=qc_receipts,
+            index_group=index_group,
+        )
+
+    def open_scan_window(
+        self,
+        low=None,
+        high=None,
+        page_size=None,
+        release=None,
+        token=None,
+        *,
+        index_group=None,
+        min_angle=None,
+        max_angle=None,
+    ):
+        """Open a paginated, left-closed/right-open scan-angle window."""
+        from .scan import open_scan_window
+
+        return open_scan_window(
+            self,
+            low,
+            high,
+            page_size=page_size,
+            release=release,
+            token=token,
+            index_group=index_group,
+            min_angle=min_angle,
+            max_angle=max_angle,
+        )
+
+    def scan_window(self, *args, **kwargs):
+        """Alias for :meth:`open_scan_window`."""
+        return self.open_scan_window(*args, **kwargs)
+
+    def read_scan_window(self, *args, **kwargs):
+        """Alias for :meth:`open_scan_window`."""
+        return self.open_scan_window(*args, **kwargs)
+
+    def read_scan_page(
+        self,
+        low=None,
+        high=None,
+        page_size=None,
+        release=None,
+        token=None,
+        *,
+        index_group=None,
+    ):
+        """Return the first (or next) page of a scan-angle window."""
+        window = self.open_scan_window(
+            low,
+            high,
+            page_size=page_size,
+            release=release,
+            token=token,
+            index_group=index_group,
+        )
+        return window.page()
+
+    scan_page = read_scan_page
+
+    def read_scan(self, scan, release=None, *, index_group=None):
+        """Read one scan by physical scan number from a release snapshot."""
+        from .scan import ScanWindowIndex
+
+        return ScanWindowIndex(self, index_group=index_group).read_scan(
+            scan, release=release
+        )
+
+    def read_reflectivity(self, scan, release=None, *, index_group=None):
+        """Read reflectivity by physical scan number from a release snapshot."""
+        from .scan import ScanWindowIndex
+
+        return ScanWindowIndex(self, index_group=index_group).read_reflectivity(
+            scan, release=release
+        )
+
     def flush(self):
         if self._writable:
             # only write `_NCProperties` in newly created files
