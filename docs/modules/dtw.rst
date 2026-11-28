@@ -12,3 +12,6 @@ DTW
 
 .. autoclass:: dtaidistance.dtw.DTWSettings
    :members:
+
+.. automodule:: dtaidistance.dtw_joint
+   :members:

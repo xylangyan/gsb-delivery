@@ -97,6 +97,72 @@ A number of options are foreseen to tune how the cost is computed:
    psi-relaxation (for cyclical sequences) [2].
 
 
+Joint DTW for independently sampled channels
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Some measurements have two channels that are sampled by different
+instruments, such as a vibration curve and a current curve.  If both
+instruments wrote calibration pulses for the same physical events, those
+events define a shared order.  Running two independent DTW alignments can
+then pair one physical shift with two unrelated matches, especially when one
+instrument missed a pulse.
+
+:mod:`dtaidistance.dtw_joint` aligns all channels with one shared, ordered
+set of anchor groups:
+
+::
+
+    from dtaidistance import dtw_joint
+
+    trial = {
+        "vibration": [0., 1, 2, 1, 0, 1, 2, 1, 0],
+        "current":   [0., 0, 1, 2, 1, 0, 1, 0, 0],
+    }
+    control = {
+        "vibration": [0., 1, 2, 1, 0, 0, 1, 2, 1],
+        "current":   [0., 1, 2, 0, 0, 0, 0, 0, 0],
+    }
+    anchors = [
+        {"id": "start", "vibration": (0, 0), "current": (0, 0)},
+        {"id": "shift", "vibration": (4, 4), "current": (3, 3)},
+        {"id": "end", "vibration": (8, 8), "current": (8, 8)},
+    ]
+
+    alignment = dtw_joint.compare(trial, control, anchors=anchors)
+    print(alignment.cost)                    # squared joint cost
+    print(alignment.channel_costs)           # per-channel squared costs
+    print(alignment.sample_indices)          # original sample numbers used
+    print(alignment.event_positions("shift"))
+
+Every channel uses the sum of squared differences as its local cost.  The
+joint cost is the unweighted sum of the channel costs.  If the shared
+constraint is released, each channel's cost equals the square of the
+ordinary :func:`dtaidistance.dtw.distance`:
+
+::
+
+    print(alignment.release())   # per-channel squared DTW distances
+
+Exact ties are resolved by the sequence of original sample numbers of the
+vibration path, then of the current path.
+
+Anchor groups may have more than one legal position, which covers a pulse
+that one instrument recorded twice or a marker that arrived late.  A
+``buffer`` adds positional slack around all anchors; it may be an integer or
+a per-channel mapping.  ``order_errors`` lists anchor-id pairs whose relative
+order is explicitly allowed to be wrong according to the test sheet.
+
+If the anchors cannot be satisfied together, the default behaviour is to
+raise :class:`dtaidistance.dtw_joint.InfeasibleJointAlignment` with the
+conflicting group ids.  ``on_infeasible="result"`` returns a result with
+``feasible=False`` and the same ids in ``conflicts`` instead of raising.
+
+Anchors are expected to be sparse.  The implementation never materialises a
+product grid of both channels' sampling positions: it solves one DTW segment
+per channel at a time, so memory grows with the anchor count, not with the
+product of the two raw sequence lengths.
+
+
 DTW and keep all warping paths
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

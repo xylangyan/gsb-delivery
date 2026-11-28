@@ -1,6 +1,12 @@
 Changelist
 ----------
 
+Version 2.6
+~~~~~~~~~~~
+
+- Joint, anchor-constrained DTW for independently sampled channels
+  (``dtaidistance.dtw_joint``)
+
 Version 2.3
 ~~~~~~~~~~~
 
