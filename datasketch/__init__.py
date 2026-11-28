@@ -18,6 +18,17 @@ from datasketch.lsh_bloom import MinHashLSHBloom
 from datasketch.lshensemble import MinHashLSHEnsemble
 from datasketch.lshforest import MinHashLSHForest
 from datasketch.minhash import MinHash
+from datasketch.segment_rollover import (
+    BlockedEntry,
+    DocumentVersion,
+    GroupIssuance,
+    RetirementBlockedError,
+    RetirementPlan,
+    SegmentRolloverManager,
+    ShardIndex,
+    TokenAccessDeniedError,
+    TokenConfirmation,
+)
 from datasketch.weighted_minhash import WeightedMinHash, WeightedMinHashGenerator
 
 # Alias
@@ -27,6 +38,9 @@ WeightedMinHashLSHForest = MinHashLSHForest
 __all__ = [
     "HNSW",
     "AsyncMinHashLSH",
+    "BlockedEntry",
+    "DocumentVersion",
+    "GroupIssuance",
     "HyperLogLog",
     "HyperLogLogPlusPlus",
     "LeanMinHash",
@@ -35,6 +49,12 @@ __all__ = [
     "MinHashLSHBloom",
     "MinHashLSHEnsemble",
     "MinHashLSHForest",
+    "RetirementBlockedError",
+    "RetirementPlan",
+    "SegmentRolloverManager",
+    "ShardIndex",
+    "TokenAccessDeniedError",
+    "TokenConfirmation",
     "WeightedMinHash",
     "WeightedMinHashGenerator",
     "WeightedMinHashLSH",
