@@ -69,6 +69,43 @@ Both `encode.py` and `geobuf.encode` accept two optional arguments:
 - **precision** &mdash; max number of digits after the decimal point in coordinates, `6` by default.
 - **dimensions** &mdash; number of dimensions in coordinates, `2` by default.
 
+### Splitting a parcel collection into size-limited packets
+
+For field devices that only accept one bounded packet at a time, `geobuf.plan_packets`
+splits an ordered `FeatureCollection` into contiguous runs of parcels. Each packet is a
+standard Geobuf `FeatureCollection` decodable on its own by the existing decoder, and
+every packet uses a single coordinate precision.
+
+```python
+from geobuf import plan_packets, verify_boundaries, NoPacketArrangementError
+
+try:
+    plan = plan_packets(collection, precisions=[1, 2], max_bytes=512)
+except NoPacketArrangementError as error:
+    review = error.reasons  # shared boundaries, failed rings, packet limits
+else:
+    for packet in plan['packets']:
+        send(packet['data'])  # plain Geobuf bytes
+    verify_boundaries(plan['packets'], plan['boundaries'])
+```
+
+Behavior:
+
+- Parcels keep their original order; packets are adjacent runs and every feature id and
+  property travels with its own parcel, so any packet opens without reading another one.
+- Parcels linked by a shared boundary are constrained to the same precision. A precision
+  that collapses a ring or makes the read-back boundary diverge is rejected; the original
+  coordinates are never moved, only rounded at the chosen precision.
+- Each shared boundary gets a stable id (`B1`, ...) stored on both neighboring parcels, so
+  a boundary split across two packets can still be checked by the same id.
+- The arrangement with the smallest total *actual* encoded bytes wins. Ties break by fewer
+  packets, then earlier packet end positions, then smaller per-packet precision.
+- `NoPacketArrangementError.reasons` lists the shared boundaries, rings that fail at each
+  precision, and the byte limit plus the smallest encodable size of each parcel.
+
+The original `geobuf.encode` / `geobuf.decode` entry points are unchanged and keep the
+default precision of 6.
+
 ### Tests
 
 ```bash
