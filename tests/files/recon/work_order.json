@@ -1,0 +1,51 @@
+{
+  "previous_file": "previous_shift.sql",
+  "current_file": "current_shift.sql",
+  "externals": {
+    "orders": {
+      "instance": "orders-v3",
+      "columns": ["oid", "cid", "amount"],
+      "bytes": 800,
+      "fee": 6.0,
+      "rows": [
+        [101, 1, 9.5],
+        [102, 2, 4.0]
+      ],
+      "row_meta": [
+        {"line_no": 30, "pk": 101},
+        {"line_no": 31, "pk": 102}
+      ],
+      "variants": {
+        "draft": [
+          [101, 1, 9.5],
+          [102, 2, 0.0]
+        ]
+      },
+      "variant_costs": {
+        "draft": [420, 3.5]
+      },
+      "previous_instance": "orders-v2",
+      "previous_rows": [
+        [101, 1, 9.5],
+        [102, 2, 4.0]
+      ]
+    },
+    "customers": {
+      "instance": "customers-v1",
+      "columns": ["cid", "name"],
+      "bytes": 300,
+      "fee": 2.5,
+      "rows": [
+        [1, "Ann"],
+        [2, "Bo"]
+      ],
+      "row_meta": [
+        {"line_no": 7, "pk": 1},
+        {"line_no": 8, "pk": 2}
+      ]
+    }
+  },
+  "allowed_seals": [
+    {"name": "joined", "generation": "joined#2"}
+  ]
+}

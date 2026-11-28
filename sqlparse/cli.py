@@ -33,14 +33,34 @@ def create_parser():
     parser = argparse.ArgumentParser(
         prog='sqlformat',
         description='Format FILE according to OPTIONS. Use "-" as FILE '
-                    'to read from stdin.',
+                    'to read from stdin. Use "--reconcile MANIFEST" to '
+                    'run the shift reconciliation described by a '
+                    'work-order manifest instead of formatting.',
         usage='%(prog)s [OPTIONS] FILE [FILE ...]',
     )
 
     parser.add_argument(
         'filename',
         nargs='+',
-        help='file(s) to format (use "-" for stdin)')
+        help='file(s) to format (use "-" for stdin); with --reconcile the '
+             'first entry is the work-order manifest JSON')
+
+    reconcile_group = parser.add_argument_group('Reconciliation Options')
+
+    reconcile_group.add_argument(
+        '--reconcile',
+        dest='reconcile',
+        action='store_true',
+        default=False,
+        help='run the shift reconciliation using the first FILE as the '
+             'work-order manifest JSON instead of formatting SQL')
+
+    reconcile_group.add_argument(
+        '--reconcile-format',
+        dest='reconcile_format',
+        choices=['text', 'json'],
+        default='text',
+        help='reconciliation output format (default text)')
 
     parser.add_argument(
         '-o', '--outfile',
@@ -227,6 +247,11 @@ def main(args=None):
     parser = create_parser()
     args = parser.parse_args(args)
 
+    if args.reconcile:
+        if len(args.filename) != 1:
+            return _error('--reconcile takes exactly one manifest FILE')
+        return _run_reconcile(args)
+
     # Validate argument combinations
     if len(args.filename) > 1:
         if args.outfile:
@@ -243,3 +268,30 @@ def main(args=None):
             # Continue processing remaining files even if one fails
 
     return exit_code
+
+
+def _run_reconcile(args):
+    """Run the shift reconciliation described by a work-order manifest."""
+    from sqlparse.reconcile import (
+        ReconcileError,
+        Reconciler,
+        load_work_order,
+        render_json,
+        render_text,
+    )
+
+    try:
+        order = load_work_order(args.filename[0])
+        reconciler = Reconciler(order.externals, order.allowed_seals)
+        result = reconciler.reconcile(order.previous_sql, order.current_sql)
+    except (OSError, ValueError, ReconcileError) as exc:
+        return _error(f'Reconciliation failed: {exc}')
+
+    output = (
+        render_json(result)
+        if args.reconcile_format == 'json'
+        else render_text(result)
+    )
+    sys.stdout.write(output + '\n')
+    sys.stdout.flush()
+    return 0

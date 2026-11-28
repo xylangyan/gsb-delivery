@@ -32,6 +32,7 @@ Contents
    intro
    api
    analyzing
+   reconcile
    ui
    extending
    changes
