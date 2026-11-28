@@ -1,12 +1,64 @@
 module HTTPX
   class Request::Body
+    class StagingError < Error
+    end
+
+    class Staging
+      CHUNK_SIZE: Integer
+
+      attr_reader bytesize: Integer
+
+      @source: untyped
+      @expected_size: Integer?
+      @bytesize: Integer
+      @source_done: bool
+      @mode: :read | :each | :string
+      @tempfile: Tempfile
+      @reader: File
+
+      def initialize: (untyped source, ?expected_size: Integer?) -> void
+
+      def append: (String? chunk) -> void
+
+      def finish!: () -> void
+
+      def each: () { (String) -> void } -> void
+              | () -> Enumerable[String]
+
+      def rewind: () -> Integer
+
+      def source_complete?: () -> bool
+
+      def hexdigest: (singleton(::Digest::Base) algorithm) -> String
+
+      def close: () -> void
+
+      private
+
+      def each_staged_chunk: () { (String) -> void } -> void
+
+      def read_at: (Integer offset, Integer length) -> String
+
+      def next_source_chunk: () -> String?
+
+      def validate!: () -> void
+    end
+
     attr_reader options: Options
 
     @headers: Headers
     @body: body_encoder?
     @unbounded_body: bool?
+    @staging: Staging?
+    @replayable: bool
 
     def initialize: (Headers h, Options options, **untyped) -> void
+
+    def enable_replay!: () -> void
+
+    def replayable?: () -> bool
+
+    def digest: (singleton(::Digest::Base) algorithm) -> String
 
     def each: () { (String) -> void } -> void
             | () -> Enumerable[String]
@@ -26,6 +78,8 @@ module HTTPX
     def chunk!: () -> void
 
     private
+
+    def staging: () -> Staging
 
     def self.initialize_body: (Hash[Symbol, untyped] params) -> body_encoder?
 

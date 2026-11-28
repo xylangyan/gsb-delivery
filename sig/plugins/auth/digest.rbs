@@ -2,28 +2,96 @@ module HTTPX
   module Plugins
     module Authentication
       class Digest
-        Error: singleton(HTTPX::Error)
+        class Error < HTTPX::Error
+        end
 
+        class ResponseError < Error
+        end
+
+        class Round
+          attr_reader token: String
+          attr_reader nonce: String
+          attr_reader nc: String
+          attr_reader counter: Integer
+          attr_reader cnonce: String?
+          attr_reader qop: String?
+          attr_reader algorithm: singleton(::Digest::Base)
+          attr_reader ha1: String
+          attr_reader uri: String
+          attr_reader realm: String?
+          attr_reader opaque: String?
+          attr_reader challenge: Hash[String, String]
+
+          def initialize: (
+            token: String,
+            nonce: String,
+            nc: String,
+            counter: Integer,
+            cnonce: String?,
+            qop: String?,
+            algorithm: singleton(::Digest::Base),
+            ha1: String,
+            uri: String,
+            realm: String?,
+            opaque: String?,
+            challenge: Hash[String, String]
+          ) -> void
+
+          def auth_int?: () -> bool
+
+          def commit!: () -> void
+
+          def signature_for: (String ha2) -> String
+        end
+
+        class Space
+          attr_reader count: Integer
+
+          def reserve: () -> Integer
+
+          def commit: (Integer counter) -> void
+        end
+
+        CHALLENGE_ALGORITHMS: Hash[String, singleton(::Digest::Base)]
 
         @user: String
         @password: String
         @hashed: bool
+        @spaces: Hash[Array[String?], Space]
+        @verified_challenges: Hash[Array[String?], Hash[String, String]]
+        @mutex: Thread::Mutex
 
         def can_authenticate?: (String? authenticate) -> boolish
 
-        def authenticate: (Request request, String authenticate) -> String?
+        def authenticate: (Request request, String | Hash[String, String] authenticate) -> String
+
+        def submitted: (Request request, Round round) -> void
+
+        def verify: (Response response) -> String?
+
+        def remember_next_nonce: (Response response, String? nonce) -> void
+
+        def reusable_challenge: (Request request) -> Hash[String, String]?
+
+        def forget_next_nonce: (Request request, String | Hash[String, String] challenge) -> void
 
         private
 
-        def generate_header: (String meth, String uri, String authenticate) -> String
-
         def initialize: (string user, string password, ?hashed: bool, **untyped) -> void
 
+        def parse_challenge: (String | Hash[String, String] authenticate) -> Hash[String, String]
+
+        def parse_parameters: (String value) -> Hash[String, String]
+
+        def select_qop: (String? value) -> String?
+
+        def parse_algorithm: (String? value) -> [singleton(::Digest::Base), String?]
+
+        def authentication_space: (Request request, Hash[String, String] params) -> Space
+
+        def authentication_key: (Request request, Hash[String, String] params) -> Array[String?]
+
         def make_cnonce: () -> String
-
-        def next_nonce: () -> Integer
-
-        def raise_format_error: () -> void
       end
     end
   end

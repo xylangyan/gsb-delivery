@@ -23,6 +23,9 @@ module HTTPX
     extend Forwardable
     include Callbacks
 
+    # the corresponding request.
+    attr_reader :request
+
     # the HTTP response status code
     attr_reader :status
 

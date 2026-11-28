@@ -5,12 +5,34 @@ module HTTPX
         def digest: () -> Authentication::Digest?
       end
 
+      module RequestMethods
+        attr_accessor digest_auth_round: Authentication::Digest::Round?
+
+        def digest_auth_round?: () -> bool
+
+        def digest_auth_inflight_round: () -> Authentication::Digest::Round?
+      end
+
+      module ResponseMethods
+        attr_accessor digest_auth_round: Authentication::Digest::Round?
+      end
+
+      module ResponseBodyMethods
+        def digest_auth_entity_hash: () -> String?
+      end
+
       def self.extra_options: (Options) -> (Options & _DigestOptions)
 
       def self.load_dependencies: (singleton(Session) klass) -> void
 
       module InstanceMethods
         def digest_auth: (string user, string password, ?hashed: bool) -> instance
+
+        private
+
+        def send_requests: (*Request) -> Array[response]
+
+        def send_digest_request: (Request request) { (Request) -> Array[response] } -> response
       end
     end
 
