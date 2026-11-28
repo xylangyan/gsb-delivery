@@ -41,6 +41,40 @@ strict mypy and is not under the v2 validation rules.
 
 When you are ready to move fully to v2, follow the rest of this guide.
 
+## Routing one HTTP event to mixed-generation Kafka subscribers
+
+The `cloudevents.migration` package adds a pre-publish check for moving an
+HTTP-ingested event onto several Kafka subscribers at once, some still on the
+`cloudevents.v1.kafka` compatibility entry and others on the new
+`cloudevents.core.bindings.kafka` entry.
+
+```python
+from cloudevents.migration import build_default_topology, check_http
+
+result = check_http(
+    headers={"content-type": "application/cloudevents+json"},
+    body=raw_http_body,
+    topology=build_default_topology(),
+    required_subscribers=("A", "B"),
+)
+if result.feasible:
+    plan = result.best_plan                 # minimum-cost feasible wiring
+    plan.g_message                          # one shared Kafka headers/key/value
+    for hop in plan.hops:
+        event = plan.replay(hop)            # re-read via the receiver's own entry
+else:
+    result.original_error                   # set when the HTTP original is invalid
+    for conflict in result.conflicts:       # otherwise the conflicting handoffs
+        conflict.handoff, conflict.g_mode, conflict.lost
+```
+
+A `Topology` lists each receiver's SDK entry family, the content modes it may
+receive/send, the enableable links and their cost. One publish point emits a
+single Kafka message in one mode, so the engine only keeps wirings whose
+selected modes are mutually compatible; when none exist it names the publisher
+handoffs and wire modes that conflict and the business values (extension
+type/value, body kind, explicit `datacontenttype`) lost at each one.
+
 ## Architectural Changes
 
 v2 is a ground-up rewrite with four fundamental shifts:
