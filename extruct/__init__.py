@@ -1,4 +1,5 @@
 from ._extruct import SYNTAXES, extract
+from .blockextraction import BlockRelationStore
 from .jsonld import JsonLdExtractor
 from .microformat import MicroformatExtractor
 from .opengraph import OpenGraphExtractor

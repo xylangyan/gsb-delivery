@@ -311,6 +311,72 @@ item. Each node is of ``lxml.etree.Element`` type: ::
                                      'ratingValue': ['5.00', '5.00']},
                      'type': 'http://schema.org/Product'}]}
 
+Incremental, block based extraction
++++++++++++++++++++++++++++++++++++
+
+When a product page is fetched block by block, ``BlockRelationStore`` lets you
+keep the product relations of the blocks that have arrived and update only the
+relations that are affected when a late (or replaced) block shows up.  Blocks
+whose body is still missing keep nothing but their skeleton position, and
+relations contributed by blocks already archived are never recomputed.
+
+Each block keeps a stable identity (its element ``id`` when present, otherwise
+its skeleton path), so the original DOM nodes stay distinguishable across
+versions.  This keeps two anonymous items with identical content (for example
+two offers without a public id) separated by their original parent, and keeps
+the real edges of cross-block references and reference cycles regardless of
+arrival order. ::
+
+  >>> from extruct.blockextraction import BlockRelationStore
+  >>> store = BlockRelationStore(base_url="http://shop.example.com/product/")
+  >>> # register skeleton positions before the bodies are downloaded
+  >>> specs = store.add_skeleton("specs", (0,))
+  >>> store.add_skeleton("unit", (1,))
+  >>> # the specs block references the same-page #unit anchor through itemref
+  >>> store.ingest_block('''
+  ...   <div id="specs" itemscope itemtype="http://schema.org/Product" itemref="unit">
+  ...     <span itemprop="name">Widget</span>
+  ...     <div itemprop="offers" itemscope itemtype="http://schema.org/Offer">
+  ...       <meta itemprop="price" content="10.00" />
+  ...     </div>
+  ...   </div>''', "specs", (0,))
+  >>> # #unit is still missing: the cross-block relation is not active yet
+  >>> [r for r in store.relations() if r.anchor == "unit"]
+  []
+  >>> changes = store.ingest_block(
+  ...     '<div id="unit" itemscope itemtype="http://schema.org/Unit"></div>',
+  ...     "unit", (1,))
+  >>> [c.action for c in changes if c.relation.kind == "reference"]
+  ['added']
+  >>> ref = next(r for r in store.relations() if r.anchor == "unit")
+  >>> ref.target_resolved
+  True
+  >>> ref.target.to_ref()
+  {'block': 'block#unit', 'block_path': [1], 'path': [], 'id': 'unit'}
+
+Anonymous nodes are addressed by their block plus relative position, so each
+record leads back to the original DOM location even without a public id::
+
+  >>> offer = next(r for r in store.relations() if r.name == "offers")
+  >>> offer.target.is_anonymous
+  True
+  >>> offer.target.to_ref()
+  {'block': 'block#specs', 'block_path': [0], 'path': [1]}
+
+``ingest_block`` returns only the relations that were genuinely added, removed
+or rebound.  If a replaced block deletes an anchor it used to expose, the new
+version drops the now dangling association from the default query while the old
+binding stays readable with ``include_unresolved=True``.  Once every block has
+arrived, run the existing extraction path over the assembled document to cross
+check the content::
+
+  >>> store.is_complete()
+  True
+  >>> # runs extruct.extract over the assembled, complete HTML document
+  >>> result = store.verify_with_extract(syntaxes=["microdata"])
+  >>> list(result)
+  ['microdata']
+
 Single extractors
 -----------------
 
