@@ -1,0 +1,326 @@
+==================== N=0 STAGE=A ====================
+N=0 target stage=A
+  --- STAGE A old rule registered (preview+warehouse first runs) ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=6
+
+==================== N=0 STAGE=B ====================
+N=0 target stage=B
+  --- STAGE B new rule just registered ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=0 STAGE=C ====================
+N=0 target stage=C
+  --- STAGE C after 0 alt templates, new rule still active ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=0 STAGE=D ====================
+N=0 target stage=D
+  --- STAGE D after withdrawal (old re-registered), N was 0 ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=255 STAGE=A ====================
+N=255 target stage=A
+  --- STAGE A old rule registered (preview+warehouse first runs) ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=6
+
+==================== N=255 STAGE=B ====================
+N=255 target stage=B
+  --- STAGE B new rule just registered ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=255 STAGE=C ====================
+N=255 target stage=C
+  alt template reads of 0x0505a (k spaces):
+    k=1    fmt='meter8, meter,u4'                 values=[105, 105, 10] pos=20
+    k=2    fmt='meter8,  meter,u4'                values=[105, 105, 10] pos=20
+    k=255  fmt='meter8,                                                                                                                                                                                                                                                               meter,u4' values=[105, 105, 10] pos=20
+    distinct alt result tuples over k=1..255: [(105, 105, 10)]
+  --- STAGE C after 255 alt templates, new rule still active ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=256, maxsize=256, currsize=256)
+    preprocess    CacheInfo(hits=0, misses=256, maxsize=256, currsize=256)
+    _read_fmt_cache keys=['meter8'] _token_cache size=4
+
+==================== N=255 STAGE=D ====================
+N=255 target stage=D
+  alt template reads of 0x0505a (k spaces):
+    k=1    fmt='meter8, meter,u4'                 values=[105, 105, 10] pos=20
+    k=2    fmt='meter8,  meter,u4'                values=[105, 105, 10] pos=20
+    k=255  fmt='meter8,                                                                                                                                                                                                                                                               meter,u4' values=[105, 105, 10] pos=20
+    distinct alt result tuples over k=1..255: [(105, 105, 10)]
+  --- STAGE D after withdrawal (old re-registered), N was 255 ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=256, maxsize=256, currsize=256)
+    preprocess    CacheInfo(hits=0, misses=256, maxsize=256, currsize=256)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=256 STAGE=A ====================
+N=256 target stage=A
+  --- STAGE A old rule registered (preview+warehouse first runs) ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=6
+
+==================== N=256 STAGE=B ====================
+N=256 target stage=B
+  --- STAGE B new rule just registered ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=256 STAGE=C ====================
+N=256 target stage=C
+  alt template reads of 0x0505a (k spaces):
+    k=1    fmt='meter8, meter,u4'                 values=[105, 105, 10] pos=20
+    k=2    fmt='meter8,  meter,u4'                values=[105, 105, 10] pos=20
+    k=255  fmt='meter8,                                                                                                                                                                                                                                                               meter,u4' values=[105, 105, 10] pos=20
+    k=256  fmt='meter8,                                                                                                                                                                                                                                                                meter,u4' values=[105, 105, 10] pos=20
+    distinct alt result tuples over k=1..256: [(105, 105, 10)]
+  --- STAGE C after 256 alt templates, new rule still active ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[105, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[105, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 105 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=258, maxsize=256, currsize=256)
+    preprocess    CacheInfo(hits=0, misses=258, maxsize=256, currsize=256)
+    _read_fmt_cache keys=['meter8'] _token_cache size=4
+
+==================== N=256 STAGE=D ====================
+N=256 target stage=D
+  alt template reads of 0x0505a (k spaces):
+    k=1    fmt='meter8, meter,u4'                 values=[105, 105, 10] pos=20
+    k=2    fmt='meter8,  meter,u4'                values=[105, 105, 10] pos=20
+    k=255  fmt='meter8,                                                                                                                                                                                                                                                               meter,u4' values=[105, 105, 10] pos=20
+    k=256  fmt='meter8,                                                                                                                                                                                                                                                                meter,u4' values=[105, 105, 10] pos=20
+    distinct alt result tuples over k=1..256: [(105, 105, 10)]
+  --- STAGE D after withdrawal (old re-registered), N was 256 ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=258, maxsize=256, currsize=256)
+    preprocess    CacheInfo(hits=0, misses=258, maxsize=256, currsize=256)
+    _read_fmt_cache keys=['meter8'] _token_cache size=4
+
+==================== N=300 STAGE=A ====================
+N=300 target stage=A
+  --- STAGE A old rule registered (preview+warehouse first runs) ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=6
+
+==================== N=300 STAGE=B ====================
+N=300 target stage=B
+  --- STAGE B new rule just registered ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=4, misses=1, maxsize=256, currsize=1)
+    preprocess    CacheInfo(hits=0, misses=1, maxsize=256, currsize=1)
+    _read_fmt_cache keys=['meter8'] _token_cache size=2
+
+==================== N=300 STAGE=C ====================
+N=300 target stage=C
+  alt template reads of 0x0505a (k spaces):
+    k=1    fmt='meter8, meter,u4'                 values=[105, 105, 10] pos=20
+    k=2    fmt='meter8,  meter,u4'                values=[105, 105, 10] pos=20
+    k=255  fmt='meter8,                                                                                                                                                                                                                                                               meter,u4' values=[105, 105, 10] pos=20
+    k=256  fmt='meter8,                                                                                                                                                                                                                                                                meter,u4' values=[105, 105, 10] pos=20
+    k=257  fmt='meter8,                                                                                                                                                                                                                                                                 meter,u4' values=[105, 105, 10] pos=20
+    k=300  fmt='meter8,                                                                                                                                                                                                                                                                                                            meter,u4' values=[105, 105, 10] pos=20
+    distinct alt result tuples over k=1..300: [(105, 105, 10)]
+  --- STAGE C after 300 alt templates, new rule still active ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[105, 105, 10] pos=20
+    warehouse fmt0 0x050a      values=[105, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 105, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 105 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=302, maxsize=256, currsize=256)
+    preprocess    CacheInfo(hits=0, misses=302, maxsize=256, currsize=256)
+    _read_fmt_cache keys=['meter8'] _token_cache size=4
+
+==================== N=300 STAGE=D ====================
+N=300 target stage=D
+  alt template reads of 0x0505a (k spaces):
+    k=1    fmt='meter8, meter,u4'                 values=[105, 105, 10] pos=20
+    k=2    fmt='meter8,  meter,u4'                values=[105, 105, 10] pos=20
+    k=255  fmt='meter8,                                                                                                                                                                                                                                                               meter,u4' values=[105, 105, 10] pos=20
+    k=256  fmt='meter8,                                                                                                                                                                                                                                                                meter,u4' values=[105, 105, 10] pos=20
+    k=257  fmt='meter8,                                                                                                                                                                                                                                                                 meter,u4' values=[105, 105, 10] pos=20
+    k=300  fmt='meter8,                                                                                                                                                                                                                                                                                                            meter,u4' values=[105, 105, 10] pos=20
+    distinct alt result tuples over k=1..300: [(105, 105, 10)]
+  --- STAGE D after withdrawal (old re-registered), N was 300 ---
+    preview 0x0505a            values=5 pos=8
+    preview 0x050a             values=5 pos=8
+    preview 0x0000a            values=0 pos=8
+    warehouse fmt0 0x0505a     values=[5, 5, 10] pos=20
+    warehouse fmt0 0x050a      values=[5, 0, 10] pos=16
+    warehouse fmt0 0x0000a     values=[0, 0, 10] pos=20
+    supplement 0x0505a         values=[5, 5, 10] pos=20
+    supplement 0x050a          values=[5, 0, 10] pos=16
+    supplement 0x0000a         values=[0, 0, 10] pos=20
+    cached fmt0 meter8 probe on raw5 -> 5 (total_bits=0)
+    cached preview meter8 probe      -> 5
+    _prepared_fmt CacheInfo(hits=3, misses=302, maxsize=256, currsize=256)
+    preprocess    CacheInfo(hits=0, misses=302, maxsize=256, currsize=256)
+    _read_fmt_cache keys=['meter8'] _token_cache size=4
+
