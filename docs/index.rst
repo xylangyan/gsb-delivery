@@ -73,6 +73,7 @@ Contents:
 
    guide
    strategies
+   planning
    api
 
 

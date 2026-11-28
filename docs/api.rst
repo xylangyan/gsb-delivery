@@ -35,3 +35,13 @@ Exceptions
 .. automodule:: deepmerge.exception
     :members:
     :undoc-members:
+
+Planning
+========
+
+.. automodule:: deepmerge.trace
+    :members: MergePolicy, PathRule, Node, TrackedMerger
+
+.. automodule:: deepmerge.planner
+    :members: Packet, Station, ReadEvent, WorkOrder, Plan, Package, RobustPlan,
+        IntervalReport, Difference, canonical_value, chapter_runs

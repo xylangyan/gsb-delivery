@@ -80,6 +80,22 @@ You can also pass in your own merge functions, instead of a string.
 
 For more information, see the `docs <https://deepmerge.readthedocs.io/en/latest/>`_
 
+------------------------------
+Upstream merge planning
+------------------------------
+
+When several adjacent packets may be merged *before* they reach the consumer,
+plain ``merge`` is not enough: the built-in strategies are not associative, and
+a value that compares equal can still have come from the wrong original packet.
+``deepmerge.planner`` checks candidate packages against the true serial order
+(including per-field origin ids) and produces a send-minimal dispatch plan,
+optionally across two station levels and two blueprint versions::
+
+    python -m deepmerge.demo
+    python -m deepmerge.plan examples/work_order.json
+
+See :doc:`docs/planning` for the work-order format.
+
 ------------------
 Supported Versions
 ------------------

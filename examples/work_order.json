@@ -1,0 +1,18 @@
+{
+  "hub": "hub",
+  "reveal_after": 2,
+  "scenarios": ["v1", "v2"],
+  "selected_fields": [["owner"]],
+  "initial_config": {"seed": "root"},
+  "stations": [{"name": "A", "level": 1}, {"name": "B", "level": 1}, {"name": "hub", "level": 2}],
+  "blueprints": {
+    "v1": {"device": {"id": "root", "cfg": {"mode": "root"}}, "batch": [], "owner": "root"},
+    "v2": {"device": {"id": "root", "cfg": {"mode": "v2"}}, "batch": [], "owner": "root"}
+  },
+  "packets": [
+    {"origin": "P1", "receiver": "A", "window": [0, 12], "permit": 1, "payload": {"device": {"id": "d1", "cfg": {"mode": "a"}}, "batch": ["1"], "owner": "A"}},
+    {"origin": "P2", "receiver": "A", "window": [1, 13], "permit": 2, "payload": {"device": ["d2"], "batch": ["2"], "owner": "A"}},
+    {"origin": "P3", "receiver": "B", "window": [2, 14], "permit": 3, "payload": {"device": {"id": "d3"}, "batch": ["3"], "owner": "B"}},
+    {"origin": "P4", "receiver": "B", "window": [3, 15], "permit": 4, "payload": {"device": {"id": "d4", "cfg": {"mode": "b"}}, "batch": ["4"], "owner": "B"}}
+  ]
+}
