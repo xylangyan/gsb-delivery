@@ -124,6 +124,125 @@ These extras display something like this:
     latest: https://news.ycombinator.com/latest?id=41459472
 ```
 
+## Reconciling stocktakes with split and merged packages
+
+Some inventories break one package into several parts, move those parts between
+locations, and later merge them back into a new package.  A plain row diff
+cannot tell whether a new `5` came from the right original pack, whether a
+transfer was double-posted by two teams, or whether an intermediate step sent a
+location negative.
+
+Use the reconciliation mode when the occurrence archive contains `split`,
+`merge`, `transfer`, `issue`, `receive` or `adjust` records:
+
+```bash
+csv-diff previous.csv current.csv \
+  --occurrences occurrences.csv \
+  --reconcile
+```
+
+The command prints a repair note with:
+
+- a deterministic replay from the previous official stocktake to the current one;
+- a team split (default `A,B`) so two independent teams can take one segment each;
+- pause/resume checkpoints (see `--segment-limit` and `--checkpoint`);
+- acceptance lists covering every `issue` and `merge` record in the archive.
+
+Add `--json` for the machine-readable plan.  Resume a segment with:
+
+```bash
+csv-diff previous.csv current.csv --occurrences occurrences.csv --reconcile \
+  --segment-limit A=2 --segment-limit B=2 --json \
+  --execute-team A --checkpoint 1 --checkpoint-offset 0
+```
+
+`--checkpoint-offset` resumes partway through a segment after a pause; the
+executed checkpoint reports the next segment and offset to re-read.
+
+### Input files
+
+Stocktake files need a package id and a quantity; location is strongly
+recommended.  Common English and Chinese headings are accepted:
+
+| meaning | example headings |
+| --- | --- |
+| package | `package`, `package_id`, `包号`, `实物号` |
+| location | `location`, `warehouse`, `库位`, `仓库`, `仓` |
+| quantity | `qty`, `quantity`, `available`, `数量`, `可用数量` |
+| original pack | `origins`, `source`, `原包`, `来源包` |
+| physical tag | `tags`, `tag_ids`, `标签` |
+
+Occurrence columns include `occurrence_id` (`发生号`), `type` (`类型`), `inputs`
+/ `outputs` (or `from_package` / `to_package`), `from_location` /
+`to_location`, `teams` (`班组`), and optional `variants` (`批准对照`).  Inputs
+and outputs may be JSON lists or compact strings such as `A-3:3|B0:2`.
+
+### Placement rules
+
+An optional rules JSON file can constrain the replay:
+
+```json
+{
+  "transfers": [["A仓", "B仓"], ["B仓", "A仓"]],
+  "location_limits": {"A仓": 20, "B仓": 15}
+}
+```
+
+```bash
+csv-diff previous.csv current.csv --occurrences occurrences.csv \
+  --reconcile --rules rules.json
+```
+
+The planner enforces:
+
+- a physical tag (or package, when tags are absent) may be transferred only once;
+- no package or location may go negative at any intermediate step;
+- final quantities must match the current stocktake and lineage must name the
+  right original packages, not merely add up to the same total;
+- duplicate pending transfer messages seen by both teams are applied once, while
+  both teams' signed occurrence ids remain on the acceptance lists;
+- the same logical posting under two team-signed ids is collapsed only when the
+  postings are identical, the teams are disjoint, and the event is pending or a
+  transfer; independently signed repeats are otherwise kept;
+- if the same occurrence id has divergent postings, a transfer pair is illegal,
+  or no common replay order exists, the plan stops with `manual_review` and
+  returns the shared credentials (with their teams) to the supervisor.
+
+### Acceptance lists
+
+`--json` exposes `acceptance.journal`, `acceptance.checklists` (one per team),
+and `acceptance.origin_coverage`.  Each checklist covers every issue and merge
+record in the archive, marking records owned by the other team as `other_team`.
+`acceptance.complete` is true only when both lists match the archive and every
+required original pack is covered.
+
+### When a plan is impossible
+
+`status: manual_review` carries one of these reasons:
+
+| reason | meaning |
+| --- | --- |
+| `shared_credential_conflict` | same occurrence id, different postings |
+| `illegal_or_cyclic_archive` | illegal transfer pair or dependency cycle |
+| `unexplained_stock` | positive current stock with no prior or archive source |
+| `invalid_target` | negative quantity on the current stocktake |
+| `no_common_replay` | archive cannot explain the difference; see `conflicts` |
+
+### Worked example
+
+`examples/` contains a minimal A→B split/transfer/merge case:
+
+```bash
+csv-diff examples/previous.csv examples/current.csv \
+  --occurrences examples/reconcile_split_merge.csv \
+  --reconcile --segment-limit A=1 --segment-limit B=1
+```
+
+### Plain tables
+
+Files without split/merge lineage need no extra options; the original row-diff
+behaviour is unchanged.
+
 ## As a Python library
 
 You can also import the Python library into your own code like so:
@@ -137,6 +256,24 @@ You can also import the Python library into your own code like so:
 `diff` will now contain the same data structure as the output in the `--json` example above.
 
 If the columns in the CSV have changed, those added or removed columns will be ignored when calculating changes made to specific rows.
+
+For split/merge reconciliation:
+
+```python
+from csv_diff.reconcile import plan_reconciliation, execute_segment, render_text
+
+plan = plan_reconciliation(
+    "previous.csv", "current.csv", "occurrences.csv",
+    segment_limits={"A": 2, "B": 2},
+    rules={"transfers": [["A仓", "B仓"]]},
+)
+print(render_text(plan))
+result = execute_segment(plan, team="A", from_segment=1)
+```
+
+`plan_reconciliation` accepts paths, file objects, or row lists.  The returned
+dict includes `status`, `actions`, `segments`, `execution`, `acceptance`, and
+`conflicts`.
 
 ## As a Docker container
 

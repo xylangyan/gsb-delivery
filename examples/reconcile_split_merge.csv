@@ -1,0 +1,4 @@
+occurrence_id,type,from_location,to_location,inputs,outputs,teams
+S1,split,A仓,,A:7,A:4|A-3:3,A
+T1,transfer,A仓,B仓,A-3:3,A-3:3,A|B
+M1,merge,,B仓,A-3:3|B0:2,B:5,B

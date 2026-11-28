@@ -300,3 +300,99 @@ def test_diff_with_extras(tmpdir):
     """
     ).strip()
     assert result.output.strip() == expected
+
+
+def test_reconcile_cli_json(tmpdir):
+    previous = tmpdir / "previous.csv"
+    current = tmpdir / "current.csv"
+    archive = tmpdir / "archive.csv"
+    previous.write("package,location,qty\nA,A仓,7\nB0,B仓,2\n")
+    current.write("package,location,qty\nA,A仓,4\nB,B仓,5\n")
+    archive.write(
+        "occurrence_id,type,from_location,to_location,inputs,outputs,teams\n"
+        "S1,split,A仓,,A:7,A:4|A-3:3,A\n"
+        "T1,transfer,A仓,B仓,A-3:3,A-3:3,A|B\n"
+        "M1,merge,,B仓,A-3:3|B0:2,B:5,B\n"
+    )
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            str(previous),
+            str(current),
+            "--occurrences",
+            str(archive),
+            "--reconcile",
+            "--segment-limit",
+            "A=1",
+            "--segment-limit",
+            "B=1",
+            "--json",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.output)
+    assert plan["status"] == "ok"
+    assert plan["final_matches_target"] is True
+    assert [segment["team"] for segment in plan["segments"]] == ["A", "B", "B"]
+
+
+def test_reconcile_cli_resume_and_text(tmpdir):
+    previous = tmpdir / "previous.csv"
+    current = tmpdir / "current.csv"
+    archive = tmpdir / "archive.csv"
+    previous.write("package,location,qty\nA,A仓,7\nB0,B仓,2\n")
+    current.write("package,location,qty\nA,A仓,4\nB,B仓,5\n")
+    archive.write(
+        "occurrence_id,type,from_location,to_location,inputs,outputs,teams\n"
+        "S1,split,A仓,,A:7,A:4|A-3:3,A\n"
+        "T1,transfer,A仓,B仓,A-3:3,A-3:3,A|B\n"
+        "M1,merge,,B仓,A-3:3|B0:2,B:5,B\n"
+    )
+
+    first = CliRunner().invoke(
+        cli.cli,
+        [
+            str(previous),
+            str(current),
+            "--occurrences",
+            str(archive),
+            "--reconcile",
+            "--segment-limit",
+            "B=1",
+            "--execute-team",
+            "B",
+            "--json",
+        ],
+        catch_exceptions=False,
+    )
+    assert first.exit_code == 0, first.output
+    executed = json.loads(first.output)
+    assert executed["status"] == "complete"
+    assert executed["complete"] is True
+    assert executed["checkpoint"]["next_segment"] == 4
+
+    text = CliRunner().invoke(
+        cli.cli,
+        [
+            str(previous),
+            str(current),
+            "--occurrences",
+            str(archive),
+            "--reconcile",
+        ],
+        catch_exceptions=False,
+    )
+    assert text.exit_code == 0, text.output
+    assert "对账修补说明" in text.output
+    assert "验收清单" in text.output
+
+
+def test_plain_diff_still_works_when_occurrences_absent(tmpdir):
+    one = tmpdir / "one.csv"
+    two = tmpdir / "two.csv"
+    one.write(ONE)
+    two.write(TWO)
+    result = CliRunner().invoke(cli.cli, [str(one), str(two), "--key", "id"])
+    assert result.exit_code == 0
+    assert "1 row changed" in result.output
