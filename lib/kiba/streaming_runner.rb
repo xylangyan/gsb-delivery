@@ -1,3 +1,5 @@
+require "kiba/row_phase"
+
 module Kiba
   module StreamingRunner
     extend self
@@ -35,14 +37,16 @@ module Kiba
     def transform_stream(stream, t)
       Enumerator.new do |y|
         stream.each do |input_row|
-          returned_row = t.process(input_row) do |yielded_row|
-            y << yielded_row
+          returned_row = RowPhase.with_write do
+            t.process(input_row) do |yielded_row|
+              y << yielded_row
+            end
           end
           y << returned_row if returned_row
         end
         if t.respond_to?(:close)
           t.close do |close_row|
-            y << close_row
+            RowPhase.with_close { y << close_row }
           end
         end
       end

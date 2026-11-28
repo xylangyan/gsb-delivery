@@ -29,6 +29,78 @@ Kiba currently supports Ruby 3.1+, JRuby 10+ and TruffleRuby. See [test matrix](
 
 **Kiba Pro**: for vendor-backed ETL extensions, check out [Kiba Pro](https://www.kiba-etl.org/kiba-pro).
 
+## Multi-route receiving
+
+`Kiba::Fanout` is an opt-in destination for jobs that deliver one row to
+several isolated receiver groups. Jobs that do not use it keep the normal
+`Kiba.run` behavior and destination protocol unchanged.
+
+```ruby
+require "kiba"
+
+work_order = Kiba::Fanout::WorkOrder.build do
+  order_key "order_id"
+
+  manifest do
+    node "lines", bytes: 48, whole: true
+    node "adjustments", bytes: 16, whole: true
+  end
+
+  group :picking do
+    destination Picking
+    destination PickingReview
+    reference "adjustments"
+    mutable "lines.*.picked"
+    require_mutation "lines.*.picked"
+    on_write writes: ["lines.*.picked"]
+  end
+
+  group :settlement do
+    destination Settlement
+    on_write reads: ["lines.*.amount"]
+  end
+
+  group :archive do
+    destination Archive
+    retain_first "lines"
+    on_close reads: ["lines.*.amount"]
+  end
+end
+
+Kiba.run(Kiba.parse do
+  source Orders
+  transform SplitLines
+  destination Kiba::Fanout::Multiplexer, work_order, on_init: ->(mux) { @mux = mux }
+end)
+```
+
+Rules implemented by the interface:
+
+- Each group receives its own delivery-time view. `write` annotations never
+  reach another group; `require_mutation` paths are shared by every receiver
+  in one group.
+- `reference` fields are delivery snapshots shared by original identity and
+  content inside a group. The same list on two orders shares one snapshot;
+  two equal-but-distinct lists never merge. Read-only snapshots cost no bytes.
+- `retain` (or `retain_first`) keeps a delivery-time copy for a receiver that
+  copies its paper page at `close`. Later rows cannot rewrite the retained
+  page. `retain_first` bills only the first page the receiver kept.
+- `mutable` detail nodes are copied once per group and per delivery. A
+  transform that yields one row, mutates it and returns another delivers two
+  independently isolated variants.
+- `close_only_if_received` gates close-yielded marker rows to groups that
+  already received the named order.
+- `manifest` declares fixed billable bytes per logical detail node. The ledger
+  counts one version per independently mutable or retained copy; field names,
+  references to an existing copy and read-only originals are free. `whole`
+  nodes are never split. `mux.minimum_copy_bytes` is the cumulative cost and
+  `mux.budget[:decisions]` names the version that determined each charge.
+- `require_from` is a declared cross-group visibility request. It is reported
+  as a conflict with the original order key and nodes each side actually saw;
+  compliant routes can still be exercised with `conflict_mode = :report`.
+- Existing jobs without Fanout are unaffected. A runnable example is in
+  `examples/fanout_receiving.rb`.
+
 ## License
 
 Copyright (c) LoGeek SARL. Kiba is an Open Source project licensed under the terms of

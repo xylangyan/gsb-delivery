@@ -1,0 +1,8 @@
+require "kiba/fanout/path"
+require "kiba/fanout/fingerprint"
+require "kiba/fanout/copy_manifest"
+require "kiba/fanout/copy_ledger"
+require "kiba/fanout/node_store"
+require "kiba/fanout/work_order"
+require "kiba/fanout/views"
+require "kiba/fanout/multiplexer"
